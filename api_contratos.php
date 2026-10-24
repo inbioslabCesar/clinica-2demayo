@@ -2,6 +2,7 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/modules/OrdenesClinicasModule.php';
 
 function contratos_table_exists($conn, $table) {
     $stmt = $conn->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1');
@@ -157,17 +158,7 @@ function contratos_resolver_fecha_con_offset(
 }
 
 function contratos_resolver_tipo_orden_imagen($servicioTipo, $descripcion = '') {
-    $tipo = strtolower(trim((string)$servicioTipo));
-    $desc = strtolower(trim((string)$descripcion));
-    if ($tipo === 'rayosx' || $tipo === 'rayos_x' || $tipo === 'rayos x' || $tipo === 'rx') return 'rx';
-    if ($tipo === 'ecografia') return 'ecografia';
-    if ($tipo === 'tomografia') return 'tomografia';
-    if ($tipo === 'procedimiento' || $tipo === 'procedimientos') {
-        if (preg_match('/tomograf|\btac\b/u', $desc)) return 'tomografia';
-        if (preg_match('/rayos\s*x|\brx\b/u', $desc)) return 'rx';
-        if (preg_match('/ecograf/i', $desc)) return 'ecografia';
-    }
-    return null;
+    return oc_resolver_tipo_orden_imagen($servicioTipo, $descripcion);
 }
 
 function contratos_resolver_medico_por_servicio($conn, $servicioTipo, $servicioId) {

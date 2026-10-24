@@ -473,6 +473,41 @@ prueba('órdenes de laboratorio: una sola orden por episodio y se cancela la dup
     iguales(1, (int)$mysqli->query("SELECT COUNT(*) c FROM ordenes_laboratorio WHERE cotizacion_id IN ($baseId, $adendaId) AND estado <> 'cancelada'")->fetch_assoc()['c'], 'el cobro produce el mismo resultado sin duplicar');
 }, true);
 
+prueba('órdenes de imagen: una orden por servicio, idempotente, con médico y consulta del episodio', function () {
+    global $mysqli, $marcador;
+    require_once dirname(__DIR__, 2) . '/modules/OrdenesClinicasModule.php';
+    require_once dirname(__DIR__, 2) . '/modules/CobroModule.php';
+    $obs = $mysqli->real_escape_string($marcador);
+    $paciente = 987654;
+    $consultaId = (int)$mysqli->query('SELECT id FROM consultas ORDER BY id ASC LIMIT 1')->fetch_assoc()['id'];
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES ($paciente, 18, 300, 'pagado', '$obs')");
+    $cotId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, medico_id) VALUES ($cotId, 'rayosx', 8001, 'rx de brazo', 2, 100, 200, 1)");
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal) VALUES ($cotId, 'ecografia', 8002, 'ecografia renal', 1, 100, 100)");
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal) VALUES ($cotId, 'laboratorio', 8003, 'no es imagen', 1, 10, 10)");
+    $detalles = $mysqli->query("SELECT * FROM cotizaciones_detalle WHERE cotizacion_id = $cotId ORDER BY id")->fetch_all(MYSQLI_ASSOC);
+    // Orden genérica de versiones antiguas, sin archivos: debe eliminarse.
+    $mysqli->query("INSERT INTO ordenes_imagen (paciente_id, cotizacion_id, tipo, estado, indicaciones) VALUES ($paciente, $cotId, 'rx', 'pendiente', 'Orden creada desde cotización #$cotId')");
+
+    oc_crear_ordenes_imagen($mysqli, $cotId, $paciente, $detalles, $consultaId, 18);
+    $ordenes = $mysqli->query("SELECT tipo, consulta_id, medico_id, indicaciones, estado FROM ordenes_imagen WHERE cotizacion_id = $cotId ORDER BY tipo")->fetch_all(MYSQLI_ASSOC);
+    iguales(2, count($ordenes), 'una orden por servicio de imagen (cantidad 2 no duplica; el laboratorio no genera orden)');
+    iguales(['ecografia', 'rx'], array_column($ordenes, 'tipo'));
+    foreach ($ordenes as $o) {
+        iguales($consultaId, (int)$o['consulta_id'], 'consulta del episodio');
+        iguales('pendiente', $o['estado']);
+        verdadero(strpos($o['indicaciones'], "Orden creada desde cotización #$cotId") !== false && strpos($o['indicaciones'], 'Detalle #') === 0, $o['indicaciones']);
+    }
+    $rx = array_values(array_filter($ordenes, fn($o) => $o['tipo'] === 'rx'))[0];
+    iguales(1, (int)$rx['medico_id'], 'toma el médico del detalle');
+
+    oc_crear_ordenes_imagen($mysqli, $cotId, $paciente, $detalles, $consultaId, 18);
+    $metodo = new ReflectionMethod('CobroModule', 'crearOrdenesImagenCotizacion');
+    $metodo->setAccessible(true);
+    $metodo->invoke(null, $mysqli, $cotId, $paciente, $detalles, 18, $consultaId);
+    iguales(2, (int)$mysqli->query("SELECT COUNT(*) c FROM ordenes_imagen WHERE cotizacion_id = $cotId")->fetch_assoc()['c'], 'idempotente entre API y cobro');
+}, true);
+
 /* ───────── Ejecución ───────── */
 
 $bd = null;

@@ -427,3 +427,241 @@ if (!function_exists('oc_crear_ordenes_laboratorio')) {
         }
     }
 }
+
+if (!function_exists('oc_resolver_tipo_orden_imagen')) {
+    function oc_resolver_tipo_orden_imagen($servicioTipo, $descripcion = '')
+    {
+        $tipo = strtolower(trim((string)$servicioTipo));
+        $desc = strtolower(trim((string)$descripcion));
+
+        if (in_array($tipo, ['rayosx', 'rayos_x', 'rayos x', 'rx'], true)) {
+            return 'rx';
+        }
+        if ($tipo === 'ecografia') {
+            return 'ecografia';
+        }
+        if ($tipo === 'tomografia') {
+            return 'tomografia';
+        }
+        if (in_array($tipo, ['procedimiento', 'procedimientos'], true)) {
+            if (preg_match('/tomograf|\btac\b/u', $desc)) {
+                return 'tomografia';
+            }
+            if (preg_match('/rayos\s*x|\brx\b/u', $desc)) {
+                return 'rx';
+            }
+            if (preg_match('/ecograf/i', $desc)) {
+                return 'ecografia';
+            }
+        }
+        return null;
+    }
+}
+
+if (!function_exists('oc_crear_ordenes_imagen')) {
+    // Una orden de imagen por servicio cotizado (idempotente por cotización + tipo + indicaciones).
+    // $consultaEpisodioId la resuelve quien llama; el vínculo propio del detalle tiene prioridad.
+    function oc_crear_ordenes_imagen($conn, $cotizacionId, $pacienteId, $detalles, $consultaEpisodioId = 0, $usuarioId = 0)
+    {
+        $cotizacionId = (int)$cotizacionId;
+        $pacienteId = (int)$pacienteId;
+        $consultaEpisodioId = (int)$consultaEpisodioId;
+        if (!cc_tabla_existe($conn, 'ordenes_imagen')) {
+            return;
+        }
+        if ($cotizacionId <= 0 || $pacienteId <= 0 || empty($detalles)) {
+            return;
+        }
+
+        $detallesImagen = [];
+        foreach ((array)$detalles as $det) {
+            $tipo = oc_resolver_tipo_orden_imagen($det['servicio_tipo'] ?? '', $det['descripcion'] ?? '');
+            if (!$tipo) continue;
+            $descripcion = strtoupper(trim((string)($det['descripcion'] ?? '')));
+            if ($descripcion === '') {
+                $descripcion = strtoupper($tipo);
+            }
+            $detallesImagen[] = [
+                'tipo' => $tipo,
+                'detalle_id' => (int)($det['id'] ?? 0),
+                'descripcion' => $descripcion,
+                'medico_id' => (int)($det['medico_id'] ?? 0),
+                'servicio_id' => (int)($det['servicio_id'] ?? 0),
+                'consulta_id' => (int)($det['consulta_id'] ?? 0),
+            ];
+        }
+        if (empty($detallesImagen)) {
+            return;
+        }
+
+        $tieneCotizacionId = episodio_columna_existe($conn, 'ordenes_imagen', 'cotizacion_id');
+        $tieneConsultaId = episodio_columna_existe($conn, 'ordenes_imagen', 'consulta_id');
+        $tieneSolicitadoPor = episodio_columna_existe($conn, 'ordenes_imagen', 'solicitado_por');
+        $tieneCargaAnticipada = episodio_columna_existe($conn, 'ordenes_imagen', 'carga_anticipada');
+        $tieneMedicoId = episodio_columna_existe($conn, 'ordenes_imagen', 'medico_id');
+        $detalleTieneMedico = episodio_columna_existe($conn, 'cotizaciones_detalle', 'medico_id');
+        $agendaResuelveMedico = cc_tabla_existe($conn, 'agenda_servicios_cotizacion')
+            && episodio_columna_existe($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')
+            && episodio_columna_existe($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id')
+            && episodio_columna_existe($conn, 'agenda_servicios_cotizacion', 'medico_id');
+
+        $consultaColumna = $conn->query("SHOW COLUMNS FROM ordenes_imagen LIKE 'consulta_id'");
+        $consultaAdmiteNull = $consultaColumna && ($consultaMeta = $consultaColumna->fetch_assoc())
+            && strtoupper((string)($consultaMeta['Null'] ?? 'NO')) === 'YES';
+
+        $usuarioSesion = (int)($_SESSION['usuario']['id'] ?? 0);
+        if ($usuarioSesion <= 0) {
+            $usuarioSesion = (int)$usuarioId;
+        }
+
+        // Órdenes genéricas de versiones antiguas (sin token de detalle): se eliminan si no tienen archivos.
+        if ($tieneCotizacionId) {
+            $indicacionGenerica = 'Orden creada desde cotización #' . $cotizacionId;
+            $stmtDel = $conn->prepare(
+                'DELETE oi FROM ordenes_imagen oi
+                 LEFT JOIN ordenes_imagen_archivos oia ON oia.orden_id = oi.id
+                 WHERE oi.cotizacion_id = ? AND oi.indicaciones = ? AND oia.id IS NULL'
+            );
+            if ($stmtDel) {
+                $stmtDel->bind_param('is', $cotizacionId, $indicacionGenerica);
+                $stmtDel->execute();
+                $stmtDel->close();
+            }
+        }
+
+        foreach ($detallesImagen as $item) {
+            $tipoOrden = (string)$item['tipo'];
+            $detalleId = (int)$item['detalle_id'];
+            $descripcionItem = (string)$item['descripcion'];
+            $medicoId = (int)$item['medico_id'];
+            $servicioId = (int)$item['servicio_id'];
+            $consultaOrigen = (int)$item['consulta_id'] > 0 ? (int)$item['consulta_id'] : $consultaEpisodioId;
+
+            // Al sincronizar tras un abono, priorizar el vínculo ya persistido en el detalle.
+            if ($detalleId > 0 && ($medicoId <= 0 || $consultaOrigen <= 0 || $servicioId <= 0) && $detalleTieneMedico) {
+                $stmtDetalle = $conn->prepare('SELECT medico_id, consulta_id, servicio_id FROM cotizaciones_detalle WHERE id = ? AND cotizacion_id = ? LIMIT 1');
+                if ($stmtDetalle) {
+                    $stmtDetalle->bind_param('ii', $detalleId, $cotizacionId);
+                    $stmtDetalle->execute();
+                    $rowDetalle = $stmtDetalle->get_result()->fetch_assoc();
+                    $stmtDetalle->close();
+                    if ($medicoId <= 0) {
+                        $medicoId = (int)($rowDetalle['medico_id'] ?? 0);
+                    }
+                    if ($consultaOrigen <= 0) {
+                        $consultaOrigen = (int)($rowDetalle['consulta_id'] ?? 0);
+                    }
+                    if ($servicioId <= 0) {
+                        $servicioId = (int)($rowDetalle['servicio_id'] ?? 0);
+                    }
+                }
+            }
+
+            if ($medicoId <= 0 && $detalleId > 0 && $agendaResuelveMedico) {
+                $stmtAgenda = $conn->prepare('SELECT medico_id FROM agenda_servicios_cotizacion WHERE cotizacion_id = ? AND cotizacion_detalle_id = ? AND medico_id > 0 ORDER BY id ASC LIMIT 1');
+                if ($stmtAgenda) {
+                    $stmtAgenda->bind_param('ii', $cotizacionId, $detalleId);
+                    $stmtAgenda->execute();
+                    $medicoId = (int)($stmtAgenda->get_result()->fetch_assoc()['medico_id'] ?? 0);
+                    $stmtAgenda->close();
+                }
+            }
+            if ($medicoId <= 0 && $servicioId > 0) {
+                $stmtTarifa = $conn->prepare('SELECT medico_id FROM tarifas WHERE id = ? LIMIT 1');
+                if ($stmtTarifa) {
+                    $stmtTarifa->bind_param('i', $servicioId);
+                    $stmtTarifa->execute();
+                    $medicoId = (int)($stmtTarifa->get_result()->fetch_assoc()['medico_id'] ?? 0);
+                    $stmtTarifa->close();
+                }
+            }
+            if ($medicoId <= 0 && $consultaOrigen > 0) {
+                $stmtConsulta = $conn->prepare('SELECT medico_id FROM consultas WHERE id = ? LIMIT 1');
+                if ($stmtConsulta) {
+                    $stmtConsulta->bind_param('i', $consultaOrigen);
+                    $stmtConsulta->execute();
+                    $medicoId = (int)($stmtConsulta->get_result()->fetch_assoc()['medico_id'] ?? 0);
+                    $stmtConsulta->close();
+                }
+            }
+
+            $indicaciones = ($detalleId > 0 ? "Detalle #{$detalleId} - " : '') . "{$descripcionItem} | Orden creada desde cotización #{$cotizacionId}";
+
+            if ($tieneCotizacionId) {
+                $stmtChk = $conn->prepare('SELECT id FROM ordenes_imagen WHERE cotizacion_id = ? AND tipo = ? AND indicaciones = ? LIMIT 1');
+                if ($stmtChk) {
+                    $stmtChk->bind_param('iss', $cotizacionId, $tipoOrden, $indicaciones);
+                    $stmtChk->execute();
+                    $existe = $stmtChk->get_result()->fetch_assoc();
+                    $stmtChk->close();
+                    if ($existe) {
+                        $ordenId = (int)($existe['id'] ?? 0);
+                        if ($ordenId > 0 && $tieneMedicoId && $medicoId > 0) {
+                            $stmtUpdMedico = $conn->prepare('UPDATE ordenes_imagen SET medico_id = ? WHERE id = ? AND (medico_id IS NULL OR medico_id = 0)');
+                            if ($stmtUpdMedico) {
+                                $stmtUpdMedico->bind_param('ii', $medicoId, $ordenId);
+                                $stmtUpdMedico->execute();
+                                $stmtUpdMedico->close();
+                            }
+                        }
+                        if ($ordenId > 0 && $consultaOrigen > 0 && $tieneConsultaId) {
+                            $stmtUpdConsulta = $conn->prepare('UPDATE ordenes_imagen SET consulta_id = CASE WHEN consulta_id IS NULL OR consulta_id = 0 THEN ? ELSE consulta_id END WHERE id = ?');
+                            if ($stmtUpdConsulta) {
+                                $stmtUpdConsulta->bind_param('ii', $consultaOrigen, $ordenId);
+                                $stmtUpdConsulta->execute();
+                                $stmtUpdConsulta->close();
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            $cols = ['consulta_id', 'paciente_id', 'tipo', 'indicaciones', 'estado'];
+            $vals = ['?', '?', '?', '?', "'pendiente'"];
+            $tipos = 'iiss';
+            $params = [$consultaOrigen > 0 ? $consultaOrigen : ($consultaAdmiteNull ? null : 0), $pacienteId, $tipoOrden, $indicaciones];
+
+            if ($tieneSolicitadoPor) {
+                $cols[] = 'solicitado_por';
+                $vals[] = '?';
+                $tipos .= 'i';
+                $params[] = $usuarioSesion;
+            }
+            if ($tieneMedicoId) {
+                $cols[] = 'medico_id';
+                $vals[] = '?';
+                $tipos .= 'i';
+                $params[] = $medicoId;
+            }
+            if ($tieneCotizacionId) {
+                $cols[] = 'cotizacion_id';
+                $vals[] = '?';
+                $tipos .= 'i';
+                $params[] = $cotizacionId;
+            }
+            if ($tieneCargaAnticipada) {
+                $cols[] = 'carga_anticipada';
+                $vals[] = '?';
+                $tipos .= 'i';
+                $params[] = 0;
+            }
+
+            $stmtIns = $conn->prepare('INSERT INTO ordenes_imagen (' . implode(', ', $cols) . ') VALUES (' . implode(', ', $vals) . ')');
+            if ($stmtIns) {
+                $stmtIns->bind_param($tipos, ...$params);
+                $stmtIns->execute();
+                $stmtIns->close();
+            }
+        }
+
+        if ($tieneCotizacionId && $tieneConsultaId && $consultaEpisodioId > 0) {
+            $stmtAjuste = $conn->prepare('UPDATE ordenes_imagen SET consulta_id = ? WHERE cotizacion_id = ? AND (consulta_id IS NULL OR consulta_id = 0)');
+            if ($stmtAjuste) {
+                $stmtAjuste->bind_param('ii', $consultaEpisodioId, $cotizacionId);
+                $stmtAjuste->execute();
+                $stmtAjuste->close();
+            }
+        }
+    }
+}
