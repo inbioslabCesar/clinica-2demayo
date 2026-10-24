@@ -18,6 +18,43 @@ import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
 import { getLimaDate, normalizeHourHm } from "../../utils/dateTime";
 
+function waitMs(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function fetchJsonWithRetry(url, options = {}, { attempts = 3, baseDelayMs = 220 } = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await authFetch(url, options);
+      const status = Number(response?.status || 0);
+      const retryableStatus = status === 429 || status >= 500;
+      let data = null;
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
+      }
+
+      if (response?.ok) {
+        return data || {};
+      }
+
+      const message = String(data?.error || data?.message || `HTTP ${status || "desconocido"}`);
+      if (!retryableStatus || attempt >= attempts) {
+        throw new Error(message);
+      }
+      lastError = new Error(message);
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      lastError = error instanceof Error ? error : new Error("Error de red");
+      if (attempt >= attempts) break;
+    }
+    await waitMs(baseDelayMs * attempt);
+  }
+  throw lastError || new Error("No se pudo completar la solicitud");
+}
+
 function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = null, cotizacionId = null, isEditIntent = false }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -81,6 +118,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const [adendaReferencia, setAdendaReferencia] = useState(null);
   const [precioConsultaReferencia, setPrecioConsultaReferencia] = useState(null);
   const coberturaConsultaCacheRef = useRef(new Map());
+  const medicosRef = useRef([]);
   const actionLockRef = useRef(false);
   const adendaPrefillAplicadoRef = useRef(false);
   const vieneDeReprogramacionRecordatorios = (origenFlujo === "recordatorios" && accionFlujo === "reprogramar");
@@ -102,6 +140,10 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       .map((h) => normalizeHourHm(h))
       .filter(Boolean)
   ));
+
+  useEffect(() => {
+    medicosRef.current = Array.isArray(medicos) ? medicos : [];
+  }, [medicos]);
 
   const sincronizarRecordatorioPostReprogramacion = async (consultaIdFinal, opts = {}) => {
     if (!vieneDeReprogramacionRecordatorios || Number(consultaIdFinal || 0) <= 0) return { ok: true, skipped: true };
@@ -320,25 +362,39 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   };
 
   useEffect(() => {
-    // Cargar médicos y tarifas, luego filtrar
-    Promise.all([
-      authFetch(BASE_URL + "api_medicos.php", { credentials: "include" }).then(r => r.json()),
-      authFetch(BASE_URL + "api_tarifas.php", { credentials: "include" }).then(r => r.json())
-    ]).then(([medicosData, tarifasData]) => {
+    let cancelled = false;
+    const load = async () => {
+      const [medicosData, tarifasData] = await Promise.all([
+        fetchJsonWithRetry(BASE_URL + "api_medicos.php", { credentials: "include", cache: "no-store" }, { attempts: 3, baseDelayMs: 240 }).catch(() => null),
+        fetchJsonWithRetry(BASE_URL + "api_tarifas.php", { credentials: "include", cache: "no-store" }, { attempts: 3, baseDelayMs: 240 }).catch(() => null),
+      ]);
+      if (cancelled) return;
+
       const medicosList = Array.isArray(medicosData?.medicos) ? medicosData.medicos : [];
-      setMedicos(medicosList);
       const tarifasConsultaFiltradas = (Array.isArray(tarifasData?.tarifas) ? tarifasData.tarifas : [])
         .filter(t => t.servicio_tipo === "consulta" && Number(t.activo) === 1 && t.medico_id);
-      setTarifasConsulta(tarifasConsultaFiltradas);
-      const idsMedicosConTarifa = tarifasConsultaFiltradas.map(t => String(t.medico_id));
-      const filtrados = medicosList.filter(m => idsMedicosConTarifa.includes(String(m.id)));
-      setMedicosConTarifa(filtrados.length > 0 ? filtrados : medicosList);
-    }).catch(() => {
-      setMedicos([]);
-      setTarifasConsulta([]);
-      setMedicosConTarifa([]);
-      setCoverageByTarifa({});
-    });
+
+      if (medicosList.length > 0) {
+        setMedicos(medicosList);
+      }
+      if (Array.isArray(tarifasData?.tarifas)) {
+        setTarifasConsulta(tarifasConsultaFiltradas);
+      }
+
+      const baseMedicos = medicosList.length > 0 ? medicosList : medicosRef.current;
+      if (tarifasConsultaFiltradas.length > 0) {
+        const idsMedicosConTarifa = tarifasConsultaFiltradas.map(t => String(t.medico_id));
+        const filtrados = baseMedicos.filter(m => idsMedicosConTarifa.includes(String(m.id)));
+        setMedicosConTarifa(filtrados.length > 0 ? filtrados : baseMedicos);
+      } else if (medicosList.length > 0) {
+        setMedicosConTarifa(medicosList);
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Swal from "sweetalert2";
 
 import { authFetch } from "../../utils/apiClient";
@@ -19,6 +19,42 @@ function getFechaLimaISO(offsetDias = 0) {
   return `${y}-${m}-${d}`;
 }
 
+function waitMs(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function fetchJsonWithRetry(url, options = {}, { attempts = 3, baseDelayMs = 220 } = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await authFetch(url, options);
+      const status = Number(response?.status || 0);
+      const contentType = String(response?.headers?.get?.("content-type") || "").toLowerCase();
+      const looksJson = contentType.includes("application/json") || contentType.includes("+json");
+      const retryableStatus = status === 429 || status >= 500;
+
+      const data = looksJson ? await response.json().catch(() => null) : null;
+      if (response?.ok && data && typeof data === "object") {
+        return data;
+      }
+
+      const message = looksJson
+        ? String(data?.error || data?.message || `HTTP ${status || "desconocido"}`)
+        : `El servidor devolvió una respuesta temporal no JSON (HTTP ${status || "desconocido"})`;
+
+      if (!retryableStatus || attempt >= attempts) {
+        throw new Error(message);
+      }
+      lastError = new Error(message);
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      lastError = error instanceof Error ? error : new Error("Error de red");
+      if (attempt >= attempts) break;
+    }
+    await waitMs(baseDelayMs * attempt);
+  }
+  throw lastError || new Error("No se pudo completar la solicitud");
+}
 
 export default function CajaAdminDashboard() {
   const [resumen, setResumen] = useState(null);
@@ -30,10 +66,14 @@ export default function CajaAdminDashboard() {
   const [showModal, setShowModal] = useState(false);
   const [showCorregirAperturaModal, setShowCorregirAperturaModal] = useState(false);
   const [fechaConsulta, setFechaConsulta] = useState(() => getFechaLimaISO(0));
+  const resumenInFlightRef = useRef(false);
+  const lastCajaActualFetchTsRef = useRef(0);
   // ...existing code...
 
   // Función para cargar resumen (reutilizable)
   const fetchResumen = async ({ silent = false, fecha = null } = {}) => {
+    if (resumenInFlightRef.current) return;
+    resumenInFlightRef.current = true;
     const fechaObjetivo = String(fecha || fechaConsulta || getFechaLimaISO(0));
     if (!silent) setLoading(true);
     try {
@@ -42,8 +82,7 @@ export default function CajaAdminDashboard() {
         params.set("fecha", fechaObjetivo);
       }
       const url = `api_resumen_diario.php${params.toString() ? `?${params.toString()}` : ""}`;
-      const resp = await authFetch(url);
-      const data = await resp.json();
+      const data = await fetchJsonWithRetry(url, { cache: "no-store" }, { attempts: 3, baseDelayMs: 240 });
       if (data.success) {
         setResumen(data);
         setError("");
@@ -51,19 +90,33 @@ export default function CajaAdminDashboard() {
         setCajaAbierta(abierta);
 
         if (abierta) {
+          const nowTs = Date.now();
+          const shouldRefreshCajaActual = !silent
+            || !cajaActual
+            || (nowTs - lastCajaActualFetchTsRef.current) >= 30000;
+
+          if (!shouldRefreshCajaActual) {
+            return;
+          }
+
           try {
-            const rCaja = await authFetch("api_caja_actual.php", { cache: "no-store" });
-            const dataCaja = await rCaja.json();
+            const dataCaja = await fetchJsonWithRetry("api_caja_actual.php", { cache: "no-store" }, { attempts: 2, baseDelayMs: 180 });
             if (dataCaja?.success && dataCaja?.caja) {
               setCajaActual(dataCaja.caja);
+              lastCajaActualFetchTsRef.current = nowTs;
             } else {
-              setCajaActual(null);
+              if (!silent) {
+                setCajaActual(null);
+              }
             }
           } catch {
-            setCajaActual(null);
+            if (!silent) {
+              setCajaActual(null);
+            }
           }
         } else {
           setCajaActual(null);
+          lastCajaActualFetchTsRef.current = 0;
         }
       } else {
         if (!silent) {
@@ -75,6 +128,7 @@ export default function CajaAdminDashboard() {
         setError("Error de conexión");
       }
     } finally {
+      resumenInFlightRef.current = false;
       if (!silent) setLoading(false);
     }
   };

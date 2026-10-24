@@ -668,6 +668,44 @@ function ordenarTiposDetalle(tipos) {
   });
 }
 
+function waitMs(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function fetchJsonWithRetry(url, options = {}, { attempts = 3, baseDelayMs = 220 } = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const res = await authFetch(url, options);
+      const status = Number(res?.status || 0);
+      const contentType = String(res?.headers?.get?.("content-type") || "").toLowerCase();
+      const looksJson = contentType.includes("application/json") || contentType.includes("+json");
+      const retryableStatus = status === 429 || status >= 500;
+
+      const data = looksJson ? await res.json().catch(() => null) : null;
+      if (res?.ok && data && typeof data === "object") {
+        return data;
+      }
+
+      const message = looksJson
+        ? String(data?.error || data?.message || `HTTP ${status || "desconocido"}`)
+        : `El servidor devolvió una respuesta temporal no JSON (HTTP ${status || "desconocido"})`;
+
+      if (!retryableStatus || attempt >= attempts) {
+        throw new Error(message);
+      }
+      lastError = new Error(message);
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      lastError = error instanceof Error ? error : new Error("Error de red");
+      if (attempt >= attempts) break;
+    }
+    await waitMs(baseDelayMs * attempt);
+  }
+
+  throw lastError || new Error("No se pudo completar la solicitud");
+}
+
 function obtenerPrioridad(item) {
   const dias = diasParaCita(item?.fecha);
   const estado = String(item?.estado_gestion || "pendiente");
@@ -816,12 +854,11 @@ export default function RecordatoriosCitasPage() {
         const citasParams = new URLSearchParams({ ...base, tipo_recordatorio: "citas" });
         const faltasParams = new URLSearchParams({ ...base, tipo_recordatorio: "falta_cancelar" });
 
-        const [resCitas, resFaltas] = await Promise.all([
-          authFetch(`api_recordatorios_citas.php?${citasParams.toString()}`),
-          authFetch(`api_recordatorios_citas.php?${faltasParams.toString()}`),
+        const [dataCitas, dataFaltas] = await Promise.all([
+          fetchJsonWithRetry(`api_recordatorios_citas.php?${citasParams.toString()}`, { cache: "no-store" }, { attempts: 3, baseDelayMs: 240 }),
+          fetchJsonWithRetry(`api_recordatorios_citas.php?${faltasParams.toString()}`, { cache: "no-store" }, { attempts: 3, baseDelayMs: 240 }),
         ]);
 
-        const [dataCitas, dataFaltas] = await Promise.all([resCitas.json(), resFaltas.json()]);
         if (!dataCitas.success) throw new Error(dataCitas.error || "No se pudo cargar recordatorios de citas");
         if (!dataFaltas.success) throw new Error(dataFaltas.error || "No se pudo cargar faltas por cancelar");
 
@@ -869,8 +906,7 @@ export default function RecordatoriosCitasPage() {
         params.set("page", String(page));
         params.set("per_page", String(rowsPerPage));
       }
-      const res = await authFetch(`api_recordatorios_citas.php?${params.toString()}`);
-      const data = await res.json();
+      const data = await fetchJsonWithRetry(`api_recordatorios_citas.php?${params.toString()}`, { cache: "no-store" }, { attempts: 3, baseDelayMs: 240 });
       if (!data.success) {
         throw new Error(data.error || "No se pudo cargar recordatorios");
       }
@@ -912,8 +948,7 @@ export default function RecordatoriosCitasPage() {
 
   const cargarMedicos = async () => {
     try {
-      const res = await authFetch("api_medicos.php", { credentials: "include" });
-      const data = await res.json();
+      const data = await fetchJsonWithRetry("api_medicos.php", { credentials: "include", cache: "no-store" }, { attempts: 3, baseDelayMs: 240 });
       const rows = Array.isArray(data?.medicos) ? data.medicos : [];
       const activos = rows.filter((m) => Number(m?.activo ?? 1) === 1 || String(m?.activo ?? "1") === "1");
       setMedicosCatalogo(activos);
@@ -924,8 +959,7 @@ export default function RecordatoriosCitasPage() {
 
   const cargarNombreClinicaRemitente = async () => {
     try {
-      const res = await authFetch("api_get_configuracion.php", { method: "GET", cache: "no-store" });
-      const data = await res.json();
+      const data = await fetchJsonWithRetry("api_get_configuracion.php", { method: "GET", cache: "no-store" }, { attempts: 2, baseDelayMs: 180 });
       const cfg = data?.data || data?.configuracion || {};
       const nombre = String(cfg?.nombre_clinica || cfg?.nombre || "").trim();
       if (nombre) {
@@ -975,12 +1009,10 @@ export default function RecordatoriosCitasPage() {
         fecha,
       });
 
-      const [resVista, resDisp] = await Promise.all([
-        authFetch(`api_recordatorios_citas.php?${paramsVista.toString()}`),
-        authFetch(`api_horarios_disponibles.php?${paramsDisp.toString()}`),
+      const [dataVista, dataDisp] = await Promise.all([
+        fetchJsonWithRetry(`api_recordatorios_citas.php?${paramsVista.toString()}`, { cache: "no-store" }, { attempts: 3, baseDelayMs: 220 }),
+        fetchJsonWithRetry(`api_horarios_disponibles.php?${paramsDisp.toString()}`, { cache: "no-store" }, { attempts: 2, baseDelayMs: 180 }),
       ]);
-
-      const [dataVista, dataDisp] = await Promise.all([resVista.json(), resDisp.json()]);
       if (!dataVista?.success) {
         throw new Error(dataVista?.error || "No se pudo cargar agenda del médico");
       }

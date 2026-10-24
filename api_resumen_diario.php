@@ -1,5 +1,8 @@
 <?php
 require_once __DIR__ . '/init_api.php';
+if (!defined('SKIP_MYSQLI_INIT')) {
+    define('SKIP_MYSQLI_INIT', true);
+}
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/caja_autocierre.php';
 

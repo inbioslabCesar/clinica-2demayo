@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import Swal from 'sweetalert2';
 import { BASE_URL } from '../config/config';
@@ -23,10 +23,16 @@ const EMPTY_MEDICO_FORM = {
   tope_adelanto_periodo: '',
 };
 
+function waitMs(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 const useMedicos = () => {
   const [medicos, setMedicos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const medicosRef = useRef([]);
+  const retryTimerRef = useRef(null);
 
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ ...EMPTY_MEDICO_FORM });
@@ -45,21 +51,67 @@ const useMedicos = () => {
   const [page, setPage] = useState(1);
 
   useEffect(() => {
-    fetchMedicos();
-  }, []);
+    medicosRef.current = Array.isArray(medicos) ? medicos : [];
+  }, [medicos]);
 
-  const fetchMedicos = async () => {
-    setLoading(true);
+  useEffect(() => {
+    fetchMedicos();
+    return () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, [fetchMedicos]);
+
+  const fetchMedicos = useCallback(async ({ showLoading = true } = {}) => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    if (showLoading) {
+      setLoading(true);
+    }
     try {
-      const res = await axios.get(BASE_URL + 'api_medicos.php');
-      setMedicos(res.data.medicos || []);
+      let data = null;
+      let lastError = null;
+
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const res = await axios.get(BASE_URL + 'api_medicos.php', {
+            timeout: 10000,
+            withCredentials: true,
+          });
+          data = res?.data || null;
+          if (res?.status >= 500 && attempt < 3) {
+            await waitMs(220 * attempt);
+            continue;
+          }
+          break;
+        } catch (errorFetch) {
+          lastError = errorFetch;
+          if (attempt >= 3) break;
+          await waitMs(220 * attempt);
+        }
+      }
+
+      if (!data || data.success === false) {
+        throw lastError || new Error(String(data?.error || 'Error al cargar medicos'));
+      }
+
+      setMedicos(Array.isArray(data.medicos) ? data.medicos : []);
       setError(null);
     } catch {
       setError('Error al cargar medicos');
+      if (medicosRef.current.length === 0) {
+        retryTimerRef.current = setTimeout(() => {
+          fetchMedicos({ showLoading: false });
+        }, 1400);
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   const createMedico = async (medicoData) => {
     setSaving(true);

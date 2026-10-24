@@ -62,6 +62,36 @@ function resolveAgendaStepMinutes() {
   return Math.max(5, Math.min(120, Math.round(configured)));
 }
 
+function waitMs(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function fetchJsonWithRetry(url, options = {}, { attempts = 3, baseDelayMs = 220 } = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await authFetch(url, options);
+      const status = Number(response?.status || 0);
+      const retryableStatus = status === 429 || status >= 500;
+      const data = await response.json().catch(() => null);
+      if (response?.ok) {
+        return data || {};
+      }
+      const message = String(data?.error || data?.message || `HTTP ${status || "desconocido"}`);
+      if (!retryableStatus || attempt >= attempts) {
+        throw new Error(message);
+      }
+      lastError = new Error(message);
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      lastError = error instanceof Error ? error : new Error("Error de red");
+      if (attempt >= attempts) break;
+    }
+    await waitMs(baseDelayMs * attempt);
+  }
+  throw lastError || new Error("No se pudo completar la solicitud");
+}
+
 function DisponibilidadMedicos({ refreshKey = 0 }) {
   const [medicos, setMedicos] = useState([]);
   const [consultas, setConsultas] = useState([]);
@@ -106,27 +136,33 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
     const load = async () => {
       setLoading(true);
       try {
-        const [medicosRes, disponibilidadRes, consultasRes] = await Promise.all([
-          authFetch("api_medicos.php", { cache: "no-store" }).then((r) => r.json()),
-          authFetch(
+        const [medicosRes, disponibilidadRes, consultasRes] = await Promise.allSettled([
+          fetchJsonWithRetry("api_medicos.php", { cache: "no-store" }, { attempts: 3, baseDelayMs: 220 }),
+          fetchJsonWithRetry(
             `api_disponibilidad_medicos.php?fecha_desde=${encodeURIComponent(monthRange.from)}&fecha_hasta=${encodeURIComponent(monthRange.to)}&_t=${refreshKey}`,
-            { cache: "no-store" }
-          ).then((r) => r.json()),
-          authFetch(
+            { cache: "no-store" },
+            { attempts: 3, baseDelayMs: 220 }
+          ),
+          fetchJsonWithRetry(
             `api_consultas.php?solo_activas=1&vista=disponibilidad&fecha_desde=${encodeURIComponent(monthRange.from)}&fecha_hasta=${encodeURIComponent(monthRange.to)}&_t=${refreshKey}`,
-            { cache: "no-store" }
-          ).then((r) => r.json()),
+            { cache: "no-store" },
+            { attempts: 3, baseDelayMs: 220 }
+          ),
         ]);
 
         if (cancelled) return;
-        setMedicos(Array.isArray(medicosRes?.medicos) ? medicosRes.medicos : []);
-        setDisponibilidad(Array.isArray(disponibilidadRes?.disponibilidad) ? disponibilidadRes.disponibilidad : []);
-        setConsultas(Array.isArray(consultasRes?.consultas) ? consultasRes.consultas : []);
+        if (medicosRes.status === "fulfilled" && Array.isArray(medicosRes.value?.medicos)) {
+          setMedicos(medicosRes.value.medicos);
+        }
+        if (disponibilidadRes.status === "fulfilled" && Array.isArray(disponibilidadRes.value?.disponibilidad)) {
+          setDisponibilidad(disponibilidadRes.value.disponibilidad);
+        }
+        if (consultasRes.status === "fulfilled" && Array.isArray(consultasRes.value?.consultas)) {
+          setConsultas(consultasRes.value.consultas);
+        }
       } catch {
         if (cancelled) return;
-        setMedicos([]);
-        setDisponibilidad([]);
-        setConsultas([]);
+        // Mantener el último estado válido para evitar parpadeo o listas vacías intermitentes.
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -258,32 +294,32 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
     const controller = new AbortController();
     const cargarOcupados = async () => {
       try {
-        const entries = await Promise.all(
-          Array.from(claves.values()).map(async ({ medicoId, fechaRef }) => {
+        const next = {};
+        for (const { medicoId, fechaRef } of Array.from(claves.values())) {
+          if (controller.signal.aborted) return;
+          try {
             const params = new URLSearchParams({
               medico_id: String(medicoId),
               fecha: fechaRef,
             });
-            const res = await authFetch(`api_horarios_disponibles.php?${params.toString()}`, {
-              cache: "no-store",
-              signal: controller.signal,
-            });
-            const data = await res.json();
+            const data = await fetchJsonWithRetry(
+              `api_horarios_disponibles.php?${params.toString()}`,
+              { cache: "no-store", signal: controller.signal },
+              { attempts: 2, baseDelayMs: 160 }
+            );
             const ocupados = (data?.success && Array.isArray(data?.horarios_ocupados))
               ? data.horarios_ocupados.map((h) => normalizeHHMM(h)).filter(Boolean)
               : [];
-            return [`${medicoId}|${fechaRef}`, ocupados];
-          })
-        );
-
-        const next = {};
-        entries.forEach(([key, ocupados]) => {
-          next[key] = ocupados;
-        });
+            next[`${medicoId}|${fechaRef}`] = ocupados;
+          } catch {
+            next[`${medicoId}|${fechaRef}`] = [];
+          }
+          await waitMs(35);
+        }
         setOcupadosPorMedicoFecha(next);
       } catch (error) {
         if (error?.name === "AbortError") return;
-        setOcupadosPorMedicoFecha({});
+        // Mantener último snapshot válido en errores transitorios de red.
       }
     };
 

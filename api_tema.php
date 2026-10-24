@@ -9,6 +9,9 @@
  * POST → guarda tema (solo administrador)
  */
 require_once __DIR__ . '/init_api.php';
+if (!defined('SKIP_MYSQLI_INIT')) {
+    define('SKIP_MYSQLI_INIT', true);
+}
 require_once __DIR__ . '/config.php';
 
 header('Content-Type: application/json; charset=utf-8');
