@@ -5,33 +5,7 @@ import { useQuoteCart } from "../../context/QuoteCartContext";
 import { BASE_URL, getCachedAgendaSlotMinutes } from "../../config/config";
 import { aplicarExclusionConsultaDelCarrito, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../../utils/agendaGuardCotizacion";
 import { getReferenceHorarioFromCart } from "../../utils/cartScheduling";
-
-function getLimaDate() {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Lima",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-  const year = parts.find((p) => p.type === "year")?.value;
-  const month = parts.find((p) => p.type === "month")?.value;
-  const day = parts.find((p) => p.type === "day")?.value;
-  return `${year}-${month}-${day}`;
-}
-
-function getLimaTime() {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "America/Lima",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(now);
-  const hour = parts.find((p) => p.type === "hour")?.value;
-  const minute = parts.find((p) => p.type === "minute")?.value;
-  return `${hour}:${minute}`;
-}
+import { getLimaDate, getLimaTime, normalizeHourHm } from "../../utils/dateTime";
 
 function normalizeServiceType(value) {
   const base = String(value || "").toLowerCase().trim();
@@ -89,16 +63,6 @@ function buildPackageComponents(pkg) {
       };
     })
     .filter((it) => it.servicio_id > 0 || String(it.descripcion || "").trim() !== "");
-}
-
-function normalizeHourHm(value) {
-  const txt = String(value || "").trim();
-  const match = txt.match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return "";
-  const h = Number(match[1]);
-  const m = Number(match[2]);
-  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 function normalizeDateYmd(value) {

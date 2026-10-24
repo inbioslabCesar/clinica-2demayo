@@ -1,4 +1,5 @@
 import { getCachedAgendaSlotMinutes } from "../config/config";
+import { normalizeDateYmd, normalizeHourHm } from "./dateTime";
 
 const AGENDABLE_SERVICE_TYPES = new Set([
   "consulta",
@@ -14,27 +15,6 @@ function normalizeServiceType(value) {
   if (raw === "procedimientos") return "procedimiento";
   if (raw === "operaciones") return "operacion";
   return raw;
-}
-
-function normalizeDateYmd(value) {
-  const text = String(value || "").trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
-  const parsed = new Date(text);
-  if (Number.isNaN(parsed.getTime())) return "";
-  const y = parsed.getFullYear();
-  const m = String(parsed.getMonth() + 1).padStart(2, "0");
-  const d = String(parsed.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-function normalizeHourHm(value) {
-  const text = String(value || "").trim();
-  const match = text.match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return "";
-  const h = Number(match[1]);
-  const m = Number(match[2]);
-  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 function hmToMinutes(hm) {

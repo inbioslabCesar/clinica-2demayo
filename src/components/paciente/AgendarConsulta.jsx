@@ -16,16 +16,7 @@ import {
 } from "react-icons/fa";
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
-
-function normalizeHourHm(value) {
-  const raw = String(value || "").trim();
-  const match = raw.match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return "";
-  const h = Number(match[1]);
-  const m = Number(match[2]);
-  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
+import { getLimaDate, normalizeHourHm } from "../../utils/dateTime";
 
 function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = null, cotizacionId = null, isEditIntent = false }) {
   const location = useLocation();
@@ -75,20 +66,6 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const [horariosDisponibles, setHorariosDisponibles] = useState([]);
   const [horariosOcupados, setHorariosOcupados] = useState([]);
   // Inicializar fecha con la fecha actual de Lima
-  const getLimaDate = () => {
-    const now = new Date();
-    const partes = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Lima',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).formatToParts(now);
-
-    const year = partes.find((p) => p.type === 'year')?.value;
-    const month = partes.find((p) => p.type === 'month')?.value;
-    const day = partes.find((p) => p.type === 'day')?.value;
-    return `${year}-${month}-${day}`;
-  };
   const [fecha, setFecha] = useState(getLimaDate());
   const [hora, setHora] = useState("");
   const [msg, setMsg] = useState("");

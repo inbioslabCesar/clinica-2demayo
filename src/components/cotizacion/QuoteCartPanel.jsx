@@ -5,34 +5,8 @@ import Swal from "sweetalert2";
 import { authFetch } from "../../utils/apiClient";
 import { aplicarExclusionConsultaDelCarrito, validarAgendaAntesDeCotizar } from "../../utils/agendaGuardCotizacion";
 import { getReferenceHorarioFromCart } from "../../utils/cartScheduling";
-
-function getLimaDate() {
-  const now = new Date();
-  const partes = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Lima",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-
-  const year = partes.find((p) => p.type === "year")?.value;
-  const month = partes.find((p) => p.type === "month")?.value;
-  const day = partes.find((p) => p.type === "day")?.value;
-  return `${year}-${month}-${day}`;
-}
-
-function getLimaTime() {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "America/Lima",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(now);
-  const hour = parts.find((p) => p.type === "hour")?.value;
-  const minute = parts.find((p) => p.type === "minute")?.value;
-  return `${hour}:${minute}`;
-}
+import { getLimaDate, getLimaTime } from "../../utils/dateTime";
+import useSubmitGuard from "../../hooks/useSubmitGuard";
 
 function esServicioProgramableParaAgenda(servicioTipo) {
   const tipo = String(servicioTipo || "").toLowerCase();
@@ -146,7 +120,7 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
   const [isDesktopViewport, setIsDesktopViewport] = useState(
     typeof window !== "undefined" ? window.innerWidth >= XL_BREAKPOINT : true
   );
-  const [saving, setSaving] = useState(false);
+  const { saving, run: runGuardedSubmit } = useSubmitGuard("cotizacion");
   const [aplicarProgramacionGlobal, setAplicarProgramacionGlobal] = useState(true);
   const [fechaProgramacionGlobal, setFechaProgramacionGlobal] = useState(getLimaDate());
   const [horaProgramacionGlobal, setHoraProgramacionGlobal] = useState(getLimaTime());
@@ -468,8 +442,13 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
     return data.cotizacion;
   };
 
-  const registrarCotizacionCarrito = async (irACobro = false) => {
-    if (saving) return;
+  const registrarCotizacionCarrito = (irACobro = false) => runGuardedSubmit(
+    (clientRequestId, releaseRequestId) => ejecutarRegistroCarrito({ irACobro, clientRequestId, releaseRequestId }),
+    JSON.stringify({ paciente: cart?.patientId, edicion: editingCotizacionId || "", items: cart?.items })
+  );
+
+  const ejecutarRegistroCarrito = async ({ irACobro: irACobroSolicitado = false, clientRequestId = "", releaseRequestId = () => {} } = {}) => {
+    let irACobro = irACobroSolicitado;
     if (isEditingCotizacion && irACobro) {
       irACobro = false;
     }
@@ -757,8 +736,6 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
         return;
       }
 
-      setSaving(true);
-
       const fechaGlobal = String(fechaProgramacionGlobal || "").slice(0, 10);
       const horaGlobal = String(horaProgramacionGlobal || "").slice(0, 5);
       const usarProgramacionGlobal = aplicarProgramacionGlobal && Boolean(fechaGlobal) && Boolean(horaGlobal);
@@ -924,6 +901,7 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
 
           const payloadSplit = {
             accion: "registrar_split",
+            client_request_id: clientRequestId,
             paciente_id: pacienteRegistradoId > 0 ? pacienteRegistradoId : 0,
             paciente_nombre: pacienteNombreParaPayload,
             paciente_dni: esCotizacionInformativa ? "-" : undefined,
@@ -952,6 +930,7 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
           if (!dataSplit?.success || cotizacionesCreadas.length === 0) {
             throw new Error(dataSplit?.error || "No se pudo registrar el split de cotizaciones");
           }
+          releaseRequestId();
 
           clearCart();
 
@@ -972,6 +951,7 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
         }
 
         payload = {
+          client_request_id: clientRequestId,
           paciente_id: pacienteRegistradoId > 0 ? pacienteRegistradoId : 0,
           paciente_nombre: pacienteNombreParaPayload,
           paciente_dni: esCotizacionInformativa ? "-" : undefined,
@@ -999,6 +979,7 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
       if (!data?.success || !cotizacionIdFinal) {
         throw new Error(data?.error || (isEditingCotizacion ? "No se pudo actualizar la cotizacion" : "No se pudo registrar la cotizacion"));
       }
+      releaseRequestId();
 
       clearCart();
 
@@ -1019,8 +1000,6 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
       navigate("/cotizaciones");
     } catch (err) {
       await Swal.fire("Error", err?.message || "No se pudo registrar la cotizacion", "error");
-    } finally {
-      setSaving(false);
     }
   };
 

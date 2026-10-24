@@ -8,16 +8,8 @@ import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles
 import { getMedicoAccentColor } from "../utils/medicoAccent";
 import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
-
-function normalizeHourHm(value) {
-  const raw = String(value || "").trim();
-  const match = raw.match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return "";
-  const h = Number(match[1]);
-  const m = Number(match[2]);
-  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
+import useSubmitGuard from "../hooks/useSubmitGuard";
+import { getLimaDate, normalizeAgendaProgramacionModo, normalizeHourHm } from "../utils/dateTime";
 
 function updateConsultaDescriptionSchedule(description, fechaProgramada, horaProgramada) {
   const base = String(description || "").trim();
@@ -29,11 +21,6 @@ function updateConsultaDescriptionSchedule(description, fechaProgramada, horaPro
     return base.replace(/\(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\)\s*$/, scheduleText);
   }
   return `${base} ${scheduleText}`;
-}
-
-function normalizeAgendaProgramacionModo(value) {
-  const mode = String(value || "").trim().toLowerCase();
-  return ["strict", "mixed", "free"].includes(mode) ? mode : "mixed";
 }
 
 export default function CotizarEcografiaPage() {
@@ -58,7 +45,7 @@ export default function CotizarEcografiaPage() {
     const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
     const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
     const [programacionConsultaCotizacion, setProgramacionConsultaCotizacion] = useState(null); // {consultaId, fecha, hora} en edición
-    const [isSaving, setIsSaving] = useState(false);
+    const { saving: isSaving, run: runGuardedSubmit } = useSubmitGuard("cotizacion");
     const { cart, addItems, replaceCart, clearCart, count: cartCount } = useQuoteCart();
     const pacienteTemporal = location.state?.pacienteTemporal || null;
     const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
@@ -69,21 +56,6 @@ export default function CotizarEcografiaPage() {
       const value = Number(sp.get("cotizacion_id") || 0);
       return Number.isFinite(value) && value > 0 ? value : 0;
     }, [location.search]);
-
-    const getLimaDate = () => {
-      const now = new Date();
-      const partes = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Lima',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).formatToParts(now);
-
-      const year = partes.find((p) => p.type === 'year')?.value;
-      const month = partes.find((p) => p.type === 'month')?.value;
-      const day = partes.find((p) => p.type === 'day')?.value;
-      return `${year}-${month}-${day}`;
-    };
 
     const selectedAvailabilityTargets = useMemo(() => {
       if (normalizeAgendaProgramacionModo(agendaProgramacionModo) === "free") return [];
@@ -1002,8 +974,21 @@ export default function CotizarEcografiaPage() {
     return [...detallesNoEcografia, ...detallesEcografia];
   };
 
-  const cotizar = async ({ irACobro = false } = {}) => {
-    if (isSaving) return;
+  const cotizar = ({ irACobro = false } = {}) => {
+    const fingerprint = JSON.stringify({
+      paciente: Number(pacienteId),
+      cotizacion: cotizacionIdEdicion,
+      seleccionados,
+      cantidades,
+      programacionPorTarifa,
+    });
+    return runGuardedSubmit(
+      (clientRequestId, releaseRequestId) => ejecutarCotizacion({ irACobro, clientRequestId, releaseRequestId }),
+      fingerprint
+    );
+  };
+
+  const ejecutarCotizacion = async ({ irACobro = false, clientRequestId = '', releaseRequestId = () => {} } = {}) => {
     if (seleccionados.length === 0) {
       setMensaje("Selecciona al menos una ecografía.");
       return;
@@ -1087,6 +1072,7 @@ export default function CotizarEcografiaPage() {
           motivo: 'Edición de cotización (merge seguro) desde cotizador de Ecografía'
         }
       : {
+          client_request_id: clientRequestId,
           paciente_id: Number(pacienteId),
           paciente_nombre: esCotizacionInformativa ? nombrePacienteTemporal : undefined,
           paciente_dni: esCotizacionInformativa ? dniPacienteTemporal : undefined,
@@ -1100,7 +1086,6 @@ export default function CotizarEcografiaPage() {
         };
 
     try {
-      setIsSaving(true);
       let data;
       const fechaRef = getLimaDate();
       const payloadConFecha = { ...payload, fecha_ref: fechaRef };
@@ -1146,6 +1131,7 @@ export default function CotizarEcografiaPage() {
       if (!data?.success) {
         throw new Error(data?.error || 'No se pudo registrar la cotización');
       }
+      releaseRequestId();
 
       const cotizacionDestino = Number(data?.cotizacion_id || cotizacionId || 0);
       const fueAdenda = Boolean(cotizacionId) && cotizacionDestino > 0 && cotizacionDestino !== Number(cotizacionId);
@@ -1179,8 +1165,6 @@ export default function CotizarEcografiaPage() {
       });
     } catch (error) {
       Swal.fire('Error', error?.message || 'No se pudo registrar la cotización', 'error');
-    } finally {
-      setIsSaving(false);
     }
   };
 

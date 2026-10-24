@@ -8,21 +8,8 @@ import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles
 import { getMedicoAccentColor } from "../utils/medicoAccent";
 import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
-
-function normalizeAgendaProgramacionModo(value) {
-  const mode = String(value || "").trim().toLowerCase();
-  return ["strict", "mixed", "free"].includes(mode) ? mode : "mixed";
-}
-
-function normalizeHourHm(value) {
-  const text = String(value || "").trim();
-  const match = text.match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return "";
-  const h = Number(match[1]);
-  const m = Number(match[2]);
-  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
+import useSubmitGuard from "../hooks/useSubmitGuard";
+import { getLimaDate, getLimaTime as getDefaultTime, normalizeAgendaProgramacionModo, normalizeHourHm } from "../utils/dateTime";
 
 export default function CotizarOperacionPage() {
     const [medicos, setMedicos] = useState([]);
@@ -44,6 +31,7 @@ export default function CotizarOperacionPage() {
   const [manualProgramacionByOperacion, setManualProgramacionByOperacion] = useState({});
   const [agendaProgramacionModo, setAgendaProgramacionModo] = useState(() => getCachedAgendaProgramacionModo());
   const [mostrarResumenCotizacion, setMostrarResumenCotizacion] = useState(false);
+  const { saving, run: runGuardedSubmit } = useSubmitGuard("cotizacion");
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
   const pacienteTemporal = location.state?.pacienteTemporal || null;
   const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
@@ -54,33 +42,6 @@ export default function CotizarOperacionPage() {
     const value = Number(sp.get("cotizacion_id") || 0);
     return Number.isFinite(value) && value > 0 ? value : 0;
   }, [location.search]);
-
-  const getLimaDate = () => {
-    const now = new Date();
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Lima',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).formatToParts(now);
-    const year = parts.find((p) => p.type === 'year')?.value;
-    const month = parts.find((p) => p.type === 'month')?.value;
-    const day = parts.find((p) => p.type === 'day')?.value;
-    return `${year}-${month}-${day}`;
-  };
-
-  const getDefaultTime = () => {
-    const now = new Date();
-    const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'America/Lima',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).formatToParts(now);
-    const hour = parts.find((p) => p.type === 'hour')?.value;
-    const minute = parts.find((p) => p.type === 'minute')?.value;
-    return `${hour}:${minute}`;
-  };
 
   const programacionBaseEdicion = useMemo(() => {
     if (cotizacionIdEdicion <= 0) return null;
@@ -791,7 +752,21 @@ export default function CotizarOperacionPage() {
     return [...detallesNoOperacion, ...detallesOperacion];
   };
 
-  const cotizar = async ({ irACobro = false } = {}) => {
+  const cotizar = ({ irACobro = false } = {}) => {
+    const fingerprint = JSON.stringify({
+      paciente: Number(pacienteId),
+      cotizacion: new URLSearchParams(location.search).get('cotizacion_id') || '',
+      seleccionados,
+      cantidades,
+      programacionPorOperacion,
+    });
+    return runGuardedSubmit(
+      (clientRequestId, releaseRequestId) => ejecutarCotizacion({ irACobro, clientRequestId, releaseRequestId }),
+      fingerprint
+    );
+  };
+
+  const ejecutarCotizacion = async ({ irACobro = false, clientRequestId = '', releaseRequestId = () => {} } = {}) => {
     if (seleccionados.length === 0) {
       setMensaje("Selecciona al menos una operación/cirugía.");
       return;
@@ -868,6 +843,7 @@ export default function CotizarOperacionPage() {
           motivo: 'Edición de cotización (merge seguro) desde cotizador de Operaciones'
         }
       : {
+          client_request_id: clientRequestId,
           paciente_id: Number(pacienteId),
           paciente_nombre: esCotizacionInformativa ? nombrePacienteTemporal : undefined,
           paciente_dni: esCotizacionInformativa ? dniPacienteTemporal : undefined,
@@ -923,6 +899,7 @@ export default function CotizarOperacionPage() {
       if (!data?.success) {
         throw new Error(data?.error || 'No se pudo registrar la cotización');
       }
+      releaseRequestId();
 
       const cotizacionDestino = Number(data?.cotizacion_id || cotizacionId || 0);
       const fueAdenda = Boolean(cotizacionId) && cotizacionDestino > 0 && cotizacionDestino !== Number(cotizacionId);
@@ -1279,16 +1256,16 @@ export default function CotizarOperacionPage() {
                 <>
                   <button
                     onClick={() => cotizar()}
-                    disabled={cajaEstado === 'cerrada'}
-                    className={`mt-6 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                    disabled={cajaEstado === 'cerrada' || saving}
+                    className={`mt-6 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${(cajaEstado === 'cerrada' || saving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                   >
-                    {new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización'}
+                    {saving ? 'Registrando...' : (new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización')}
                   </button>
                   {!new URLSearchParams(location.search).get('cotizacion_id') && (
                     <button
                       onClick={() => cotizar({ irACobro: true })}
-                      disabled={cajaEstado === 'cerrada'}
-                      className={`mt-3 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                      disabled={cajaEstado === 'cerrada' || saving}
+                      className={`mt-3 px-8 py-3 rounded-xl font-bold flex items-center gap-2 text-lg ${(cajaEstado === 'cerrada' || saving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
                     >
                       Registrar y cobrar
                     </button>

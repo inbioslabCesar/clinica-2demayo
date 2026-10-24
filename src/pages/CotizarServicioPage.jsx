@@ -3,33 +3,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL } from "../config/config";
-
-function getLimaDate() {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Lima",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-  const year = parts.find((p) => p.type === "year")?.value;
-  const month = parts.find((p) => p.type === "month")?.value;
-  const day = parts.find((p) => p.type === "day")?.value;
-  return `${year}-${month}-${day}`;
-}
-
-function getLimaTime() {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "America/Lima",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(now);
-  const hour = parts.find((p) => p.type === "hour")?.value;
-  const minute = parts.find((p) => p.type === "minute")?.value;
-  return `${hour}:${minute}`;
-}
+import { getLimaDate, getLimaTime } from "../utils/dateTime";
+import useSubmitGuard from "../hooks/useSubmitGuard";
 
 export default function CotizarServicioPage() {
   const { pacienteId, servicioTipo } = useParams();
@@ -39,7 +14,7 @@ export default function CotizarServicioPage() {
   const [seleccionados, setSeleccionados] = useState([]);
   const [programacion, setProgramacion] = useState({});
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const { saving, run: runGuardedSubmit } = useSubmitGuard("cotizacion");
 
   const tipoNormalizado = String(servicioTipo || "").toLowerCase().trim();
   const titulo = tipoNormalizado ? tipoNormalizado.charAt(0).toUpperCase() + tipoNormalizado.slice(1) : "Servicio";
@@ -137,11 +112,18 @@ export default function CotizarServicioPage() {
       .filter(Boolean);
   };
 
-  const generarCotizacion = async () => {
+  const generarCotizacion = () => {
     if (!pacienteId) {
       Swal.fire("Atención", "No se encontró el paciente para cotizar.", "info");
-      return;
+      return undefined;
     }
+    return runGuardedSubmit(
+      (clientRequestId, releaseRequestId) => ejecutarGenerarCotizacion({ clientRequestId, releaseRequestId }),
+      JSON.stringify({ paciente: Number(pacienteId), seleccionados, programacion })
+    );
+  };
+
+  const ejecutarGenerarCotizacion = async ({ clientRequestId = "", releaseRequestId = () => {} } = {}) => {
     if (seleccionados.length === 0) {
       Swal.fire("Atención", "Selecciona al menos un ítem.", "info");
       return;
@@ -165,13 +147,13 @@ export default function CotizarServicioPage() {
     });
     if (!confirm.isConfirmed) return;
 
-    setSaving(true);
     try {
       const res = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          client_request_id: clientRequestId,
           paciente_id: Number(pacienteId),
           total: Number(total.toFixed(2)),
           detalles,
@@ -182,6 +164,7 @@ export default function CotizarServicioPage() {
       if (!data?.success) {
         throw new Error(data?.error || "No se pudo registrar la cotización");
       }
+      releaseRequestId();
 
       const cotizacionId = Number(data?.cotizacion_id || 0);
       Swal.fire("Listo", "Cotización registrada correctamente.", "success").then(() => {
@@ -195,8 +178,6 @@ export default function CotizarServicioPage() {
       });
     } catch (error) {
       Swal.fire("Error", error?.message || "No se pudo registrar la cotización", "error");
-    } finally {
-      setSaving(false);
     }
   };
 

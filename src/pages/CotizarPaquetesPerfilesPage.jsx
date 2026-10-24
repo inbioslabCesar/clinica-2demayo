@@ -7,6 +7,8 @@ import { useQuoteCart } from "../context/QuoteCartContext";
 import { aplicarExclusionConsultaDelCarrito as aplicarExclusionConsultaDelCarritoShared, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
+import useSubmitGuard from "../hooks/useSubmitGuard";
+import { getLimaDate, getLimaTime as getDefaultTime, normalizeAgendaProgramacionModo, normalizeDateYmd, normalizeHourHm } from "../utils/dateTime";
 
 const SERVICE_TYPE_LABELS = {
   consulta: "Consulta",
@@ -39,27 +41,6 @@ function resolveAgendaStepMinutes(stepMinutes) {
     ? requested
     : configured;
   return Math.max(5, Math.min(120, Math.round(source)));
-}
-
-function normalizeDateYmd(value) {
-  const text = String(value || "").trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
-  const parsed = new Date(text);
-  if (Number.isNaN(parsed.getTime())) return "";
-  const y = parsed.getFullYear();
-  const m = String(parsed.getMonth() + 1).padStart(2, "0");
-  const d = String(parsed.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-function normalizeHourHm(value) {
-  const text = String(value || "").trim();
-  const match = text.match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return "";
-  const h = Number(match[1]);
-  const m = Number(match[2]);
-  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 function normalizeServiceType(value) {
@@ -268,11 +249,6 @@ function computeValidStartHours(horasLibres) {
   return Array.from(new Set(normalizadas));
 }
 
-function normalizeAgendaProgramacionModo(value) {
-  const mode = String(value || "").trim().toLowerCase();
-  return ["strict", "mixed", "free"].includes(mode) ? mode : "mixed";
-}
-
 export default function CotizarPaquetesPerfilesPage() {
   const { pacienteId } = useParams();
   const location = useLocation();
@@ -287,6 +263,7 @@ export default function CotizarPaquetesPerfilesPage() {
   const [componentFilters, setComponentFilters] = useState([]);
   const [componentFilterMode, setComponentFilterMode] = useState("any");
   const [loading, setLoading] = useState(false);
+  const { saving, run: runGuardedSubmit } = useSubmitGuard("cotizacion");
   const [schemaWarning, setSchemaWarning] = useState(null);
   const [medicos, setMedicos] = useState([]);
   const [visibleCount, setVisibleCount] = useState(LIST_INITIAL_VISIBLE);
@@ -305,33 +282,6 @@ export default function CotizarPaquetesPerfilesPage() {
   const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
   const nombrePacienteTemporal = `${String(pacienteTemporal?.nombre || "").trim()} ${String(pacienteTemporal?.apellido || "").trim()}`.trim();
   const dniPacienteTemporal = String(pacienteTemporal?.dni || "").trim();
-
-  const getLimaDate = () => {
-    const now = new Date();
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Lima",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(now);
-    const year = parts.find((p) => p.type === "year")?.value;
-    const month = parts.find((p) => p.type === "month")?.value;
-    const day = parts.find((p) => p.type === "day")?.value;
-    return `${year}-${month}-${day}`;
-  };
-
-  const getDefaultTime = () => {
-    const now = new Date();
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: "America/Lima",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).formatToParts(now);
-    const hour = parts.find((p) => p.type === "hour")?.value;
-    const minute = parts.find((p) => p.type === "minute")?.value;
-    return `${hour}:${minute}`;
-  };
 
   const getProgramacionPaquete = (paqueteId) => {
     const pid = Number(paqueteId || 0);
@@ -836,7 +786,23 @@ export default function CotizarPaquetesPerfilesPage() {
     Swal.fire("Listo", `Se agregaron ${detailItemsAjustados.length} paquete(s)/perfil(es) al carrito.`, "success");
   };
 
-  const registrarCotizacion = async ({ irACobro = false } = {}) => {
+  const registrarCotizacion = ({ irACobro = false } = {}) => {
+    if (selectedRows.length === 0) {
+      Swal.fire("Atencion", "Selecciona al menos un paquete/perfil.", "info");
+      return undefined;
+    }
+    const fingerprint = JSON.stringify({
+      paciente: Number(pacienteId),
+      cotizacion: Number(cotizacionId || 0),
+      paquetes: buildSelectedPackageEntries(),
+    });
+    return runGuardedSubmit(
+      (clientRequestId, releaseRequestId) => ejecutarRegistroCotizacion({ irACobro, clientRequestId, releaseRequestId }),
+      fingerprint
+    );
+  };
+
+  const ejecutarRegistroCotizacion = async ({ irACobro = false, clientRequestId = "", releaseRequestId = () => {} } = {}) => {
     if (selectedRows.length === 0) {
       Swal.fire("Atencion", "Selecciona al menos un paquete/perfil.", "info");
       return;
@@ -1046,6 +1012,7 @@ export default function CotizarPaquetesPerfilesPage() {
 
         const payloadSplit = {
           accion: "registrar_split",
+          client_request_id: clientRequestId,
           paciente_id: Number(pacienteId),
           paciente_nombre: esCotizacionInformativa ? nombrePacienteTemporal : undefined,
           paciente_dni: esCotizacionInformativa ? dniPacienteTemporal : undefined,
@@ -1073,6 +1040,7 @@ export default function CotizarPaquetesPerfilesPage() {
         if (!dataSplit?.success || cotizacionesSeparadas.length === 0) {
           throw new Error(dataSplit?.error || "No se pudo registrar el split de cotizaciones");
         }
+        releaseRequestId();
 
         Swal.fire(
           "Listo",
@@ -1101,6 +1069,7 @@ export default function CotizarPaquetesPerfilesPage() {
               : "Edicion desde cotizador de Paquetes/Perfiles",
           }
         : {
+            client_request_id: clientRequestId,
             paciente_id: Number(pacienteId),
             paciente_nombre: esCotizacionInformativa ? nombrePacienteTemporal : undefined,
             paciente_dni: esCotizacionInformativa ? dniPacienteTemporal : undefined,
@@ -1124,6 +1093,7 @@ export default function CotizarPaquetesPerfilesPage() {
       if (!data?.success) {
         throw new Error(data?.error || "No se pudo registrar la cotizacion");
       }
+      releaseRequestId();
 
       const cotizacionDestino = Number(data?.cotizacion_id || cotizacionId || 0);
       Swal.fire(
@@ -1544,14 +1514,16 @@ export default function CotizarPaquetesPerfilesPage() {
               </button>
               <button
                 onClick={() => registrarCotizacion()}
-                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                disabled={saving}
+                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                {isEditingCotizacion ? "Actualizar cotizacion" : "Registrar cotizacion"}
+                {saving ? "Registrando..." : (isEditingCotizacion ? "Actualizar cotizacion" : "Registrar cotizacion")}
               </button>
               {!isEditingCotizacion && (
                 <button
                   onClick={() => registrarCotizacion({ irACobro: true })}
-                  className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+                  disabled={saving}
+                  className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   Registrar y cobrar
                 </button>

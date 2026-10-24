@@ -1,16 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { authFetch } from "../utils/apiClient";
 import { BASE_URL } from "../config/config";
-
-function normalizeHourHm(value) {
-  const text = String(value || "").trim();
-  const match = text.match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return "";
-  const h = Number(match[1]);
-  const m = Number(match[2]);
-  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
+import { normalizeHourHm } from "../utils/dateTime";
 
 function hmToMinutes(hm) {
   const norm = normalizeHourHm(hm);

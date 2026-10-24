@@ -7,6 +7,8 @@ import Swal from "sweetalert2";
 import { useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
+import useSubmitGuard from "../hooks/useSubmitGuard";
+import { getLimaDate, getLimaTime as getDefaultTime } from "../utils/dateTime";
 import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 
@@ -40,32 +42,6 @@ export default function CotizarLaboratorioPage() {
       valor: Number.isFinite(valorNum) ? valorNum : "",
       laboratorio: String(raw?.laboratorio ?? raw?.laboratorio_referencia ?? "").trim(),
     };
-  };
-  const getLimaDate = () => {
-    const now = new Date();
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Lima",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(now);
-
-    const year = parts.find((p) => p.type === "year")?.value;
-    const month = parts.find((p) => p.type === "month")?.value;
-    const day = parts.find((p) => p.type === "day")?.value;
-    return `${year}-${month}-${day}`;
-  };
-  const getDefaultTime = () => {
-    const now = new Date();
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: "America/Lima",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).formatToParts(now);
-    const hour = parts.find((p) => p.type === "hour")?.value;
-    const minute = parts.find((p) => p.type === "minute")?.value;
-    return `${hour}:${minute}`;
   };
   const sameDerivacionConfig = (leftRaw, rightRaw) => {
     const left = normalizeDerivacionConfig(leftRaw);
@@ -118,6 +94,7 @@ export default function CotizarLaboratorioPage() {
   const [seleccionados, setSeleccionados] = useState([]);
   const [tarifas, setTarifas] = useState([]);
   const [loading, setLoading] = useState(true);
+  const { saving, run: runGuardedSubmit } = useSubmitGuard("cotizacion");
   const [busqueda, setBusqueda] = useState("");
   const [mensaje, setMensaje] = useState("");
   const [categoriaFilter, setCategoriaFilter] = useState("");
@@ -1044,7 +1021,20 @@ export default function CotizarLaboratorioPage() {
     );
   };
 
-  const generarCotizacion = async ({ irACobro = false } = {}) => {
+  const generarCotizacion = ({ irACobro = false } = {}) => {
+    const fingerprint = JSON.stringify({
+      paciente: Number(pacienteId),
+      cotizacion: Number(cotizacionId || 0),
+      seleccionados,
+      derivaciones,
+    });
+    return runGuardedSubmit(
+      (clientRequestId, releaseRequestId) => ejecutarGenerarCotizacion({ irACobro, clientRequestId, releaseRequestId }),
+      fingerprint
+    );
+  };
+
+  const ejecutarGenerarCotizacion = async ({ irACobro = false, clientRequestId = '', releaseRequestId = () => {} } = {}) => {
     if (!cotizacionId && seleccionados.length === 0) {
       setMensaje("Selecciona al menos un examen para cotizar.");
       return;
@@ -1105,6 +1095,7 @@ export default function CotizarLaboratorioPage() {
             : 'Edición de cotización (merge seguro) desde cotizador de Laboratorio'
         }
       : {
+          client_request_id: clientRequestId,
           paciente_id: Number(pacienteId),
           paciente_nombre: esCotizacionInformativa ? nombrePacienteTemporal : undefined,
           paciente_dni: esCotizacionInformativa ? dniPacienteTemporal : undefined,
@@ -1213,6 +1204,7 @@ export default function CotizarLaboratorioPage() {
       if (!data?.success) {
         throw new Error(data?.error || 'No se pudo registrar la cotización');
       }
+      releaseRequestId();
       if (cotizacionId && Number(data?.version_actual || 0) > 0) {
         setCotizacionVersionActual(Number(data.version_actual));
       }
@@ -1611,14 +1603,14 @@ export default function CotizarLaboratorioPage() {
                   <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                 ) : isEditingCotizacion ? (
                   <>
-                    <button onClick={() => generarCotizacion()} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                    <button onClick={() => generarCotizacion()} disabled={cajaEstado === 'cerrada' || saving} className={`px-6 py-2 rounded font-bold ${(cajaEstado === 'cerrada' || saving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
                       {isAdendaMode ? 'Agregar por adenda' : 'Actualizar cotización'}
                     </button>
                   </>
                 ) : (
                   <>
-                    <button onClick={() => generarCotizacion()} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>Registrar cotización</button>
-                    <button onClick={() => generarCotizacion({ irACobro: true })} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>Registrar y cobrar</button>
+                    <button onClick={() => generarCotizacion()} disabled={cajaEstado === 'cerrada' || saving} className={`px-6 py-2 rounded font-bold ${(cajaEstado === 'cerrada' || saving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{saving ? 'Registrando...' : 'Registrar cotización'}</button>
+                    <button onClick={() => generarCotizacion({ irACobro: true })} disabled={cajaEstado === 'cerrada' || saving} className={`px-6 py-2 rounded font-bold ${(cajaEstado === 'cerrada' || saving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>Registrar y cobrar</button>
                   </>
                 )}
               </div>

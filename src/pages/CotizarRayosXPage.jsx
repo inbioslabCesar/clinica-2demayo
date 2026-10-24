@@ -9,16 +9,8 @@ import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles
 import { getMedicoAccentColor } from "../utils/medicoAccent";
 import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
-
-function normalizeHourHm(value) {
-  const raw = String(value || "").trim();
-  const match = raw.match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return "";
-  const h = Number(match[1]);
-  const m = Number(match[2]);
-  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
+import useSubmitGuard from "../hooks/useSubmitGuard";
+import { getLimaDate, getLimaTime as getDefaultTime, normalizeAgendaProgramacionModo, normalizeHourHm } from "../utils/dateTime";
 
 function updateConsultaDescriptionSchedule(description, fechaProgramada, horaProgramada) {
   const base = String(description || "").trim();
@@ -30,11 +22,6 @@ function updateConsultaDescriptionSchedule(description, fechaProgramada, horaPro
     return base.replace(/\(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\)\s*$/, scheduleText);
   }
   return `${base} ${scheduleText}`;
-}
-
-function normalizeAgendaProgramacionModo(value) {
-  const mode = String(value || "").trim().toLowerCase();
-  return ["strict", "mixed", "free"].includes(mode) ? mode : "mixed";
 }
 
 export default function CotizarRayosXPage() {
@@ -56,6 +43,7 @@ export default function CotizarRayosXPage() {
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas desde cobro/cotización
   const [pendingRxItems, setPendingRxItems] = useState([]); // ítems crudos para resolver contra tarifas actuales
   const [cajaEstado, setCajaEstado] = useState(null);
+  const { saving, run: runGuardedSubmit } = useSubmitGuard("cotizacion");
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
   const [programacionConsultaCotizacion, setProgramacionConsultaCotizacion] = useState(null); // {consultaId, fecha, hora}
   const { cart, addItems, replaceCart, clearCart, count: cartCount } = useQuoteCart();
@@ -75,33 +63,6 @@ export default function CotizarRayosXPage() {
     const value = Number(sp.get("cotizacion_id") || 0);
     return Number.isFinite(value) && value > 0 ? value : 0;
   }, [location.search]);
-
-  const getLimaDate = () => {
-    const now = new Date();
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Lima',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).formatToParts(now);
-    const year = parts.find((p) => p.type === 'year')?.value;
-    const month = parts.find((p) => p.type === 'month')?.value;
-    const day = parts.find((p) => p.type === 'day')?.value;
-    return `${year}-${month}-${day}`;
-  };
-
-  const getDefaultTime = () => {
-    const now = new Date();
-    const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'America/Lima',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).formatToParts(now);
-    const hour = parts.find((p) => p.type === 'hour')?.value;
-    const minute = parts.find((p) => p.type === 'minute')?.value;
-    return `${hour}:${minute}`;
-  };
 
   const programacionBaseEdicion = useMemo(() => {
     if (cotizacionIdEdicion <= 0) return null;
@@ -883,7 +844,21 @@ export default function CotizarRayosXPage() {
     return [...detallesNoRayosX, ...detallesRayosX];
   };
 
-  const cotizar = async ({ irACobro = false } = {}) => {
+  const cotizar = ({ irACobro = false } = {}) => {
+    const fingerprint = JSON.stringify({
+      paciente: Number(pacienteId),
+      cotizacion: new URLSearchParams(location.search).get('cotizacion_id') || '',
+      seleccionados,
+      cantidades,
+      programacionPorEstudio,
+    });
+    return runGuardedSubmit(
+      (clientRequestId, releaseRequestId) => ejecutarCotizacion({ irACobro, clientRequestId, releaseRequestId }),
+      fingerprint
+    );
+  };
+
+  const ejecutarCotizacion = async ({ irACobro = false, clientRequestId = '', releaseRequestId = () => {} } = {}) => {
     if (seleccionados.length === 0) {
       setMensaje("Selecciona al menos un estudio de Rayos X.");
       return;
@@ -967,6 +942,7 @@ export default function CotizarRayosXPage() {
           motivo: 'Edición de cotización (merge seguro) desde cotizador de Rayos X'
         }
       : {
+          client_request_id: clientRequestId,
           paciente_id: Number(pacienteId),
           paciente_nombre: esCotizacionInformativa ? nombrePacienteTemporal : undefined,
           paciente_dni: esCotizacionInformativa ? dniPacienteTemporal : undefined,
@@ -1022,6 +998,7 @@ export default function CotizarRayosXPage() {
       if (!data?.success) {
         throw new Error(data?.error || 'No se pudo registrar la cotización');
       }
+      releaseRequestId();
 
       const cotizacionDestino = Number(data?.cotizacion_id || cotizacionId || 0);
       const fueAdenda = Boolean(cotizacionId) && cotizacionDestino > 0 && cotizacionDestino !== Number(cotizacionId);
@@ -1323,9 +1300,9 @@ export default function CotizarRayosXPage() {
                   <button onClick={actualizarCobro} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>Actualizar cobro</button>
                 ) : (
                   <>
-                    <button onClick={() => cotizar()} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización'}</button>
+                    <button onClick={() => cotizar()} disabled={cajaEstado === 'cerrada' || saving} className={`px-6 py-2 rounded font-bold ${(cajaEstado === 'cerrada' || saving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>{saving ? 'Registrando...' : (new URLSearchParams(location.search).get('cotizacion_id') ? 'Actualizar cotización' : 'Registrar cotización')}</button>
                     {!new URLSearchParams(location.search).get('cotizacion_id') && (
-                      <button onClick={() => cotizar({ irACobro: true })} disabled={cajaEstado === 'cerrada'} className={`px-6 py-2 rounded font-bold ${cajaEstado === 'cerrada' ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>Registrar y cobrar</button>
+                      <button onClick={() => cotizar({ irACobro: true })} disabled={cajaEstado === 'cerrada' || saving} className={`px-6 py-2 rounded font-bold ${(cajaEstado === 'cerrada' || saving) ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>Registrar y cobrar</button>
                     )}
                   </>
                 )}

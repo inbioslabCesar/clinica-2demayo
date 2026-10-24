@@ -8,21 +8,8 @@ import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles
 import { getMedicoAccentColor, getMedicoSoftColor } from "../utils/medicoAccent";
 import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
-
-function normalizeAgendaProgramacionModo(value) {
-  const mode = String(value || "").trim().toLowerCase();
-  return ["strict", "mixed", "free"].includes(mode) ? mode : "mixed";
-}
-
-function normalizeHourHm(value) {
-  const text = String(value || "").trim();
-  const match = text.match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return "";
-  const h = Number(match[1]);
-  const m = Number(match[2]);
-  if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return "";
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
+import useSubmitGuard from "../hooks/useSubmitGuard";
+import { getLimaDate, getLimaTime as getDefaultTime, normalizeAgendaProgramacionModo, normalizeHourHm } from "../utils/dateTime";
 
 export default function CotizarProcedimientosPage() {
    
@@ -43,7 +30,7 @@ export default function CotizarProcedimientosPage() {
   const [programacionPorProcedimiento, setProgramacionPorProcedimiento] = useState({});
   const [manualProgramacionByProcedimiento, setManualProgramacionByProcedimiento] = useState({});
   const [agendaProgramacionModo, setAgendaProgramacionModo] = useState(() => getCachedAgendaProgramacionModo());
-  const [isSaving, setIsSaving] = useState(false);
+  const { saving: isSaving, run: runGuardedSubmit } = useSubmitGuard("cotizacion");
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
   const pacienteTemporal = location.state?.pacienteTemporal || null;
   const esCotizacionInformativa = Number(pacienteId || 0) <= 0;
@@ -57,33 +44,6 @@ export default function CotizarProcedimientosPage() {
 
   const esModoAdenda = cotizacionIdEdicion > 0
     && new URLSearchParams(location.search).get("modo") === "adenda";
-
-  const getLimaDate = () => {
-    const now = new Date();
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Lima",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(now);
-    const year = parts.find((p) => p.type === "year")?.value;
-    const month = parts.find((p) => p.type === "month")?.value;
-    const day = parts.find((p) => p.type === "day")?.value;
-    return `${year}-${month}-${day}`;
-  };
-
-  const getDefaultTime = () => {
-    const now = new Date();
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: "America/Lima",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).formatToParts(now);
-    const hour = parts.find((p) => p.type === "hour")?.value;
-    const minute = parts.find((p) => p.type === "minute")?.value;
-    return `${hour}:${minute}`;
-  };
 
   const programacionBaseEdicion = useMemo(() => {
     if (cotizacionIdEdicion <= 0) return null;
@@ -778,8 +738,21 @@ export default function CotizarProcedimientosPage() {
     return [...detallesNoProc, ...detallesProcedimiento];
   };
 
-  const cotizar = async ({ irACobro = false } = {}) => {
-    if (isSaving) return;
+  const cotizar = ({ irACobro = false } = {}) => {
+    const fingerprint = JSON.stringify({
+      paciente: Number(pacienteId),
+      cotizacion: cotizacionIdEdicion,
+      seleccionados,
+      cantidades,
+      programacionPorProcedimiento,
+    });
+    return runGuardedSubmit(
+      (clientRequestId, releaseRequestId) => ejecutarCotizacion({ irACobro, clientRequestId, releaseRequestId }),
+      fingerprint
+    );
+  };
+
+  const ejecutarCotizacion = async ({ irACobro = false, clientRequestId = '', releaseRequestId = () => {} } = {}) => {
     if (seleccionados.length === 0) {
       setMensaje("Selecciona al menos un procedimiento.");
       return;
@@ -854,6 +827,7 @@ export default function CotizarProcedimientosPage() {
             : 'Edición de cotización (merge seguro) desde cotizador de Procedimientos'
         }
       : {
+          client_request_id: clientRequestId,
           paciente_id: Number(pacienteId),
           paciente_nombre: esCotizacionInformativa ? nombrePacienteTemporal : undefined,
           paciente_dni: esCotizacionInformativa ? dniPacienteTemporal : undefined,
@@ -867,7 +841,6 @@ export default function CotizarProcedimientosPage() {
         };
 
     try {
-      setIsSaving(true);
       let data;
       const res = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
         method: 'POST',
@@ -910,6 +883,7 @@ export default function CotizarProcedimientosPage() {
       if (!data?.success) {
         throw new Error(data?.error || 'No se pudo registrar la cotización');
       }
+      releaseRequestId();
 
       const cotizacionDestino = Number(data?.cotizacion_id || cotizacionId || 0);
       const fueAdenda = Boolean(cotizacionId) && cotizacionDestino > 0 && cotizacionDestino !== Number(cotizacionId);
@@ -943,8 +917,6 @@ export default function CotizarProcedimientosPage() {
       });
     } catch (error) {
       Swal.fire('Error', error?.message || 'No se pudo registrar la cotización', 'error');
-    } finally {
-      setIsSaving(false);
     }
   };
 
