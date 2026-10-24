@@ -405,6 +405,33 @@ prueba('consulta clínica: médico inexistente falla en el API pero nunca rompe 
     iguales(0, $c['consulta_id']);
 }, true);
 
+prueba('órdenes de procedimientos: se crea una sola orden por cotización y se amplía sin duplicar', function () {
+    global $mysqli, $marcador;
+    require_once dirname(__DIR__, 2) . '/modules/OrdenesClinicasModule.php';
+    require_once dirname(__DIR__, 2) . '/modules/CobroModule.php';
+    $obs = $mysqli->real_escape_string($marcador);
+    $consultaId = (int)$mysqli->query('SELECT id FROM consultas ORDER BY id ASC LIMIT 1')->fetch_assoc()['id'];
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES (570, 18, 100, 'pagado', '$obs')");
+    $cotId = (int)$mysqli->insert_id;
+    $detalle = fn(int $servicioId) => ['servicio_tipo' => 'procedimiento', 'servicio_id' => $servicioId, 'consulta_id' => $consultaId];
+
+    oc_crear_ordenes_procedimientos($mysqli, $cotId, 570, [$detalle(901), $detalle(902), ['servicio_tipo' => 'laboratorio', 'servicio_id' => 5]], 0, 18);
+    $metodo = new ReflectionMethod('CobroModule', 'crearOrdenesProcedimientosCotizacion');
+    $metodo->setAccessible(true);
+    $metodo->invoke(null, $mysqli, $cotId, 570, [$detalle(902), $detalle(903)], $consultaId, 18);
+
+    $filas = $mysqli->query("SELECT procedimientos_json, consulta_id, estado FROM ordenes_procedimientos WHERE cotizacion_id = $cotId")->fetch_all(MYSQLI_ASSOC);
+    iguales(1, count($filas), 'una sola orden');
+    $ids = json_decode($filas[0]['procedimientos_json'], true);
+    sort($ids);
+    iguales([901, 902, 903], $ids, 'une los procedimientos sin repetir');
+    iguales($consultaId, (int)$filas[0]['consulta_id']);
+    iguales('pendiente', $filas[0]['estado']);
+
+    oc_crear_ordenes_procedimientos($mysqli, $cotId, 570, [['servicio_tipo' => 'laboratorio', 'servicio_id' => 5]], $consultaId, 18);
+    iguales(1, (int)$mysqli->query("SELECT COUNT(*) c FROM ordenes_procedimientos WHERE cotizacion_id = $cotId")->fetch_assoc()['c'], 'sin procedimientos no crea nada');
+}, true);
+
 /* ───────── Ejecución ───────── */
 
 $bd = null;
