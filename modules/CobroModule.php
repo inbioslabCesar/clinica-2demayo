@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/PaqueteComercialModule.php';
+require_once __DIR__ . '/AgendaMedicoRegla.php';
 // Módulo de Cobros: lógica principal para registrar cobros y detalles
 class CobroModule
 {
@@ -2239,6 +2240,14 @@ class CobroModule
         ], true);
     }
 
+    // Solo los servicios que realiza el médico ocupan su horario (no laboratorio ni líneas de paquete).
+    private static function filtroServicioOcupaMedicoSql($conn)
+    {
+        return self::columnExists($conn, 'agenda_servicios_cotizacion', 'servicio_tipo')
+            ? ' AND ' . agenda_sql_servicio_ocupa_medico('')
+            : '';
+    }
+
     private static function servicioTipoRequiereValidacionHorarioCobro($servicioTipo)
     {
         $tipo = self::normalizarServicioTipo($servicioTipo);
@@ -2392,7 +2401,7 @@ class CobroModule
             && self::columnExists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
             && self::columnExists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
             && self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
-            $stmtOccA = $conn->prepare('SELECT hora_programada FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")');
+            $stmtOccA = $conn->prepare('SELECT hora_programada FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")' . self::filtroServicioOcupaMedicoSql($conn));
             if ($stmtOccA) {
                 $stmtOccA->bind_param('is', $medicoId, $fechaYmd);
                 $stmtOccA->execute();
@@ -2977,7 +2986,7 @@ class CobroModule
                 && self::columnExists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
                 && self::columnExists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
                 && self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
-                $sqlAgenda = 'SELECT id, cotizacion_id, cotizacion_detalle_id FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND hora_programada = ? AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")';
+                $sqlAgenda = 'SELECT id, cotizacion_id, cotizacion_detalle_id FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND hora_programada = ? AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")' . self::filtroServicioOcupaMedicoSql($conn);
                 $stmtChkA = $conn->prepare($sqlAgenda);
                 if ($stmtChkA) {
                     $stmtChkA->bind_param('iss', $medicoId, $fecha, $hora);

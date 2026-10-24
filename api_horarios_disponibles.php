@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/modules/AgendaMedicoRegla.php';
 
 if (!function_exists('hdisp_table_exists')) {
     function hdisp_table_exists(mysqli $conn, string $table): bool {
@@ -198,11 +199,17 @@ if ($method === 'GET') {
                 ? ' AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado")'
                 : '';
 
+            // Solo los servicios que realiza el médico ocupan su horario (no laboratorio ni líneas de paquete).
+            $whereServicio = hdisp_column_exists($conn, 'agenda_servicios_cotizacion', 'servicio_tipo')
+                ? ' AND ' . agenda_sql_servicio_ocupa_medico('a')
+                : '';
+
             $sqlAgenda = 'SELECT a.hora_programada FROM agenda_servicios_cotizacion a'
                 . $joinDetalle
                 . $joinTarifa
                 . ' WHERE ' . $medicoExpr . ' = ? AND a.fecha_programada = ?'
-                . $whereEstado;
+                . $whereEstado
+                . $whereServicio;
             $canExcludeAgendaCotizacion = ($cotizacion_id_excluir > 0 && hdisp_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id'));
             $canExcludeDetalleCotizacion = ($cotizacion_id_excluir > 0 && $hasDetalleCotizacionId && $joinDetalle !== '');
             if ($canExcludeAgendaCotizacion || $canExcludeDetalleCotizacion) {

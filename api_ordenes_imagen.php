@@ -2,6 +2,7 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/CorrelativoOperativoModule.php';
+require_once __DIR__ . '/modules/AgendaMedicoRegla.php';
 
 $medicoSesion = (isset($_SESSION['medico']) && is_array($_SESSION['medico'])) ? $_SESSION['medico'] : null;
 $usuarioSesion = (isset($_SESSION['usuario']) && is_array($_SESSION['usuario'])) ? $_SESSION['usuario'] : null;
@@ -594,7 +595,8 @@ if (!function_exists('oi_slots_ocupados_medico_fecha')) {
             && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
             && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
             && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
-            $stmtA = $conn->prepare('SELECT hora_programada FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")');
+            $stmtA = $conn->prepare('SELECT hora_programada FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")'
+                . (oi_column_exists($conn, 'agenda_servicios_cotizacion', 'servicio_tipo') ? ' AND ' . agenda_sql_servicio_ocupa_medico('') : ''));
             if ($stmtA) {
                 $stmtA->bind_param('is', $medicoId, $fechaYmd);
                 $stmtA->execute();

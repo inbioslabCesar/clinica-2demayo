@@ -4,6 +4,7 @@ if (!defined('SKIP_PDO_INIT')) {
     define('SKIP_PDO_INIT', true);
 }
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/modules/AgendaMedicoRegla.php';
 
 function rc_require_session_roles(array $rolesPermitidos) {
     if (!isset($_SESSION['usuario']) || !is_array($_SESSION['usuario'])) {
@@ -753,6 +754,7 @@ function rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, 
               AND (TIME_TO_SEC(COALESCE(a.hora_programada, "00:00:00")) + ?) > ?
               AND a.cotizacion_id <> ?
               AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado", "atendido", "espontaneo", "pagado")
+              AND ' . agenda_sql_servicio_ocupa_medico('a') . '
             LIMIT 1';
     $stmtAgenda = $conn->prepare($sql);
     if (!$stmtAgenda) {
@@ -828,6 +830,7 @@ function rc_listar_horas_ocupadas_medico_fecha($conn, $medicoId, $fechaYmd, $cot
                AND a.fecha_programada = ?
                AND a.cotizacion_id <> ?
                AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado", "atendido", "espontaneo", "pagado")
+               AND ' . agenda_sql_servicio_ocupa_medico('a') . '
              ORDER BY a.hora_programada ASC, a.id ASC'
         );
         if ($stmtAgenda) {
@@ -1294,8 +1297,7 @@ function rc_where_servicios_medicos_agenda($alias = 'a') {
 }
 
 function rc_where_servicios_agendables_disponibilidad($alias = 'a') {
-    $col = $alias . ".servicio_tipo";
-    return "LOWER(TRIM(COALESCE({$col}, ''))) IN ('consulta','rayosx','rayos x','rayos_x','rx','ecografia','procedimiento','procedimientos','operacion','operaciones','cirugia','cirugias')";
+    return agenda_sql_servicio_ocupa_medico((string)$alias);
 }
 
 function rc_calcular_turno_original_agenda($conn, $cotizacionId) {
