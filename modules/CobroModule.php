@@ -1285,34 +1285,7 @@ class CobroModule
 
     private static function desbloquearConsultasPorCotizacion($conn, $cotizacionId)
     {
-        if (!self::tableExists($conn, 'cotizaciones_detalle') || !self::tableExists($conn, 'consultas') || !self::columnExists($conn, 'cotizaciones_detalle', 'consulta_id')) {
-            return;
-        }
-
-        $stmt = $conn->prepare('SELECT DISTINCT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id > 0');
-        if (!$stmt) {
-            return;
-        }
-        $stmt->bind_param('i', $cotizacionId);
-        $stmt->execute();
-        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-        $stmt->close();
-
-        if (empty($rows)) {
-            return;
-        }
-
-        $stmtUpd = $conn->prepare("UPDATE consultas SET estado = 'pendiente' WHERE id = ? AND estado = 'falta_cancelar'");
-        if (!$stmtUpd) {
-            return;
-        }
-        foreach ($rows as $row) {
-            $cid = (int)($row['consulta_id'] ?? 0);
-            if ($cid <= 0) continue;
-            $stmtUpd->bind_param('i', $cid);
-            $stmtUpd->execute();
-        }
-        $stmtUpd->close();
+        cc_reabrir_consultas_falta_cancelar($conn, $cotizacionId);
     }
 
     private static function sincronizarServiciosClinicosPostPagoCotizacion($conn, $cotizacionId, $usuarioId = 0)

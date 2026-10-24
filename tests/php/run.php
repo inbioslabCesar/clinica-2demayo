@@ -508,6 +508,25 @@ prueba('órdenes de imagen: una orden por servicio, idempotente, con médico y c
     iguales(2, (int)$mysqli->query("SELECT COUNT(*) c FROM ordenes_imagen WHERE cotizacion_id = $cotId")->fetch_assoc()['c'], 'idempotente entre API y cobro');
 }, true);
 
+prueba('post-pago: la consulta en falta_cancelar vuelve a pendiente al pagar su cotización', function () {
+    global $mysqli, $marcador;
+    $obs = $mysqli->real_escape_string($marcador);
+    $mysqli->query("INSERT INTO consultas (paciente_id, medico_id, fecha, hora, tipo_consulta, estado) VALUES (987654, 1, '2099-01-02', '08:30:00', 'programada', 'falta_cancelar')");
+    $consultaId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO consultas (paciente_id, medico_id, fecha, hora, tipo_consulta, estado) VALUES (987654, 1, '2099-01-02', '09:30:00', 'programada', 'completada')");
+    $otraId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES (987654, 18, 70, 'pagado', '$obs')");
+    $cotId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal, consulta_id) VALUES ($cotId, 'consulta', 'PHPTEST', 1, 70, 70, $consultaId)");
+    try {
+        cc_reabrir_consultas_falta_cancelar($mysqli, $cotId);
+        iguales('pendiente', $mysqli->query("SELECT estado FROM consultas WHERE id = $consultaId")->fetch_assoc()['estado']);
+        iguales('completada', $mysqli->query("SELECT estado FROM consultas WHERE id = $otraId")->fetch_assoc()['estado'], 'no toca otras consultas');
+    } finally {
+        $mysqli->query("DELETE FROM consultas WHERE id IN ($consultaId, $otraId) AND paciente_id = 987654");
+    }
+}, true);
+
 /* ───────── Ejecución ───────── */
 
 $bd = null;

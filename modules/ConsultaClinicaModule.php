@@ -294,6 +294,39 @@ if (!function_exists('cc_consulta_por_contrato')) {
     }
 }
 
+if (!function_exists('cc_reabrir_consultas_falta_cancelar')) {
+    // Una consulta marcada "falta_cancelar" vuelve a "pendiente" cuando su cotización recibe pago.
+    function cc_reabrir_consultas_falta_cancelar($conn, $cotizacionId)
+    {
+        $cotizacionId = (int)$cotizacionId;
+        if ($cotizacionId <= 0
+            || !episodio_columna_existe($conn, 'cotizaciones_detalle', 'consulta_id')
+            || !cc_tabla_existe($conn, 'consultas')) {
+            return;
+        }
+        $stmt = $conn->prepare('SELECT DISTINCT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id > 0');
+        if (!$stmt) {
+            return;
+        }
+        $stmt->bind_param('i', $cotizacionId);
+        $stmt->execute();
+        $filas = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        $stmtUpd = $conn->prepare("UPDATE consultas SET estado = 'pendiente' WHERE id = ? AND estado = 'falta_cancelar'");
+        if (!$stmtUpd) {
+            return;
+        }
+        foreach ($filas as $fila) {
+            $consultaId = (int)($fila['consulta_id'] ?? 0);
+            if ($consultaId <= 0) continue;
+            $stmtUpd->bind_param('i', $consultaId);
+            $stmtUpd->execute();
+        }
+        $stmtUpd->close();
+    }
+}
+
 if (!function_exists('cc_asegurar_consulta_desde_cotizacion')) {
     // Garantiza que la cotización con ítem de consulta tenga su consulta clínica y la asocia a sus servicios.
     // Devuelve ['success','consulta_id','ya_existia','error','tiene_item_consulta'].

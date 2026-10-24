@@ -3705,25 +3705,7 @@ function sincronizar_servicios_clinicos_post_pago_cotizacion(mysqli $conn, int $
         episodio_adoptar_servicios_en_consulta($conn, $cotizacionId, $consultaId);
     }
 
-    if (column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
-        $stmtConsultas = $conn->prepare('SELECT DISTINCT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id > 0');
-        if ($stmtConsultas) {
-            $stmtConsultas->bind_param('i', $cotizacionId);
-            $stmtConsultas->execute();
-            $resConsultas = $stmtConsultas->get_result();
-            while ($rowConsulta = $resConsultas->fetch_assoc()) {
-                $cid = (int)($rowConsulta['consulta_id'] ?? 0);
-                if ($cid <= 0) continue;
-                $stmtUpd = $conn->prepare("UPDATE consultas SET estado = 'pendiente' WHERE id = ? AND estado = 'falta_cancelar'");
-                if ($stmtUpd) {
-                    $stmtUpd->bind_param('i', $cid);
-                    $stmtUpd->execute();
-                    $stmtUpd->close();
-                }
-            }
-            $stmtConsultas->close();
-        }
-    }
+    cc_reabrir_consultas_falta_cancelar($conn, $cotizacionId);
 }
 
 function cotizaciones_auditar_estado_consulta($conn, $consultaId, $estadoAnterior, $estadoNuevo, $motivo = '', $origen = '') {
