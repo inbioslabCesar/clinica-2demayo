@@ -6311,7 +6311,7 @@ function crear_adenda_cotizacion($conn, $data) {
         }
 
         if ($fechaOperacion !== $fechaOperativaRaiz) {
-            throw new Exception('Esta atención solo permite adendas en la misma fecha operativa (' . $fechaOperativaRaiz . '). Para otra fecha, registre una nueva cotización.', 409);
+            throw new Exception('Esta atención solo permite adendas en la misma fecha operativa (' . $fechaOperativaRaiz . '); la adenda se intentó registrar con fecha ' . $fechaOperacion . '. Para otra fecha, registre una nueva cotización.', 409);
         }
 
         foreach ($detalles as $detalleEntrada) {

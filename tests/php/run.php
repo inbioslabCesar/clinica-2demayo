@@ -240,7 +240,8 @@ prueba('episodio: adenda con detalle de consulta se une al bloque de la cotizaci
     $baseId = (int)$mysqli->insert_id;
     $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal, medico_id) VALUES ($baseId, 'ecografia', 'PHPTEST eco', 1, 90, 90, 1)");
     $detalleBaseId = (int)$mysqli->insert_id;
-    $mysqli->query("INSERT INTO agenda_servicios_cotizacion (cotizacion_id, cotizacion_detalle_id, paciente_id, servicio_tipo, titulo_evento, medico_id, fecha_programada, hora_programada, estado_evento) VALUES ($baseId, $detalleBaseId, $paciente, 'ecografia', 'PHPTEST', 1, CURDATE(), '08:30:00', 'confirmado')");
+    $manana = date('Y-m-d', strtotime('+1 day'));
+    $mysqli->query("INSERT INTO agenda_servicios_cotizacion (cotizacion_id, cotizacion_detalle_id, paciente_id, servicio_tipo, titulo_evento, medico_id, fecha_programada, hora_programada, estado_evento) VALUES ($baseId, $detalleBaseId, $paciente, 'ecografia', 'PHPTEST', 1, '$manana', '08:30:00', 'confirmado')");
     $mysqli->query("INSERT INTO bloques_atencion (paciente_id, consulta_origen_id, fecha_base) VALUES ($paciente, NULL, CURDATE())");
     $bloqueBase = (int)$mysqli->insert_id;
     $mysqli->query("INSERT INTO bloques_atencion_cotizaciones (bloque_id, cotizacion_id) VALUES ($bloqueBase, $baseId)");
@@ -249,13 +250,13 @@ prueba('episodio: adenda con detalle de consulta se une al bloque de la cotizaci
         $r = ejecutarApi('api_cotizaciones.php', 'POST', json_encode([
             'accion' => 'adenda',
             'cotizacion_id' => $baseId,
-            'fecha_ref' => date('Y-m-d'),
+            'fecha_ref' => $manana,
             'observaciones' => $marcador,
             'motivo' => 'PHPTEST',
             'detalles' => [[
                 'servicio_tipo' => 'consulta', 'servicio_id' => 999999, 'descripcion' => 'PHPTEST consulta',
                 'cantidad' => 1, 'precio_unitario' => 70, 'subtotal' => 70, 'medico_id' => 1,
-                'fecha_programada' => date('Y-m-d'), 'hora_programada' => '08:30',
+                'fecha_programada' => $manana, 'hora_programada' => '08:30',
             ]],
         ]));
         verdadero(($r['success'] ?? false) === true, 'adenda: ' . json_encode($r));

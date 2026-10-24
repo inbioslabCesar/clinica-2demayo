@@ -1316,6 +1316,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
             ? {
               accion: "adenda",
               cotizacion_id: cotizacionIdNum,
+              fecha_ref: fechaProgramada,
               detalles: [detalle],
               total: precio,
               motivo: "Consulta agregada al episodio desde Agendar consulta",
