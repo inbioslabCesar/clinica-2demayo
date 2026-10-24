@@ -280,3 +280,130 @@ if (!function_exists('episodio_marcar_agenda_imagen_atendida')) {
         return $afectadas > 0 ? 1 : 0;
     }
 }
+
+if (!function_exists('episodio_estado_atencion_servicios')) {
+    // Estado de atencion de cada servicio de la cadena de cotizaciones: detalle_id => atendido | parcial | pendiente | cancelado | no_asistio.
+    // Los servicios que no se "atienden" (laboratorio, farmacia, paquetes) no aparecen en el resultado.
+    // "parcial" = estudio de imagen con imagenes subidas pero sin informe completado.
+    function episodio_estado_atencion_servicios($conn, $cotizacionId)
+    {
+        $cadena = episodio_cotizaciones_cadena_ids($conn, (int)$cotizacionId);
+        if (empty($cadena)) {
+            return [];
+        }
+        $ph = implode(',', array_fill(0, count($cadena), '?'));
+        $types = str_repeat('i', count($cadena));
+        $filtroItem = episodio_columna_existe($conn, 'cotizaciones_detalle', 'estado_item')
+            ? " AND LOWER(TRIM(COALESCE(cd.estado_item, 'activo'))) <> 'eliminado'"
+            : '';
+        $joinProc = '';
+        $selectProc = "'' AS proc_estado";
+        $tablaProc = $conn->query("SHOW TABLES LIKE 'procedimientos_atenciones'");
+        if ($tablaProc && $tablaProc->num_rows > 0) {
+            $joinProc = ' LEFT JOIN procedimientos_atenciones pa ON pa.cotizacion_detalle_id = cd.id';
+            $selectProc = "LOWER(TRIM(COALESCE(pa.estado, ''))) AS proc_estado";
+        }
+
+        $stmt = $conn->prepare(
+            "SELECT cd.id, cd.cotizacion_id, LOWER(TRIM(COALESCE(cd.servicio_tipo, ''))) AS tipo,
+                    COALESCE(cd.consulta_id, 0) AS consulta_id,
+                    LOWER(TRIM(COALESCE(c.estado, ''))) AS consulta_estado,
+                    $selectProc
+             FROM cotizaciones_detalle cd
+             LEFT JOIN consultas c ON c.id = cd.consulta_id
+             $joinProc
+             WHERE cd.cotizacion_id IN ($ph) $filtroItem
+             ORDER BY cd.id ASC"
+        );
+        if (!$stmt) {
+            return [];
+        }
+        $stmt->bind_param($types, ...$cadena);
+        $stmt->execute();
+        $detalles = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        $stmt = $conn->prepare(
+            "SELECT id, cotizacion_detalle_id, LOWER(TRIM(COALESCE(servicio_tipo, ''))) AS tipo,
+                    LOWER(TRIM(COALESCE(estado_evento, ''))) AS estado_evento
+             FROM agenda_servicios_cotizacion
+             WHERE cotizacion_id IN ($ph)
+             ORDER BY id ASC"
+        );
+        $eventos = [];
+        if ($stmt) {
+            $stmt->bind_param($types, ...$cadena);
+            $stmt->execute();
+            $eventos = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+            $stmt->close();
+        }
+        $eventoPorDetalle = [];
+        foreach ($eventos as $ev) {
+            $eventoPorDetalle[(int)$ev['cotizacion_detalle_id']] = $ev;
+        }
+
+        // Imagen: la n-esima orden (no cancelada) corresponde al n-esimo servicio (no cancelado), como al completar el informe.
+        $parcialPorEvento = [];
+        $stmt = $conn->prepare(
+            "SELECT LOWER(TRIM(COALESCE(tipo, ''))) AS tipo, LOWER(TRIM(COALESCE(estado, ''))) AS estado
+             FROM ordenes_imagen
+             WHERE cotizacion_id IN ($ph) AND LOWER(TRIM(COALESCE(estado, ''))) NOT IN ('cancelado', 'cancelada')
+             ORDER BY id ASC"
+        );
+        if ($stmt) {
+            $stmt->bind_param($types, ...$cadena);
+            $stmt->execute();
+            $ordenes = ['ecografia' => [], 'rx' => []];
+            foreach ($stmt->get_result()->fetch_all(MYSQLI_ASSOC) as $o) {
+                if (isset($ordenes[$o['tipo']])) {
+                    $ordenes[$o['tipo']][] = $o['estado'];
+                }
+            }
+            $stmt->close();
+            $tiposEvento = ['ecografia' => ['ecografia'], 'rx' => ['rayosx', 'rayos_x', 'rayos x', 'rx']];
+            foreach ($tiposEvento as $tipoOrden => $tiposAgenda) {
+                $k = 0;
+                foreach ($eventos as $ev) {
+                    if (!in_array($ev['tipo'], $tiposAgenda, true) || in_array($ev['estado_evento'], ['cancelado', 'no_asistio'], true)) {
+                        continue;
+                    }
+                    $parcialPorEvento[(int)$ev['id']] = (($ordenes[$tipoOrden][$k] ?? '') === 'completado');
+                    $k++;
+                }
+            }
+        }
+
+        $imagenTipos = ['ecografia', 'rayosx', 'rayos_x', 'rayos x', 'rx', 'tomografia'];
+        $resultado = [];
+        foreach ($detalles as $d) {
+            $tipo = $d['tipo'];
+            $ev = $eventoPorDetalle[(int)$d['id']] ?? null;
+            $estadoEvento = $ev['estado_evento'] ?? '';
+            if ($tipo === 'consulta') {
+                if ($d['consulta_estado'] === 'completada') {
+                    $estado = 'atendido';
+                } elseif (in_array($d['consulta_estado'], ['cancelada', 'anulada'], true)) {
+                    $estado = 'cancelado';
+                } else {
+                    $estado = 'pendiente';
+                }
+            } elseif (in_array($tipo, $imagenTipos, true) || in_array($tipo, ['procedimiento', 'procedimientos', 'operacion', 'operaciones'], true)) {
+                if ($estadoEvento === 'atendido' || $d['proc_estado'] === 'atendido') {
+                    $estado = 'atendido';
+                } elseif ($estadoEvento === 'cancelado') {
+                    $estado = 'cancelado';
+                } elseif ($estadoEvento === 'no_asistio') {
+                    $estado = 'no_asistio';
+                } elseif ($ev && !empty($parcialPorEvento[(int)$ev['id']])) {
+                    $estado = 'parcial';
+                } else {
+                    $estado = 'pendiente';
+                }
+            } else {
+                continue;
+            }
+            $resultado[(int)$d['id']] = $estado;
+        }
+        return $resultado;
+    }
+}

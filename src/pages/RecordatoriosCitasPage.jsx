@@ -629,6 +629,7 @@ function normalizarDetallesCotizacion(detalles) {
 
       return {
         key: detalleId > 0 ? `det-${detalleId}` : `det-${tipoRaw}-${servicioId}-${index}`,
+        detalle_id: detalleId,
         tipo: tipoRaw,
         tipo_label: tipoLabel,
         descripcion: descripcion || `${tipoLabel} ${servicioId > 0 ? `#${servicioId}` : ""}`.trim(),
@@ -638,6 +639,14 @@ function normalizarDetallesCotizacion(detalles) {
     })
     .filter((det) => Boolean(det.descripcion));
 }
+
+const ATENCION_SERVICIO_BADGE = {
+  atendido: { label: "Atendido", cls: "border-emerald-300 bg-emerald-100 text-emerald-800" },
+  parcial: { label: "Falta informe", cls: "border-amber-300 bg-amber-100 text-amber-800" },
+  pendiente: { label: "Por atender", cls: "border-slate-300 bg-white text-slate-600" },
+  cancelado: { label: "Cancelado", cls: "border-rose-300 bg-rose-100 text-rose-700" },
+  no_asistio: { label: "No asistió", cls: "border-rose-300 bg-rose-100 text-rose-700" },
+};
 
 const DETALLE_TIPO_ORDEN = {
   Consulta: 1,
@@ -723,6 +732,7 @@ export default function RecordatoriosCitasPage() {
   const [detalleExpandedRows, setDetalleExpandedRows] = useState({});
   const [detalleTipoFiltroRows, setDetalleTipoFiltroRows] = useState({});
   const [detalleCotizacionCache, setDetalleCotizacionCache] = useState({});
+  const [atencionServicios, setAtencionServicios] = useState({});
   const [detalleCotizacionLoading, setDetalleCotizacionLoading] = useState({});
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(initialRowsPerPage);
@@ -1580,6 +1590,21 @@ export default function RecordatoriosCitasPage() {
     }
   };
 
+  // Se consulta en cada apertura: el estado de atencion cambia desde los paneles del medico.
+  const cargarAtencionServicios = async (cotizacionId) => {
+    const cotId = Number(cotizacionId || 0);
+    if (cotId <= 0) return;
+    try {
+      const res = await authFetch(`api_recordatorios_citas.php?vista=atencion_servicios&cotizacion_id=${cotId}&_t=${Date.now()}`);
+      const data = await res.json();
+      if (data?.success && data?.estados) {
+        setAtencionServicios((prev) => ({ ...prev, ...data.estados }));
+      }
+    } catch {
+      // Sin este dato el detalle se muestra igual, solo sin la insignia de atencion.
+    }
+  };
+
   const toggleDetalleRow = async (item) => {
     const rowKey = String(item?._rowKey || "");
     if (!rowKey) return;
@@ -1602,6 +1627,7 @@ export default function RecordatoriosCitasPage() {
     setDetalleExpandedRows((prev) => ({ ...prev, [rowKey]: true }));
     const cotizacionesDetalle = resolverCotizacionesDetalleRow(item);
     if (cotizacionesDetalle.length > 0) {
+      cargarAtencionServicios(cotizacionesDetalle[0]);
       await Promise.all(
         cotizacionesDetalle
           .filter((cotId) => !detalleCotizacionCache[cotId])
@@ -3457,6 +3483,16 @@ export default function RecordatoriosCitasPage() {
                                       {pagoServicioLabel(item)}
                                     </span>
                                   )}
+                                  {(() => {
+                                    const conSeguimiento = detalleItems.filter((det) => ATENCION_SERVICIO_BADGE[atencionServicios[det.detalle_id]]);
+                                    if (conSeguimiento.length === 0) return null;
+                                    const atendidos = conSeguimiento.filter((det) => atencionServicios[det.detalle_id] === "atendido").length;
+                                    return (
+                                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${atendidos === conSeguimiento.length ? "border-emerald-300 bg-emerald-100 text-emerald-800" : "border-amber-300 bg-amber-50 text-amber-800"}`}>
+                                        Atendidos: {atendidos}/{conSeguimiento.length}
+                                      </span>
+                                    );
+                                  })()}
                                   <button
                                     type="button"
                                     onClick={() => cambiarFiltroDetalleRow(item._rowKey, "todos")}
@@ -3485,6 +3521,11 @@ export default function RecordatoriosCitasPage() {
                                         </span>
                                         <span>Cant: {Number(det.cantidad || 1)}</span>
                                         <span>{esPaqueteFinanciero ? "Cobro global del paquete" : pagoServicioLabel(item)}</span>
+                                        {ATENCION_SERVICIO_BADGE[atencionServicios[det.detalle_id]] && (
+                                          <span className={`inline-flex rounded-full border px-2 py-0.5 font-semibold ${ATENCION_SERVICIO_BADGE[atencionServicios[det.detalle_id]].cls}`}>
+                                            {ATENCION_SERVICIO_BADGE[atencionServicios[det.detalle_id]].label}
+                                          </span>
+                                        )}
                                       </div>
                                     </div>
                                   ))}

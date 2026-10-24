@@ -550,6 +550,48 @@ prueba('imagen: completar el informe marca atendido el servicio de agenda que co
     iguales(0, episodio_marcar_agenda_imagen_atendida($mysqli, 0, 18));
 }, true);
 
+prueba('detalle de cotización: estado de atención por servicio (atendido, parcial, pendiente; lab y farmacia no aplican)', function () {
+    global $mysqli, $marcador;
+    $obs = $mysqli->real_escape_string($marcador);
+    $paciente = 987654;
+    $mysqli->query("INSERT INTO consultas (paciente_id, medico_id, fecha, hora, tipo_consulta, estado) VALUES ($paciente, 1, '2099-01-03', '09:00:00', 'programada', 'completada')");
+    $consultaId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES ($paciente, 18, 300, 'pagado', '$obs')");
+    $cot = (int)$mysqli->insert_id;
+    $detalle = function (string $tipo, int $consulta = 0) use ($mysqli, $cot) {
+        $c = $consulta > 0 ? $consulta : 'NULL';
+        $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal, consulta_id) VALUES ($cot, '$tipo', 'PHPTEST', 1, 10, 10, $c)");
+        return (int)$mysqli->insert_id;
+    };
+    $evento = function (int $det, string $tipo, string $estado) use ($mysqli, $cot, $paciente) {
+        $mysqli->query("INSERT INTO agenda_servicios_cotizacion (cotizacion_id, cotizacion_detalle_id, paciente_id, medico_id, servicio_tipo, titulo_evento, fecha_programada, hora_programada, estado_evento) VALUES ($cot, $det, $paciente, 1, '$tipo', 'PHPTEST', '2099-01-03', '10:00:00', '$estado')");
+    };
+    $orden = function (string $tipo, string $estado) use ($mysqli, $cot, $paciente) {
+        $mysqli->query("INSERT INTO ordenes_imagen (paciente_id, cotizacion_id, tipo, estado, indicaciones) VALUES ($paciente, $cot, '$tipo', '$estado', 'PHPTEST')");
+    };
+    try {
+        $dConsulta = $detalle('consulta', $consultaId);
+        $dEco1 = $detalle('ecografia');
+        $dEco2 = $detalle('ecografia');
+        $dRx = $detalle('rayosx');
+        $dLab = $detalle('laboratorio');
+        $dFarm = $detalle('farmacia');
+        $evento($dEco1, 'ecografia', 'atendido');
+        $evento($dEco2, 'ecografia', 'confirmado');
+        $evento($dRx, 'rayosx', 'confirmado');
+        $orden('ecografia', 'completado');
+        $orden('ecografia', 'completado');
+        $estados = episodio_estado_atencion_servicios($mysqli, $cot);
+        iguales('atendido', $estados[$dConsulta], 'consulta completada');
+        iguales('atendido', $estados[$dEco1]);
+        iguales('parcial', $estados[$dEco2], 'imagenes subidas pero sin informe');
+        iguales('pendiente', $estados[$dRx], 'RX sin orden completada');
+        verdadero(!isset($estados[$dLab]) && !isset($estados[$dFarm]), 'laboratorio y farmacia no se atienden');
+    } finally {
+        $mysqli->query("DELETE FROM consultas WHERE id = $consultaId AND paciente_id = $paciente");
+    }
+}, true);
+
 prueba('post-pago: la consulta en falta_cancelar vuelve a pendiente al pagar su cotización', function () {
     global $mysqli, $marcador;
     $obs = $mysqli->real_escape_string($marcador);

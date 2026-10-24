@@ -5,6 +5,7 @@ if (!defined('SKIP_PDO_INIT')) {
 }
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/AgendaMedicoRegla.php';
+require_once __DIR__ . '/modules/EpisodioAtencionModule.php';
 
 function rc_require_session_roles(array $rolesPermitidos) {
     if (!isset($_SESSION['usuario']) || !is_array($_SESSION['usuario'])) {
@@ -1545,6 +1546,16 @@ if ($method === 'GET') {
     rc_ensure_cola_medico_schema($conn);
 
     $vista = strtolower(trim((string)($_GET['vista'] ?? '')));
+    if ($vista === 'atencion_servicios') {
+        $cotizacionId = (int)($_GET['cotizacion_id'] ?? 0);
+        if ($cotizacionId <= 0) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'cotizacion_id es requerido']);
+            exit;
+        }
+        echo json_encode(['success' => true, 'estados' => (object)episodio_estado_atencion_servicios($conn, $cotizacionId)]);
+        exit;
+    }
     if ($vista === 'reprogramacion_turnos') {
         $cotizacionId = (int)($_GET['cotizacion_id'] ?? 0);
         $fecha = trim((string)($_GET['fecha'] ?? ''));
