@@ -408,6 +408,9 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       if (isEditingConsulta && consultaIdNum > 0) {
         params.set("consulta_id", String(consultaIdNum));
       }
+      if (cotizacionIdNum > 0) {
+        params.set("cotizacion_id_excluir", String(cotizacionIdNum));
+      }
 
       authFetch(`${BASE_URL}api_horarios_disponibles.php?${params.toString()}`, {
         credentials: "include",
@@ -438,7 +441,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
       window.clearTimeout(debounceId);
       controller.abort();
     };
-  }, [medicoIdRespaldo, fecha, refreshDisponibilidadKey, isEditingConsulta, consultaIdNum]);
+  }, [medicoIdRespaldo, fecha, refreshDisponibilidadKey, isEditingConsulta, consultaIdNum, cotizacionIdNum]);
 
   const setHoraConGuardia = (value) => {
     const horaNorm = normalizeHourHm(value);
@@ -893,6 +896,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
         fecha: fechaSeleccionada,
         hora: horaSeleccionada,
         consultaIdExcluir: consultaIdNum > 0 ? Number(consultaIdNum) : 0,
+        cotizacionIdExcluir: cotizacionIdNum > 0 ? Number(cotizacionIdNum) : 0,
       }],
       onApplySuggestion: (_entry, nuevaHora, nuevaFecha) => {
         if (nuevaFecha) {
@@ -1336,6 +1340,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
             medicoId: Number(medicoId || 0),
             fecha: fechaProgramada,
             hora: horaProgramada,
+            cotizacionIdExcluir: cotizacionIdNum > 0 ? Number(cotizacionIdNum) : 0,
           },
         ],
         onApplySuggestion: (_entry, nuevaHora, nuevaFecha) => {

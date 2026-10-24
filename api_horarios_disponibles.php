@@ -2,6 +2,7 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/AgendaMedicoRegla.php';
+require_once __DIR__ . '/modules/EpisodioAtencionModule.php';
 
 if (!function_exists('hdisp_table_exists')) {
     function hdisp_table_exists(mysqli $conn, string $table): bool {
@@ -212,27 +213,23 @@ if ($method === 'GET') {
                 . $whereServicio;
             $canExcludeAgendaCotizacion = ($cotizacion_id_excluir > 0 && hdisp_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id'));
             $canExcludeDetalleCotizacion = ($cotizacion_id_excluir > 0 && $hasDetalleCotizacionId && $joinDetalle !== '');
+            // Se excluye todo el episodio (cotización base y adendas): sus servicios comparten hora con la consulta.
+            $cotizacionesExcluirSql = implode(',', array_map('intval', episodio_cotizaciones_cadena_ids($conn, $cotizacion_id_excluir) ?: [$cotizacion_id_excluir]));
             if ($canExcludeAgendaCotizacion || $canExcludeDetalleCotizacion) {
                 $sqlAgenda .= ' AND (';
                 $conds = [];
                 if ($canExcludeAgendaCotizacion) {
-                    $conds[] = 'COALESCE(a.cotizacion_id, 0) <> ?';
+                    $conds[] = 'COALESCE(a.cotizacion_id, 0) NOT IN (' . $cotizacionesExcluirSql . ')';
                 }
                 if ($canExcludeDetalleCotizacion) {
-                    $conds[] = 'COALESCE(cd.cotizacion_id, 0) <> ?';
+                    $conds[] = 'COALESCE(cd.cotizacion_id, 0) NOT IN (' . $cotizacionesExcluirSql . ')';
                 }
                 $sqlAgenda .= implode(' AND ', $conds) . ')';
             }
 
             $stmtAgenda = $conn->prepare($sqlAgenda);
             if ($stmtAgenda) {
-                if ($canExcludeAgendaCotizacion && $canExcludeDetalleCotizacion) {
-                    $stmtAgenda->bind_param('isii', $medico_id, $fecha, $cotizacion_id_excluir, $cotizacion_id_excluir);
-                } elseif ($canExcludeAgendaCotizacion || $canExcludeDetalleCotizacion) {
-                    $stmtAgenda->bind_param('isi', $medico_id, $fecha, $cotizacion_id_excluir);
-                } else {
-                    $stmtAgenda->bind_param('is', $medico_id, $fecha);
-                }
+                $stmtAgenda->bind_param('is', $medico_id, $fecha);
                 $stmtAgenda->execute();
                 $resAgenda = $stmtAgenda->get_result();
                 while ($ag = $resAgenda->fetch_assoc()) {
