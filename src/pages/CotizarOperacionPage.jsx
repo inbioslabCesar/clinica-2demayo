@@ -4,7 +4,7 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import Swal from "sweetalert2";
 import { BASE_URL, fetchConfigSingleton, getCachedAgendaProgramacionModo } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
-import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { aplicarExclusionConsultaDelCarrito, aplicarSugerenciaEnDetalles, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 import { getMedicoAccentColor } from "../utils/medicoAccent";
 import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
@@ -690,19 +690,7 @@ export default function CotizarOperacionPage() {
       baseUrl: BASE_URL,
       Swal,
       entries: agendaEntries,
-      onApplySuggestion: (entry, nuevaHora, nuevaFecha) => {
-        detalles.forEach((d) => {
-          const medicoId = Number(d?.medico_id || 0);
-          const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
-          const horaDet = String(d?.hora_programada || "").slice(0, 5);
-          if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
-            if (String(nuevaFecha || "").slice(0, 10)) {
-              d.fecha_programada = String(nuevaFecha || "").slice(0, 10);
-            }
-            d.hora_programada = String(nuevaHora || "").slice(0, 5);
-          }
-        });
-      },
+      onApplySuggestion: aplicarSugerenciaEnDetalles(detalles),
     });
     if (!agendaCheck?.ok) {
       return;
@@ -786,19 +774,7 @@ export default function CotizarOperacionPage() {
       baseUrl: BASE_URL,
       Swal,
       entries: agendaEntries,
-      onApplySuggestion: (entry, nuevaHora, nuevaFecha) => {
-        detalles.forEach((d) => {
-          const medicoId = Number(d?.medico_id || 0);
-          const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
-          const horaDet = String(d?.hora_programada || "").slice(0, 5);
-          if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
-            if (String(nuevaFecha || "").slice(0, 10)) {
-              d.fecha_programada = String(nuevaFecha || "").slice(0, 10);
-            }
-            d.hora_programada = String(nuevaHora || "").slice(0, 5);
-          }
-        });
-      },
+      onApplySuggestion: aplicarSugerenciaEnDetalles(detalles),
     });
     if (!agendaCheck?.ok) {
       return;

@@ -11,7 +11,7 @@ import useSubmitGuard from "../hooks/useSubmitGuard";
 import { confirmarLimpiezaCarrito } from "../utils/cotizacionSubmit";
 import { getLimaDate, getLimaTime as getDefaultTime } from "../utils/dateTime";
 import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
-import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
+import { aplicarExclusionConsultaDelCarrito, aplicarSugerenciaEnDetalles, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 
 export default function CotizarLaboratorioPage() {
   const safeText = (value) => String(value || "");
@@ -933,16 +933,7 @@ export default function CotizarLaboratorioPage() {
       baseUrl: BASE_URL,
       Swal,
       entries: agendaEntries,
-      onApplySuggestion: (entry, nuevaHora) => {
-        detalles.forEach((d) => {
-          const medicoId = Number(d?.medico_id || 0);
-          const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
-          const horaDet = String(d?.hora_programada || "").slice(0, 5);
-          if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
-            d.hora_programada = String(nuevaHora || "").slice(0, 5);
-          }
-        });
-      },
+      onApplySuggestion: aplicarSugerenciaEnDetalles(detalles),
     });
     if (!agendaCheck?.ok) {
       return;

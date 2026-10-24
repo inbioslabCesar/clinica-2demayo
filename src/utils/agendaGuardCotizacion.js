@@ -837,6 +837,23 @@ function countOutsideRegularGroup(rows, startIndex, entry, advisory) {
   return Math.max(1, total);
 }
 
+// Devuelve el callback `onApplySuggestion` estándar: reescribe fecha/hora de los detalles que coinciden con la entrada sugerida.
+export function aplicarSugerenciaEnDetalles(detalles) {
+  return (entry, nuevaHora, nuevaFecha) => {
+    (Array.isArray(detalles) ? detalles : []).forEach((d) => {
+      const medicoId = Number(d?.medico_id || 0);
+      const fechaDet = String(d?.fecha_programada || "").slice(0, 10);
+      const horaDet = String(d?.hora_programada || "").slice(0, 5);
+      if (medicoId === Number(entry.medicoId) && fechaDet === entry.fecha && horaDet === entry.hora) {
+        if (String(nuevaFecha || "").slice(0, 10)) {
+          d.fecha_programada = String(nuevaFecha || "").slice(0, 10);
+        }
+        d.hora_programada = String(nuevaHora || "").slice(0, 5);
+      }
+    });
+  };
+}
+
 export async function validarAgendaAntesDeCotizar({
   authFetch,
   baseUrl,
