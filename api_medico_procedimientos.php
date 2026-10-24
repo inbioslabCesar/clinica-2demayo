@@ -370,7 +370,7 @@ function mp_sync_agenda_estado_desde_atencion(mysqli $conn, int $detalleId, stri
             $params[] = $servicioId;
         }
         if ($hasAgendaServicioTipo) {
-            $fallback .= ' AND LOWER(TRIM(COALESCE(servicio_tipo, ""))) IN ("procedimiento", "procedimientos")';
+            $fallback .= ' AND LOWER(TRIM(COALESCE(servicio_tipo, ""))) IN ("procedimiento", "procedimientos", "operacion", "operaciones")';
         }
         $fallback .= ')';
         $where[] = $fallback;
@@ -445,7 +445,7 @@ if ($method === 'PUT') {
         . ' INNER JOIN cotizaciones ct ON ct.id = cd.cotizacion_id'
         . ' LEFT JOIN consultas c ON c.id = ' . ($hasCdConsultaId ? 'cd.consulta_id' : 'NULL')
         . ' WHERE cd.id = ?'
-        . '   AND LOWER(TRIM(COALESCE(cd.servicio_tipo, ""))) IN ("procedimiento", "procedimientos")'
+        . '   AND LOWER(TRIM(COALESCE(cd.servicio_tipo, ""))) IN ("procedimiento", "procedimientos", "operacion", "operaciones")'
         . '   AND LOWER(TRIM(COALESCE(ct.estado, ""))) NOT IN ("anulado", "anulada")';
     if ($hasCdEstadoItem) {
         $sqlAcceso .= ' AND LOWER(TRIM(COALESCE(cd.estado_item, "activo"))) <> "eliminado"';
@@ -592,7 +592,7 @@ $where = [];
 $params = [];
 $types = '';
 
-$where[] = "LOWER(TRIM(COALESCE(cd.servicio_tipo, ''))) IN ('procedimiento', 'procedimientos')";
+$where[] = "LOWER(TRIM(COALESCE(cd.servicio_tipo, ''))) IN ('procedimiento', 'procedimientos', 'operacion', 'operaciones')";
 $where[] = "LOWER(TRIM(COALESCE(ct.estado, ''))) NOT IN ('anulado', 'anulada')";
 if ($hasCdEstadoItem) {
     $where[] = "LOWER(TRIM(COALESCE(cd.estado_item, 'activo'))) <> 'eliminado'";
@@ -701,6 +701,7 @@ $selectSql = 'SELECT '
     . 'cd.cotizacion_id, '
     . 'cd.servicio_id, '
     . 'cd.descripcion AS procedimiento_nombre, '
+    . 'LOWER(TRIM(COALESCE(cd.servicio_tipo, ""))) AS servicio_tipo, '
     . 'cd.cantidad, '
     . 'cd.precio_unitario, '
     . 'cd.subtotal, '
@@ -747,6 +748,7 @@ while ($row = $res->fetch_assoc()) {
         'cotizacion_id' => (int)($row['cotizacion_id'] ?? 0),
         'servicio_id' => (int)($row['servicio_id'] ?? 0),
         'procedimiento_nombre' => (string)($row['procedimiento_nombre'] ?? ''),
+        'servicio_tipo' => (string)($row['servicio_tipo'] ?? ''),
         'cantidad' => (int)($row['cantidad'] ?? 0),
         'precio_unitario' => round((float)($row['precio_unitario'] ?? 0), 2),
         'subtotal' => round((float)($row['subtotal'] ?? 0), 2),

@@ -12,6 +12,7 @@ require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/imagenologia_encoding.php';
+require_once __DIR__ . '/modules/EpisodioAtencionModule.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -478,6 +479,10 @@ if ($method === 'POST') {
             $stmtHist->execute();
             $stmtHist->close();
         }
+
+        if ($estado === 'completado') {
+            episodio_marcar_agenda_imagen_atendida($mysqli, $ordenImagenId, $usuarioId);
+        }
         
         echo json_encode([
             'success' => true,
@@ -521,6 +526,10 @@ if ($method === 'POST') {
                 $stmtHist->bind_param('isssss', $informeId, $contenidoJsonStr, $usuarioId, $usuarioNombre, $tipoHist, $ahora);
                 $stmtHist->execute();
                 $stmtHist->close();
+            }
+
+            if ($estado === 'completado') {
+                episodio_marcar_agenda_imagen_atendida($mysqli, $ordenImagenId, $usuarioId);
             }
             
             echo json_encode([
@@ -589,6 +598,8 @@ if ($method === 'PUT') {
         $stmt->bind_param('sssi', $estado, $ahora, $ahora, $informeId);
         $stmt->execute();
         $stmt->close();
+
+        episodio_marcar_agenda_imagen_atendida($mysqli, (int)($orden['id'] ?? 0), $usuarioId);
         
         echo json_encode(['success' => true, 'mensaje' => 'Informe marcado como completado']);
     } else {

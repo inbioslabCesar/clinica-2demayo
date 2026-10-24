@@ -508,6 +508,48 @@ prueba('órdenes de imagen: una orden por servicio, idempotente, con médico y c
     iguales(2, (int)$mysqli->query("SELECT COUNT(*) c FROM ordenes_imagen WHERE cotizacion_id = $cotId")->fetch_assoc()['c'], 'idempotente entre API y cobro');
 }, true);
 
+prueba('imagen: completar el informe marca atendido el servicio de agenda que corresponde (incluye adendas, idempotente)', function () {
+    global $mysqli, $marcador;
+    $obs = $mysqli->real_escape_string($marcador);
+    $paciente = 987654;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES ($paciente, 18, 300, 'pagado', '$obs')");
+    $base = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones, cotizacion_padre_id, es_adenda) VALUES ($paciente, 18, 100, 'pagado', '$obs', $base, 1)");
+    $adenda = (int)$mysqli->insert_id;
+    $agenda = function (int $cot, string $tipo) use ($mysqli, $paciente) {
+        $mysqli->query("INSERT INTO agenda_servicios_cotizacion (cotizacion_id, paciente_id, medico_id, servicio_tipo, titulo_evento, fecha_programada, hora_programada, estado_evento) VALUES ($cot, $paciente, 1, '$tipo', 'PHPTEST', '2099-01-02', '10:00:00', 'confirmado')");
+        return (int)$mysqli->insert_id;
+    };
+    $orden = function (int $cot, string $tipo, string $estado = 'completado') use ($mysqli, $paciente) {
+        $mysqli->query("INSERT INTO ordenes_imagen (paciente_id, cotizacion_id, tipo, estado, indicaciones) VALUES ($paciente, $cot, '$tipo', '$estado', 'PHPTEST')");
+        return (int)$mysqli->insert_id;
+    };
+    $estado = fn(int $id) => $mysqli->query("SELECT estado_evento FROM agenda_servicios_cotizacion WHERE id = $id")->fetch_assoc()['estado_evento'];
+
+    $eco1 = $agenda($base, 'ecografia');
+    $eco2 = $agenda($adenda, 'ecografia');
+    $rx1 = $agenda($base, 'rayosx');
+    $orden($base, 'ecografia', 'cancelado');
+    $o1 = $orden($base, 'ecografia');
+    $o2 = $orden($adenda, 'ecografia');
+    $oRx = $orden($base, 'rx');
+
+    iguales(1, episodio_marcar_agenda_imagen_atendida($mysqli, $o2, 18));
+    iguales('confirmado', $estado($eco1), 'la primera ecografía sigue pendiente de informe');
+    iguales('atendido', $estado($eco2), 'la orden de la adenda marca el segundo servicio');
+    iguales('confirmado', $estado($rx1), 'no toca otros tipos');
+
+    iguales(0, episodio_marcar_agenda_imagen_atendida($mysqli, $o2, 18), 'idempotente');
+    iguales('confirmado', $estado($eco1));
+
+    iguales(1, episodio_marcar_agenda_imagen_atendida($mysqli, $o1, 18));
+    iguales('atendido', $estado($eco1));
+    iguales(1, episodio_marcar_agenda_imagen_atendida($mysqli, $oRx, 18));
+    iguales('atendido', $estado($rx1));
+
+    iguales(0, episodio_marcar_agenda_imagen_atendida($mysqli, 0, 18));
+}, true);
+
 prueba('post-pago: la consulta en falta_cancelar vuelve a pendiente al pagar su cotización', function () {
     global $mysqli, $marcador;
     $obs = $mysqli->real_escape_string($marcador);

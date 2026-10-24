@@ -201,7 +201,7 @@ export default function MisProcedimientosPage() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-cyan-700">Panel médico</p>
             <h1 className="mt-1 text-2xl font-bold text-slate-900">Mis Procedimientos</h1>
-            <p className="mt-1 text-sm text-slate-600">Bandeja operativa para pendientes reales y control diario de atención de procedimientos.</p>
+            <p className="mt-1 text-sm text-slate-600">Bandeja operativa para pendientes reales y control diario de atención de procedimientos y operaciones.</p>
           </div>
           <button
             type="button"
@@ -394,7 +394,12 @@ export default function MisProcedimientosPage() {
                         <p className="text-xs text-slate-500">HC: {it.historia_clinica || "-"}</p>
                       </td>
                       <td className="px-4 py-3">
-                        <p className="font-medium text-slate-900">{it.procedimiento_nombre || "Procedimiento"}</p>
+                        <p className="font-medium text-slate-900">
+                          {it.procedimiento_nombre || "Procedimiento"}
+                          {String(it.servicio_tipo || "").startsWith("operacion") && (
+                            <span className="ml-2 inline-flex rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800">Operación</span>
+                          )}
+                        </p>
                         <p className="text-xs text-slate-500">ID servicio: {Number(it.servicio_id || 0) || "-"}</p>
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-700">
