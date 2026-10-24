@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 export function generarClientRequestId(prefix = "cotizacion") {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -8,35 +8,44 @@ export function generarClientRequestId(prefix = "cotizacion") {
 }
 
 /**
- * Evita envíos duplicados de un registro (doble clic, dos botones, reintento).
- * - `run(task, fingerprint)` ignora llamadas mientras haya una en curso (candado síncrono con ref).
+ * Lógica del candado, independiente de React para poder probarla.
+ * - `run(task, fingerprint)` ignora llamadas mientras haya una en curso (candado síncrono).
  * - `task` recibe `(clientRequestId, release)`. El id se conserva entre intentos con el mismo
  *   `fingerprint` (el backend reconoce el reintento) y cambia si el contenido cambia.
  *   Hay que llamar `release()` cuando el registro se confirmó, para que el siguiente use un id nuevo.
  */
-export default function useSubmitGuard(prefix = "cotizacion") {
-  const lockRef = useRef(false);
-  const requestRef = useRef({ id: "", fingerprint: "" });
-  const [saving, setSaving] = useState(false);
+export function createSubmitGuard(prefix = "cotizacion", onBusyChange = () => {}) {
+  let locked = false;
+  let request = { id: "", fingerprint: "" };
 
-  const release = useCallback(() => {
-    requestRef.current = { id: "", fingerprint: "" };
-  }, []);
+  const release = () => {
+    request = { id: "", fingerprint: "" };
+  };
 
-  const run = useCallback(async (task, fingerprint = "") => {
-    if (lockRef.current) return undefined;
-    lockRef.current = true;
-    setSaving(true);
+  const run = async (task, fingerprint = "") => {
+    if (locked) return undefined;
+    locked = true;
+    onBusyChange(true);
     try {
-      if (!requestRef.current.id || requestRef.current.fingerprint !== fingerprint) {
-        requestRef.current = { id: generarClientRequestId(prefix), fingerprint };
+      if (!request.id || request.fingerprint !== fingerprint) {
+        request = { id: generarClientRequestId(prefix), fingerprint };
       }
-      return await task(requestRef.current.id, release);
+      return await task(request.id, release);
     } finally {
-      lockRef.current = false;
-      setSaving(false);
+      locked = false;
+      onBusyChange(false);
     }
-  }, [prefix, release]);
+  };
 
-  return { saving, run };
+  return { run, release };
+}
+
+/** Hook: expone `saving` (para deshabilitar botones) y `run` (envío protegido). */
+export default function useSubmitGuard(prefix = "cotizacion") {
+  const [saving, setSaving] = useState(false);
+  const guardRef = useRef(null);
+  if (!guardRef.current) {
+    guardRef.current = createSubmitGuard(prefix, setSaving);
+  }
+  return { saving, run: guardRef.current.run };
 }

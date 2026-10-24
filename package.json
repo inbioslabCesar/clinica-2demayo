@@ -22,6 +22,10 @@
     "build:public": "vite build --config vite.public.config.js",
     "prepare:hostinger": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/prepare_hostinger_release.ps1",
     "lint": "eslint src eslint.config.js vite.config.js vite.public.config.js tailwind.config.js",
+    "test": "npm run test:js && npm run test:php",
+    "test:js": "node --import ./tests/js/support/register.mjs --test \"tests/js/*.test.js\"",
+    "test:php": "php tests/php/run.php",
+    "test:db": "php tests/php/run.php --db",
     "preview": "vite preview",
     "preview:public": "vite preview --config vite.public.config.js"
   },

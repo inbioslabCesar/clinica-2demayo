@@ -1,0 +1,203 @@
+<?php
+// Runner mínimo de pruebas PHP (sin dependencias).
+//   php tests/php/run.php          -> pruebas unitarias (sin BD)
+//   php tests/php/run.php --db     -> además, pruebas contra la BD de desarrollo (crean y borran sus propios datos)
+$root = dirname(__DIR__, 2);
+$conBd = in_array('--db', $argv, true) || getenv('RUN_DB_TESTS') === '1';
+$marcador = 'PHPTEST_DELETE_ME';
+
+$pruebas = [];
+function prueba(string $nombre, callable $fn, bool $requiereBd = false): void {
+    global $pruebas;
+    $pruebas[] = [$nombre, $fn, $requiereBd];
+}
+function iguales($esperado, $actual, string $msg = ''): void {
+    if ($esperado !== $actual) {
+        throw new RuntimeException(($msg !== '' ? $msg . ' - ' : '') . 'esperado ' . var_export($esperado, true) . ', obtenido ' . var_export($actual, true));
+    }
+}
+function verdadero($cond, string $msg = 'se esperaba true'): void {
+    if (!$cond) throw new RuntimeException($msg);
+}
+
+require_once $root . '/modules/AgendaMedicoRegla.php';
+
+/* ───────── Unitarias: regla "qué servicios ocupan al médico" ───────── */
+
+prueba('los servicios que realiza el médico ocupan su horario', function () {
+    $tipos = agenda_tipos_servicio_ocupan_medico();
+    foreach (['consulta', 'ecografia', 'rayosx', 'rx', 'procedimiento', 'operacion', 'cirugia'] as $t) {
+        verdadero(in_array($t, $tipos, true), "$t debería ocupar al médico");
+    }
+});
+
+prueba('laboratorio, farmacia y líneas de paquete no ocupan al médico', function () {
+    $tipos = agenda_tipos_servicio_ocupan_medico();
+    foreach (['laboratorio', 'farmacia', 'paquete', 'perfil', 'otros'] as $t) {
+        verdadero(!in_array($t, $tipos, true), "$t no debería ocupar al médico");
+    }
+});
+
+prueba('el fragmento SQL respeta el alias de tabla', function () {
+    verdadero(strpos(agenda_sql_servicio_ocupa_medico('a'), 'a.servicio_tipo') !== false);
+    $sinAlias = agenda_sql_servicio_ocupa_medico('');
+    verdadero(strpos($sinAlias, 'servicio_tipo') !== false && strpos($sinAlias, '.servicio_tipo') === false);
+});
+
+/* ───────── Con BD: ejecuta el SQL real y los endpoints ───────── */
+
+function ejecutarApi(string $endpoint, string $metodo, string $payload): array {
+    global $root;
+    $tmp = tempnam(sys_get_temp_dir(), 'pt');
+    file_put_contents($tmp, $payload);
+    $cmd = [PHP_BINARY, $root . '/tests/php/support/http_harness.php', $endpoint, $metodo, $tmp];
+    $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    $salida = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($proc);
+    @unlink($tmp);
+    return json_decode(trim($salida), true) ?: ['_raw' => $salida];
+}
+
+function ejecutarApiEnParalelo(string $endpoint, string $payload, int $n): array {
+    global $root;
+    $procesos = [];
+    for ($i = 0; $i < $n; $i++) {
+        $tmp = tempnam(sys_get_temp_dir(), 'pt');
+        file_put_contents($tmp, $payload);
+        $cmd = [PHP_BINARY, $root . '/tests/php/support/http_harness.php', $endpoint, 'POST', $tmp];
+        $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        $procesos[] = [$proc, $pipes, $tmp];
+    }
+    $respuestas = [];
+    foreach ($procesos as [$proc, $pipes, $tmp]) {
+        $respuestas[] = json_decode(trim(stream_get_contents($pipes[1])), true) ?: [];
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($proc);
+        @unlink($tmp);
+    }
+    return $respuestas;
+}
+
+function payloadCotizacion(string $clientRequestId): string {
+    global $marcador;
+    return json_encode([
+        'client_request_id' => $clientRequestId,
+        'paciente_id' => 0,
+        'paciente_nombre' => 'PHPTEST',
+        'modo_cotizacion' => 'informativa',
+        'solo_ticket' => 1,
+        'total' => 10,
+        'fecha_ref' => date('Y-m-d'),
+        'observaciones' => $marcador,
+        'detalles' => [['servicio_tipo' => 'procedimiento', 'servicio_id' => 999999, 'descripcion' => 'PHPTEST', 'cantidad' => 1, 'precio_unitario' => 10, 'subtotal' => 10]],
+    ]);
+}
+
+function limpiarDatosDePrueba($mysqli): void {
+    global $marcador;
+    $like = "'%" . $mysqli->real_escape_string($marcador) . "%'";
+    $ids = [];
+    $r = $mysqli->query("SELECT id FROM cotizaciones WHERE observaciones LIKE $like");
+    while ($row = $r->fetch_assoc()) $ids[] = (int)$row['id'];
+    if (!$ids) return;
+    $in = implode(',', $ids);
+    $t = $mysqli->query("SELECT TABLE_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'cotizacion_id'");
+    while ($row = $t->fetch_assoc()) {
+        $mysqli->query("DELETE FROM `{$row['TABLE_NAME']}` WHERE cotizacion_id IN ($in)");
+    }
+    $mysqli->query("DELETE FROM cotizaciones WHERE id IN ($in) AND observaciones LIKE $like");
+}
+
+prueba('el fragmento SQL filtra filas reales de agenda por tipo de servicio', function () {
+    global $mysqli;
+    $tipos = ['consulta', 'ecografia', 'rayosx', 'procedimiento', 'operacion', 'laboratorio', 'paquete', 'farmacia'];
+    $union = implode(' UNION ALL ', array_map(fn($t) => "SELECT '$t' AS servicio_tipo", $tipos));
+    $r = $mysqli->query("SELECT a.servicio_tipo FROM ($union) a WHERE " . agenda_sql_servicio_ocupa_medico('a') . ' ORDER BY a.servicio_tipo');
+    $obtenidos = array_column($r->fetch_all(MYSQLI_ASSOC), 'servicio_tipo');
+    iguales(['consulta', 'ecografia', 'operacion', 'procedimiento', 'rayosx'], $obtenidos);
+}, true);
+
+prueba('cotización: el mismo client_request_id devuelve la misma cotización', function () {
+    global $mysqli;
+    $id = 'phptest:' . bin2hex(random_bytes(8));
+    $a = ejecutarApi('api_cotizaciones.php', 'POST', payloadCotizacion($id));
+    $b = ejecutarApi('api_cotizaciones.php', 'POST', payloadCotizacion($id));
+    verdadero(($a['success'] ?? false) === true, 'primer envío: ' . json_encode($a));
+    iguales(false, $a['duplicate'], 'el primer envío no es duplicado');
+    iguales($a['cotizacion_id'], $b['cotizacion_id'], 'misma cotización');
+    iguales(true, $b['duplicate'], 'el segundo envío se marca duplicado');
+    $n = (int)$mysqli->query("SELECT COUNT(*) c FROM cotizaciones WHERE client_request_id = '$id'")->fetch_assoc()['c'];
+    iguales(1, $n, 'solo una fila en BD');
+}, true);
+
+prueba('cotización: distintos client_request_id crean cotizaciones distintas', function () {
+    $a = ejecutarApi('api_cotizaciones.php', 'POST', payloadCotizacion('phptest:' . bin2hex(random_bytes(8))));
+    $b = ejecutarApi('api_cotizaciones.php', 'POST', payloadCotizacion('phptest:' . bin2hex(random_bytes(8))));
+    verdadero(($a['success'] ?? false) && ($b['success'] ?? false), 'ambas se registran');
+    verdadero($a['cotizacion_id'] !== $b['cotizacion_id'], 'ids distintos');
+}, true);
+
+prueba('cotización: 4 envíos simultáneos con el mismo id crean una sola cotización', function () {
+    global $mysqli;
+    $id = 'phptest:' . bin2hex(random_bytes(8));
+    $respuestas = ejecutarApiEnParalelo('api_cotizaciones.php', payloadCotizacion($id), 4);
+    $ids = array_unique(array_map(fn($r) => $r['cotizacion_id'] ?? null, $respuestas));
+    iguales(1, count($ids), 'todas apuntan a la misma cotización: ' . json_encode($respuestas));
+    $creadas = count(array_filter($respuestas, fn($r) => ($r['duplicate'] ?? true) === false));
+    iguales(1, $creadas, 'solo una la crea');
+    $n = (int)$mysqli->query("SELECT COUNT(*) c FROM cotizaciones WHERE client_request_id = '$id'")->fetch_assoc()['c'];
+    iguales(1, $n, 'solo una fila en BD');
+}, true);
+
+prueba('cotización: client_request_id inválido no bloquea el registro', function () {
+    $a = ejecutarApi('api_cotizaciones.php', 'POST', payloadCotizacion('id con espacios y !!'));
+    verdadero(($a['success'] ?? false) === true, json_encode($a));
+}, true);
+
+/* ───────── Ejecución ───────── */
+
+$bd = null;
+if ($conBd) {
+    ob_start();
+    define('SKIP_PDO_INIT', true);
+    require $root . '/config.php';
+    ob_end_clean();
+    $bd = $mysqli ?? null;
+    if (!$bd) {
+        fwrite(STDERR, "No hay conexión a la BD: se omiten las pruebas con --db\n");
+        $conBd = false;
+    } else {
+        $GLOBALS['mysqli'] = $bd;
+        $tieneColumna = (int)$bd->query("SELECT COUNT(*) c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cotizaciones' AND COLUMN_NAME = 'client_request_id'")->fetch_assoc()['c'] === 1;
+        if (!$tieneColumna) {
+            fwrite(STDERR, "Falta cotizaciones.client_request_id: aplica sql/2026-10-24/001_schema.sql antes de las pruebas con --db\n");
+            exit(2);
+        }
+        limpiarDatosDePrueba($bd);
+    }
+}
+
+$ok = 0; $fallo = 0; $omitidas = 0;
+foreach ($pruebas as [$nombre, $fn, $requiereBd]) {
+    if ($requiereBd && !$conBd) {
+        $omitidas++;
+        echo "  - omitida (requiere --db): $nombre\n";
+        continue;
+    }
+    try {
+        $fn();
+        $ok++;
+        echo "  ✔ $nombre\n";
+    } catch (Throwable $e) {
+        $fallo++;
+        echo "  ✖ $nombre\n      " . $e->getMessage() . "\n";
+    }
+}
+if ($conBd && $bd) {
+    limpiarDatosDePrueba($bd);
+}
+echo "\n$ok pasaron, $fallo fallaron, $omitidas omitidas\n";
+exit($fallo > 0 ? 1 : 0);
