@@ -2784,6 +2784,88 @@ class CobroModule
             return ['success' => false, 'error' => 'Error al actualizar: ' . $e->getMessage()];
         }
     }
+    // Descuenta stock y registra la venta de cada ítem de farmacia del cobro.
+    private static function procesarVentasFarmaciaDelCobro($conn, $data, $cobro_id, $nombre_paciente, $cotizacionId)
+    {
+        $dni_paciente = $data['paciente_dni'] ?? '';
+        $hc_paciente = $data['paciente_hc'] ?? '';
+        foreach ($data['detalles'] as $detalle) {
+            $detalleTipo = strtolower(trim((string)($detalle['servicio_tipo'] ?? '')));
+            if ($detalleTipo === 'farmacia') {
+                FarmaciaModule::procesarVenta(
+                    $conn,
+                    $detalle,
+                    $cobro_id,
+                    $nombre_paciente,
+                    $dni_paciente,
+                    $hc_paciente,
+                    $data['usuario_id'],
+                    (int)($detalle['cotizacion_id'] ?? $cotizacionId)
+                );
+            }
+        }
+    }
+
+    // Registra la atención del paciente con el servicio principal del cobro (los cargos de paquete no cuentan).
+    private static function registrarAtencionDelCobro($conn, $data, $cobro_id)
+    {
+        $servicio_key = $data['servicio_info']['key'] ?? '';
+        if (!in_array($servicio_key, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento', 'hospitalizacion'], true)) {
+            $servicio_key = 'consulta';
+            foreach ($data['detalles'] as $detalleAtencion) {
+                if (!PaqueteComercialModule::esCargo($detalleAtencion)) {
+                    $servicio_key = self::normalizarServicioTipo($detalleAtencion['servicio_tipo'] ?? 'consulta');
+                    break;
+                }
+            }
+        }
+        if ($data['paciente_id'] && $data['paciente_id'] !== 'null') {
+            $ok = AtencionModule::registrarAtencion($conn, $data['paciente_id'], $data['usuario_id'], $servicio_key, $cobro_id);
+            if (!$ok) {
+                throw new \Exception("Servicio '$servicio_key' no permitido en atenciones. Actualiza el ENUM o revisa el frontend.");
+            }
+        }
+    }
+
+    // Aplica el abono a cada cotización del cobro y, según su estado, confirma la agenda y sincroniza lo clínico y los honorarios.
+    private static function sincronizarCotizacionesTrasCobro($conn, $data, $cobro_id, $resumenPorCotizacion)
+    {
+        foreach ($resumenPorCotizacion as $resumenCotizacion) {
+            $cotizacionIdSync = (int)($resumenCotizacion['cotizacion_id'] ?? 0);
+            if ($cotizacionIdSync <= 0) {
+                continue;
+            }
+
+            self::sincronizarAbonoCotizacionDesdeCobro(
+                $conn,
+                $cotizacionIdSync,
+                $cobro_id,
+                (float)($resumenCotizacion['monto_aplicado'] ?? 0),
+                (int)($data['usuario_id'] ?? 0),
+                (float)($resumenCotizacion['descuento_aplicado'] ?? 0),
+                (string)($data['modo_cobro'] ?? '')
+            );
+
+            $stmtEstadoCot = $conn->prepare('SELECT estado FROM cotizaciones WHERE id = ? LIMIT 1');
+            if ($stmtEstadoCot) {
+                $stmtEstadoCot->bind_param('i', $cotizacionIdSync);
+                $stmtEstadoCot->execute();
+                $rowEstadoCot = $stmtEstadoCot->get_result()->fetch_assoc();
+                $stmtEstadoCot->close();
+                $estadoCotizacionActual = strtolower(trim((string)($rowEstadoCot['estado'] ?? '')));
+                if (in_array($estadoCotizacionActual, ['parcial', 'pagado'], true)) {
+                    self::asegurarAgendaServiciosPorCobro($conn, $cotizacionIdSync, (int)($data['usuario_id'] ?? 0));
+                    self::confirmarAgendaServiciosPorCobro($conn, $cotizacionIdSync, (int)($data['usuario_id'] ?? 0));
+                }
+            }
+
+            if (self::cotizacionEstaPagada($conn, $cotizacionIdSync)) {
+                self::sincronizarServiciosClinicosPostPagoCotizacion($conn, $cotizacionIdSync, (int)($data['usuario_id'] ?? 0));
+                HonorarioModule::consolidarPorCobrarCotizacion($conn, $cotizacionIdSync);
+            }
+        }
+    }
+
     // Proceso principal de cobro: registra cobro, caja, laboratorio, farmacia, honorarios y atención
     public static function procesarCobro($conn, $data)
     {
@@ -3503,81 +3585,13 @@ class CobroModule
                 // Eliminado: registro duplicado de ingreso general para consultas médicas
             }
 
-            // Procesos de farmacia
-            $servicio_key = $data['servicio_info']['key'] ?? 'consulta';
-            $dni_paciente = $data['paciente_dni'] ?? '';
-            $hc_paciente = $data['paciente_hc'] ?? '';
-            foreach ($data['detalles'] as $detalle) {
-                $detalleTipo = strtolower(trim((string)($detalle['servicio_tipo'] ?? '')));
-                if ($detalleTipo === 'farmacia') {
-                    FarmaciaModule::procesarVenta(
-                        $conn,
-                        $detalle,
-                        $cobro_id,
-                        $nombre_paciente,
-                        $dni_paciente,
-                        $hc_paciente,
-                        $data['usuario_id'],
-                        (int)($detalle['cotizacion_id'] ?? $cotizacionId)
-                    );
-                }
-            }
+            self::procesarVentasFarmaciaDelCobro($conn, $data, $cobro_id, $nombre_paciente, $cotizacionId);
 
             // ...el bloque de registro de honorarios médicos ya se ejecuta arriba, no repetir aquí...
 
-            // Registro de atención
-            $servicio_key = $data['servicio_info']['key'] ?? '';
-            if (!in_array($servicio_key, ['consulta', 'ecografia', 'operacion', 'rayosx', 'laboratorio', 'farmacia', 'procedimiento', 'hospitalizacion'], true)) {
-                $servicio_key = 'consulta';
-                foreach ($data['detalles'] as $detalleAtencion) {
-                    if (!PaqueteComercialModule::esCargo($detalleAtencion)) {
-                        $servicio_key = self::normalizarServicioTipo($detalleAtencion['servicio_tipo'] ?? 'consulta');
-                        break;
-                    }
-                }
-            }
-            if ($data['paciente_id'] && $data['paciente_id'] !== 'null') {
-                $ok = AtencionModule::registrarAtencion($conn, $data['paciente_id'], $data['usuario_id'], $servicio_key, $cobro_id);
-                if (!$ok) {
-                    throw new \Exception("Servicio '$servicio_key' no permitido en atenciones. Actualiza el ENUM o revisa el frontend.");
-                }
-            }
+            self::registrarAtencionDelCobro($conn, $data, $cobro_id);
 
-            // Sincronizar cotización en el mismo flujo del cobro para evitar desfaces
-            foreach ($resumenPorCotizacion as $resumenCotizacion) {
-                $cotizacionIdSync = (int)($resumenCotizacion['cotizacion_id'] ?? 0);
-                if ($cotizacionIdSync <= 0) {
-                    continue;
-                }
-
-                self::sincronizarAbonoCotizacionDesdeCobro(
-                    $conn,
-                    $cotizacionIdSync,
-                    $cobro_id,
-                    (float)($resumenCotizacion['monto_aplicado'] ?? 0),
-                    (int)($data['usuario_id'] ?? 0),
-                    (float)($resumenCotizacion['descuento_aplicado'] ?? 0),
-                    (string)($data['modo_cobro'] ?? '')
-                );
-
-                $stmtEstadoCot = $conn->prepare('SELECT estado FROM cotizaciones WHERE id = ? LIMIT 1');
-                if ($stmtEstadoCot) {
-                    $stmtEstadoCot->bind_param('i', $cotizacionIdSync);
-                    $stmtEstadoCot->execute();
-                    $rowEstadoCot = $stmtEstadoCot->get_result()->fetch_assoc();
-                    $stmtEstadoCot->close();
-                    $estadoCotizacionActual = strtolower(trim((string)($rowEstadoCot['estado'] ?? '')));
-                    if (in_array($estadoCotizacionActual, ['parcial', 'pagado'], true)) {
-                        self::asegurarAgendaServiciosPorCobro($conn, $cotizacionIdSync, (int)($data['usuario_id'] ?? 0));
-                        self::confirmarAgendaServiciosPorCobro($conn, $cotizacionIdSync, (int)($data['usuario_id'] ?? 0));
-                    }
-                }
-
-                if (self::cotizacionEstaPagada($conn, $cotizacionIdSync)) {
-                    self::sincronizarServiciosClinicosPostPagoCotizacion($conn, $cotizacionIdSync, (int)($data['usuario_id'] ?? 0));
-                    HonorarioModule::consolidarPorCobrarCotizacion($conn, $cotizacionIdSync);
-                }
-            }
+            self::sincronizarCotizacionesTrasCobro($conn, $data, $cobro_id, $resumenPorCotizacion);
 
             // Hardening anti-huerfanos: no confirmar cobro si no quedo asentado en caja.
             $validacionAsiento = self::validarAsientoCobroEnCaja(

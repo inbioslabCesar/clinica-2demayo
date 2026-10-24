@@ -315,6 +315,18 @@ $ejecutar('08_reprogramar_a_hora_libre_cobra_y_mueve_agenda', function () use ($
     return ['respuesta' => limpiarRespuesta($resp), 'estado' => fotoEstado($mysqli, [$cid], idsCobro($mysqli, [$cid]))];
 });
 
+$ejecutar('09_cobro_de_farmacia_descuenta_stock', function () use ($mysqli, $pacienteId, $fechaCita) {
+    $stock = fn() => (int)$mysqli->query("SELECT stock FROM medicamentos WHERE id = 195")->fetch_assoc()['stock'];
+    $antes = $stock();
+    $cot = crearCotizacion([
+        ['servicio_tipo' => 'farmacia', 'servicio_id' => 195, 'descripcion' => 'CIPROFLOXACINO (MED16356)', 'cantidad' => 4, 'precio_unitario' => 0.5, 'subtotal' => 2.0, 'fecha_programada' => $fechaCita],
+    ], $pacienteId, $fechaCita);
+    $cid = (int)($cot['cotizacion_id'] ?? 0);
+    if ($cid <= 0) throw new Exception('no se creó la cotización: ' . json_encode($cot));
+    $resp = api('api_cobros.php', 'POST', payloadCobro([$cid], detallesDeCotizacion($cid), 2, ['servicio' => 'farmacia', 'servicio_info' => ['key' => 'farmacia', 'label' => 'Farmacia', 'cotizacion_ids' => [$cid]]]));
+    return ['respuesta' => limpiarRespuesta($resp), 'stock_descontado' => $antes - $stock(), 'estado' => fotoEstado($mysqli, [$cid], idsCobro($mysqli, [$cid]))];
+});
+
 if ($problemas) {
     fwrite(STDERR, "Escenarios con problemas de preparación:\n - " . implode("\n - ", $problemas) . "\n");
 }
