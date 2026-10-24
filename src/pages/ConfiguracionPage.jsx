@@ -50,6 +50,55 @@ function normalizeAgendaProgramacionModo(value) {
   return ['strict', 'mixed', 'free'].includes(mode) ? mode : 'mixed';
 }
 
+function waitMs(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function requestConfigJson(path, timeoutMs = 7000) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await authFetch(path, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+
+    const status = Number(response?.status || 0);
+    const contentType = String(response?.headers?.get?.('content-type') || '').toLowerCase();
+    const looksJson = contentType.includes('application/json') || contentType.includes('+json');
+
+    if (!looksJson) {
+      return {
+        ok: false,
+        status,
+        payload: null,
+        error: `Respuesta no JSON del servidor (HTTP ${status || 'desconocido'})`,
+      };
+    }
+
+    const payload = await response.json().catch(() => null);
+    return {
+      ok: response.ok && Boolean(payload),
+      status,
+      payload,
+      error: String(payload?.error || payload?.message || '').trim(),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      payload: null,
+      error: error?.name === 'AbortError'
+        ? 'Tiempo de espera agotado al cargar configuración'
+        : String(error?.message || 'Error de conexión'),
+    };
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 
 function ConfiguracionPage() {
   const normalizeLogoForSave = (value) => {
@@ -120,44 +169,52 @@ function ConfiguracionPage() {
   const cargarConfiguracion = async () => {
     try {
       setCargandoDatos(true);
-      
-      const response = await authFetch('api_get_configuracion.php', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
 
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success) {
-          const incoming = { ...(result.data || {}) };
-          const incomingSingleId = String(incoming.hc_template_single_id || '').trim();
-          const incomingMode = String(incoming.hc_template_mode || 'auto').trim().toLowerCase();
-          // Legacy fix: if old config stored "default" as single template, switch to automatic mode.
-          if (incomingMode === 'single' && incomingSingleId === 'default') {
-            incoming.hc_template_mode = 'auto';
-            incoming.hc_template_single_id = '';
-          }
-          incoming.paciente_sexo_default = normalizePacienteSexoDefault(incoming.paciente_sexo_default || 'M');
-          incoming.agenda_inteligente_cotizacion_v1 = normalizeBooleanTinyInt(incoming.agenda_inteligente_cotizacion_v1);
-          incoming.duracion_slot_min = normalizeSlotMinutes(incoming.duracion_slot_min);
-          incoming.agenda_programacion_modo = normalizeAgendaProgramacionModo(incoming.agenda_programacion_modo);
-          setConfiguracion(prev => ({ ...prev, ...incoming }));
-          // mostrar preview si hay logo
-          if (result.data && result.data.logo_url) setLogoPreview(result.data.logo_url);
-          if (result.data && result.data.caratula_fondo_url) setCaratulaPreview(result.data.caratula_fondo_url);
-        } else {
-          throw new Error(result.error || 'Error al cargar la configuración');
+      let result = await requestConfigJson('api_get_configuracion.php', 7000);
+      let usedLiteFallback = false;
+
+      if (!result.ok && result.status !== 401) {
+        await waitMs(180);
+        const liteResult = await requestConfigJson('api_get_configuracion.php?lite=1', 4500);
+        if (liteResult.ok && liteResult.payload?.success) {
+          result = liteResult;
+          usedLiteFallback = true;
         }
-      } else if (response.status === 401) {
-        // Error de autenticación específico
-        const errorResult = await response.json();
-        throw new Error('🔒 Acceso denegado: ' + (errorResult.error || 'No está autenticado como administrador'));
-      } else {
-        const errorText = await response.text();
-        // Eliminado log de error del servidor
-        throw new Error(`Error del servidor: ${response.status} - ${errorText}`);
+      }
+
+      if (result.status === 401) {
+        const authErr = String(result?.payload?.error || result?.error || 'No está autenticado como administrador');
+        throw new Error('🔒 Acceso denegado: ' + authErr);
+      }
+
+      if (!(result.ok && result.payload?.success)) {
+        throw new Error(result.error || 'Error al cargar la configuración');
+      }
+
+      const incoming = { ...(result.payload?.data || {}) };
+      const incomingSingleId = String(incoming.hc_template_single_id || '').trim();
+      const incomingMode = String(incoming.hc_template_mode || 'auto').trim().toLowerCase();
+      // Legacy fix: if old config stored "default" as single template, switch to automatic mode.
+      if (incomingMode === 'single' && incomingSingleId === 'default') {
+        incoming.hc_template_mode = 'auto';
+        incoming.hc_template_single_id = '';
+      }
+      incoming.paciente_sexo_default = normalizePacienteSexoDefault(incoming.paciente_sexo_default || 'M');
+      incoming.agenda_inteligente_cotizacion_v1 = normalizeBooleanTinyInt(incoming.agenda_inteligente_cotizacion_v1);
+      incoming.duracion_slot_min = normalizeSlotMinutes(incoming.duracion_slot_min);
+      incoming.agenda_programacion_modo = normalizeAgendaProgramacionModo(incoming.agenda_programacion_modo);
+      setConfiguracion(prev => ({ ...prev, ...incoming }));
+      // mostrar preview si hay logo
+      if (result.payload?.data?.logo_url) setLogoPreview(result.payload.data.logo_url);
+      if (result.payload?.data?.caratula_fondo_url) setCaratulaPreview(result.payload.data.caratula_fondo_url);
+
+      if (usedLiteFallback) {
+        Swal.fire({
+          title: 'Modo contingencia',
+          text: 'Se cargó configuración básica por inestabilidad temporal del servidor. Reintenta en unos segundos para editar todos los campos.',
+          icon: 'info',
+          confirmButtonText: 'OK'
+        });
       }
     } catch (error) {
       // Eliminado log de error al cargar configuración
