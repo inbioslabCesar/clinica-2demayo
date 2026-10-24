@@ -3929,7 +3929,7 @@
                     "cotizacion_id": "<cotizacion_id#1>",
                     "estado_evento": "confirmado",
                     "fecha_programada": "<fecha_cita>",
-                    "hora_programada": "05:14:00",
+                    "hora_programada": "<hora_reloj>",
                     "medico_id": "<medico_id#1>",
                     "observaciones": "Programado desde cotizacion",
                     "paciente_id": "<paciente_id#1>",
@@ -3987,7 +3987,7 @@
                 {
                     "cantidad": "1",
                     "cobro_id": "<cobro_id#1>",
-                    "descripcion": "[{\"id\":N,\"cotizacion_id\":N,\"servicio_tipo\":\"farmacia\",\"servicio_id\":N,\"examen_version_id\":null,\"descripcion\":\"CIPROFLOXACINO (MED16356)\",\"cantidad\":4,\"precio_unitario\":0.5,\"subtotal\":2,\"estado_item\":\"activo\",\"version_item\":1,\"detalle_padre_id\":null,\"editado_por\":18,\"editado_en\":\"<ts>\",\"motivo_edicion\":null,\"es_externo\":0,\"incluir_en_cobro\":1,\"nombre_externo\":null,\"motivo_externo\":null,\"consulta_id\":null,\"contrato_paciente_id\":null,\"contrato_paciente_servicio_id\":null,\"origen_cobro\":\"regular\",\"monto_lista_referencial\":\"2.00\",\"medico_id\":null,\"derivado\":0,\"tipo_derivacion\":\"\",\"valor_derivacion\":\"0.00\",\"laboratorio_referencia\":\"\",\"snapshot_json\":null,\"fecha_programada\":\"<fecha_cita>\",\"hora_programada\":\"05:14:00\",\"medico_nombre\":\"\",\"medico_apellido\":\"\",\"medico_nombre_completo\":\"\",\"es_adicional_dinamico\":0,\"cotizacion_detalle_id\":N,\"detalle_id\":N,\"subtotal_original\":2,\"descuento_item\":0}]",
+                    "descripcion": "[{\"id\":N,\"cotizacion_id\":N,\"servicio_tipo\":\"farmacia\",\"servicio_id\":N,\"examen_version_id\":null,\"descripcion\":\"CIPROFLOXACINO (MED16356)\",\"cantidad\":4,\"precio_unitario\":0.5,\"subtotal\":2,\"estado_item\":\"activo\",\"version_item\":1,\"detalle_padre_id\":null,\"editado_por\":18,\"editado_en\":\"<ts>\",\"motivo_edicion\":null,\"es_externo\":0,\"incluir_en_cobro\":1,\"nombre_externo\":null,\"motivo_externo\":null,\"consulta_id\":null,\"contrato_paciente_id\":null,\"contrato_paciente_servicio_id\":null,\"origen_cobro\":\"regular\",\"monto_lista_referencial\":\"2.00\",\"medico_id\":null,\"derivado\":0,\"tipo_derivacion\":\"\",\"valor_derivacion\":\"0.00\",\"laboratorio_referencia\":\"\",\"snapshot_json\":null,\"fecha_programada\":\"<fecha_cita>\",\"hora_programada\":\"<hora_reloj>\",\"medico_nombre\":\"\",\"medico_apellido\":\"\",\"medico_nombre_completo\":\"\",\"es_adicional_dinamico\":0,\"cotizacion_detalle_id\":N,\"detalle_id\":N,\"subtotal_original\":2,\"descuento_item\":0}]",
                     "precio_unitario": "0.50",
                     "servicio_id": "<servicio_id#1>",
                     "servicio_tipo": "farmacia",

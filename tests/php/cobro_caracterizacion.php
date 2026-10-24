@@ -119,8 +119,11 @@ function normalizarFila(array $fila, string $tabla = ''): array {
         }
         // La edad depende de la fecha (aleatoria) de la cita: se conserva solo que se haya guardado.
         if ($col === 'edad_snapshot_valor') $valor = $valor === null ? null : '<edad>';
+        // La farmacia sin hora propia toma la del reloj: no es parte del escenario.
+        if ($col === 'hora_programada' && strtolower((string)($fila['servicio_tipo'] ?? '')) === 'farmacia') $valor = '<hora_reloj>';
         if (is_string($valor)) {
             $valor = preg_replace('/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/', '<ts>', $valor);
+            $valor = preg_replace('/(servicio_tipo[\\\\"]*\s*:\s*[\\\\"]*farmacia.*?hora_programada[\\\\"]*\s*:\s*[\\\\"]*)\d{2}:\d{2}:\d{2}/', '${1}<hora_reloj>', $valor);
             foreach ($fechasDinamicas as $f => $marca) $valor = str_replace($f, $marca, $valor);
             $valor = preg_replace('/(id[\\\\"\']*\s*[:=]\s*)\d+/i', '${1}N', $valor);
             $valor = preg_replace('/#\d+/', '#N', $valor);
