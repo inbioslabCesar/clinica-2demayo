@@ -1085,6 +1085,7 @@ export default function CotizarEcografiaPage() {
         totalAdenda: total,
         fechaRef,
         motivoAdenda: 'Adenda confirmada por usuario desde cotizador de Ecografía (cotización pagada)',
+        clientRequestId,
       });
       if (cancelada) {
         setMensaje('Operación cancelada. No se creó ninguna adenda.');

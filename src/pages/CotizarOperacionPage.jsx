@@ -830,6 +830,7 @@ export default function CotizarOperacionPage() {
         detallesAdenda: detallesFinales,
         totalAdenda: total,
         motivoAdenda: 'Adenda confirmada por usuario desde cotizador de Operaciones (cotización pagada)',
+        clientRequestId,
       });
       if (cancelada) {
         setMensaje('Operación cancelada. No se creó ninguna adenda.');

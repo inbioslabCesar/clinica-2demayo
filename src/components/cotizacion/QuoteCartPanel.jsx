@@ -848,6 +848,7 @@ export default function QuoteCartPanel({ onDesktopVisibilityChange }) {
             accion: "adenda",
             cotizacion_id: Number(editingCotizacionId),
             detalles,
+            client_request_id: clientRequestId,
             motivo: "Migracion de plan desde carrito en modo adenda",
           };
         } else {

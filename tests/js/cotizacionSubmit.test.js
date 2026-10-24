@@ -63,6 +63,24 @@ test("adenda sin fechaRef no envia fecha_ref", async () => {
     motivoAdenda: "m",
   });
   assert.equal("fecha_ref" in calls[1].body, false);
+  assert.equal("client_request_id" in calls[1].body, false);
+});
+
+test("la adenda envia el client_request_id del intento para que el servidor no la duplique", async () => {
+  const calls = [];
+  await registrarConFallbackAdenda({
+    authFetch: mkFetch([{ success: false, error: "no esta en estado editable" }, { success: true }], calls),
+    baseUrl: "x/",
+    Swal: swalSiempre(true),
+    payload: { accion: "editar" },
+    cotizacionId: 7,
+    detallesAdenda: [],
+    totalAdenda: 0,
+    motivoAdenda: "m",
+    clientRequestId: "cotizacion:abc",
+  });
+  assert.equal(calls[1].body.accion, "adenda");
+  assert.equal(calls[1].body.client_request_id, "cotizacion:abc");
 });
 
 test("si el usuario rechaza la adenda queda cancelada y no hay segundo POST", async () => {

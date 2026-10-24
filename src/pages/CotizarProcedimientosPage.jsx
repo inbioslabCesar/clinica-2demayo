@@ -820,6 +820,7 @@ export default function CotizarProcedimientosPage() {
         detallesAdenda: detalles,
         totalAdenda: detalles.reduce((acc, detalle) => acc + Number(detalle.subtotal || 0), 0),
         motivoAdenda: 'Adenda confirmada por usuario desde cotizador de Procedimientos (cotización pagada)',
+        clientRequestId,
       });
       if (cancelada) {
         setMensaje('Operación cancelada. No se creó ninguna adenda.');

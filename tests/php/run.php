@@ -527,6 +527,45 @@ prueba('post-pago: la consulta en falta_cancelar vuelve a pendiente al pagar su 
     }
 }, true);
 
+prueba('adenda: el mismo client_request_id devuelve la misma adenda, también con envíos simultáneos', function () {
+    global $mysqli, $marcador;
+    $obs = $mysqli->real_escape_string($marcador);
+    $paciente = 987654;
+    $manana = date('Y-m-d', strtotime('+1 day'));
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES ($paciente, 18, 90, 'pagado', '$obs')");
+    $baseId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal, medico_id) VALUES ($baseId, 'ecografia', 'PHPTEST eco', 1, 90, 90, 1)");
+    $detalleBaseId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO agenda_servicios_cotizacion (cotizacion_id, cotizacion_detalle_id, paciente_id, servicio_tipo, titulo_evento, medico_id, fecha_programada, hora_programada, estado_evento) VALUES ($baseId, $detalleBaseId, $paciente, 'ecografia', 'PHPTEST', 1, '$manana', '08:30:00', 'confirmado')");
+    $mysqli->query("INSERT INTO bloques_atencion (paciente_id, consulta_origen_id, fecha_base) VALUES ($paciente, NULL, CURDATE())");
+    $payload = fn(string $id, int $servicioId) => json_encode([
+        'accion' => 'adenda', 'cotizacion_id' => $baseId, 'fecha_ref' => $manana, 'client_request_id' => $id,
+        'observaciones' => $marcador, 'motivo' => 'PHPTEST',
+        'detalles' => [['servicio_tipo' => 'consulta', 'servicio_id' => $servicioId, 'descripcion' => 'PHPTEST consulta', 'cantidad' => 1,
+            'precio_unitario' => 70, 'subtotal' => 70, 'medico_id' => 1, 'fecha_programada' => $manana, 'hora_programada' => '08:30']],
+    ]);
+    try {
+        $id1 = 'phptest:' . bin2hex(random_bytes(8));
+        $a = ejecutarApi('api_cotizaciones.php', 'POST', $payload($id1, 999001));
+        $b = ejecutarApi('api_cotizaciones.php', 'POST', $payload($id1, 999001));
+        verdadero(($a['success'] ?? false) === true, json_encode($a));
+        verdadero(empty($a['duplicate']), 'el primer envío crea la adenda');
+        iguales($a['cotizacion_id'], $b['cotizacion_id'], 'el reintento devuelve la misma adenda');
+        iguales(true, $b['duplicate'], 'se marca duplicado');
+        iguales(1, (int)$mysqli->query("SELECT COUNT(*) c FROM cotizaciones WHERE client_request_id = '$id1'")->fetch_assoc()['c'], 'una sola fila');
+
+        $id2 = 'phptest:' . bin2hex(random_bytes(8));
+        $respuestas = ejecutarApiEnParalelo('api_cotizaciones.php', $payload($id2, 999002), 4);
+        $ids = array_unique(array_map(fn($r) => $r['cotizacion_id'] ?? null, $respuestas));
+        iguales(1, count($ids), 'los envíos simultáneos apuntan a la misma adenda: ' . json_encode($respuestas));
+        iguales(1, (int)$mysqli->query("SELECT COUNT(*) c FROM cotizaciones WHERE client_request_id = '$id2'")->fetch_assoc()['c'], 'una sola adenda en BD');
+        $ok = count(array_filter($respuestas, fn($r) => ($r['success'] ?? false) === true));
+        iguales(4, $ok, 'ninguno recibe error');
+    } finally {
+        $mysqli->query("DELETE FROM bloques_atencion WHERE paciente_id = $paciente");
+    }
+}, true);
+
 /* ───────── Ejecución ───────── */
 
 $bd = null;

@@ -1169,6 +1169,7 @@ export default function CotizarLaboratorioPage() {
           detalles: detallesAdendaDelta,
           total: totalAdenda,
           fecha_ref: fechaRef,
+          client_request_id: clientRequestId,
           motivo: 'Adenda confirmada por usuario desde cotizador de Laboratorio (cotización pagada)'
         };
         const resAdenda = await authFetch(`${BASE_URL}api_cotizaciones.php`, {

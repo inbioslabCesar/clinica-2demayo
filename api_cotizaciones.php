@@ -5305,6 +5305,20 @@ function cotizacion_alinear_detalles_adenda_hora_base($detalles, $consultaId, $m
     return $alineados;
 }
 
+// Respuesta de adenda para un intento repetido: devuelve la adenda ya creada sin crear otra.
+function responder_adenda_reutilizada($conn, int $adendaId, int $cotizacionBaseId): void {
+    $adenda = obtener_cotizacion($conn, $adendaId);
+    respond([
+        'success' => true,
+        'message' => 'Se reutilizó la adenda ya registrada para este intento',
+        'duplicate' => true,
+        'cotizacion_id' => $adendaId,
+        'bloque_id' => 0,
+        'cotizacion_padre_id' => (int)($adenda['cotizacion_padre_id'] ?? $cotizacionBaseId),
+        'numero_comprobante' => $adenda['numero_comprobante'] ?? sprintf("Q%06d", $adendaId),
+    ]);
+}
+
 function crear_adenda_cotizacion($conn, $data) {
     $cotizacionId = isset($data['cotizacion_id']) ? (int)$data['cotizacion_id'] : 0;
     $usuarioId = isset($data['usuario_id']) ? (int)$data['usuario_id'] : get_user_id_from_session();
@@ -5319,6 +5333,16 @@ function crear_adenda_cotizacion($conn, $data) {
         respond(['success' => false, 'error' => 'Datos incompletos para adenda'], 400);
     }
 
+    // Idempotencia por intento (mismo mecanismo que el registro de cotizaciones).
+    $clientRequestId = normalizar_client_request_id_cotizacion($data['client_request_id'] ?? '');
+    $usaClientRequestId = $clientRequestId !== '' && column_exists($conn, 'cotizaciones', 'client_request_id');
+    if ($usaClientRequestId) {
+        $adendaPrevia = buscar_cotizacion_por_client_request_id($conn, (int)$usuarioId, $clientRequestId);
+        if ($adendaPrevia) {
+            responder_adenda_reutilizada($conn, (int)$adendaPrevia['id'], $cotizacionId);
+        }
+    }
+
     $conn->begin_transaction();
     try {
         $stmt = $conn->prepare("SELECT * FROM cotizaciones WHERE id = ? FOR UPDATE");
@@ -5326,6 +5350,15 @@ function crear_adenda_cotizacion($conn, $data) {
         $stmt->execute();
         $base = $stmt->get_result()->fetch_assoc();
         if (!$base) throw new Exception('Cotización base no encontrada');
+
+        // Con el bloqueo de la base tomado, un envío simultáneo ya pudo haber creado esta adenda.
+        if ($usaClientRequestId) {
+            $adendaPrevia = buscar_cotizacion_por_client_request_id($conn, (int)$usuarioId, $clientRequestId);
+            if ($adendaPrevia) {
+                $conn->rollback();
+                responder_adenda_reutilizada($conn, (int)$adendaPrevia['id'], $cotizacionId);
+            }
+        }
 
         $raizId = cotizacion_resolver_raiz_adenda_id($conn, $cotizacionId);
         $cadenaIds = cotizacion_resolver_cadena_adenda_ids($conn, $cotizacionId);
@@ -5421,6 +5454,17 @@ function crear_adenda_cotizacion($conn, $data) {
         }
         $stmtNew->execute();
         $nuevaId = (int)$conn->insert_id;
+
+        if ($usaClientRequestId) {
+            // El índice único (usuario_id, client_request_id) serializa envíos simultáneos: el segundo falla con 1062 y se revierte.
+            $stmtReq = $conn->prepare('UPDATE cotizaciones SET client_request_id = ? WHERE id = ?');
+            if (!$stmtReq) {
+                throw new Exception('No se pudo registrar el identificador de la solicitud');
+            }
+            $stmtReq->bind_param('si', $clientRequestId, $nuevaId);
+            $stmtReq->execute();
+            $stmtReq->close();
+        }
 
         if (column_exists($conn, 'cotizaciones', 'numero_comprobante')) {
             $numero = sprintf("Q%06d", $nuevaId);
@@ -5565,6 +5609,12 @@ function crear_adenda_cotizacion($conn, $data) {
         ]);
     } catch (Exception $e) {
         $conn->rollback();
+        if ($usaClientRequestId && (int)$e->getCode() === 1062) {
+            $adendaPrevia = buscar_cotizacion_por_client_request_id($conn, (int)$usuarioId, $clientRequestId);
+            if ($adendaPrevia) {
+                responder_adenda_reutilizada($conn, (int)$adendaPrevia['id'], $cotizacionId);
+            }
+        }
         error_log("Error al crear adenda: " . $e->getMessage());
         $statusCode = (int)$e->getCode();
         if ($statusCode < 400 || $statusCode > 499) {

@@ -52,6 +52,7 @@ export async function registrarConFallbackAdenda({
   totalAdenda,
   fechaRef,
   motivoAdenda,
+  clientRequestId,
 }) {
   let data = await postCotizacion({ authFetch, baseUrl, payload });
 
@@ -76,6 +77,7 @@ export async function registrarConFallbackAdenda({
         detalles: detallesAdenda,
         total: totalAdenda,
         ...(fechaRef ? { fecha_ref: fechaRef } : {}),
+        ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
         motivo: motivoAdenda,
       },
     });
