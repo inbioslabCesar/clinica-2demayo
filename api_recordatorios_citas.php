@@ -3154,7 +3154,9 @@ if ($method === 'POST' || $method === 'PUT') {
             if (($primerError['tipo'] ?? '') === 'ocupado') {
                 $motivo = 'Hay un turno ocupado en el bloque solicitado';
             } elseif (($primerError['tipo'] ?? '') === 'fuera_horario_regular') {
-                $motivo = 'Parte del bloque queda fuera del horario regular del médico';
+                $motivo = empty(rc_obtener_rangos_regulares_medico($conn, $medicoPrincipal, $nuevaFecha))
+                    ? 'El médico no tiene horario regular configurado para esa fecha'
+                    : 'Parte del bloque queda fuera del horario regular del médico';
             } elseif (($primerError['tipo'] ?? '') === 'adicional_antes_de_fin_regular') {
                 $motivo = 'Los turnos adicionales solo pueden ir después de la última hora regular del médico';
             } elseif (($primerError['tipo'] ?? '') === 'hora_pasada_hoy') {

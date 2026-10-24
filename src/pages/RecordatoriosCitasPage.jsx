@@ -2155,7 +2155,7 @@ export default function RecordatoriosCitasPage() {
         const horaAdicionalSugerida = String(data?.diagnostico?.sugerencia_adicional_hora || "").slice(0, 5);
         const textoAdicional = horaAdicionalSugerida
           ? `${data?.error || "No hay horario regular disponible."} Si el médico autoriza, puedo reprogramar toda la cotización como adicional en el primer horario libre (${horaAdicionalSugerida}).`
-          : `${data?.error || "No hay horario regular disponible."} Si el médico autoriza, puedo reprogramar como adicional solo después de su última hora regular.`;
+          : `${data?.error || "No hay horario regular disponible."} Si el médico autoriza, puedo reprogramar como adicional a la hora solicitada (${String(hora).slice(0, 5)}).`;
         const confirmAdicional = await Swal.fire({
           icon: "question",
           title: "¿Programar como adicional?",
