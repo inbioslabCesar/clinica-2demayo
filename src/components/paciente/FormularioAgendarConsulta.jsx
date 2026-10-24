@@ -12,6 +12,7 @@ function FormularioAgendarConsulta({
   setFecha,
   fechaHoy = "",
   bloquearCambioFecha = false,
+  episodioFijo = null,
   hora,
   setHora,
   onHoraManualChange,
@@ -56,6 +57,7 @@ function FormularioAgendarConsulta({
           <select
             value={tipoConsulta}
             onChange={(e) => setTipoConsulta(e.target.value)}
+            disabled={Boolean(episodioFijo)}
             className="border rounded px-3 py-2 w-full"
           >
             <option value="programada">Programada</option>
@@ -70,7 +72,7 @@ function FormularioAgendarConsulta({
           tarifas={tarifas}
           medicoId={medicoId}
           setMedicoId={setMedicoId}
-          setHora={setHora}
+          setHora={(valor) => setHora(episodioFijo ? episodioFijo.hora : valor)}
           coverageByTarifa={coverageByTarifa}
         />
 
@@ -119,10 +121,10 @@ function FormularioAgendarConsulta({
           className="border rounded px-3 py-2 md:px-4 md:py-3 text-base md:text-lg"
           min={bloquearCambioFecha && fechaHoy ? fechaHoy : undefined}
           max={bloquearCambioFecha && fechaHoy ? fechaHoy : undefined}
-          disabled={bloquearCambioFecha}
+          disabled={bloquearCambioFecha || Boolean(episodioFijo)}
           required
         />
-        {bloquearCambioFecha && (
+        {bloquearCambioFecha && !episodioFijo && (
           <div className="text-xs text-amber-700">
             En consulta espontánea la fecha es solo hoy ({fechaHoy}).
           </div>
@@ -139,7 +141,7 @@ function FormularioAgendarConsulta({
               onChange={(e) => setHora(e.target.value)}
               className="border rounded px-3 py-2 md:px-4 md:py-3 text-base md:text-lg"
               required
-              disabled={!medicoId || !fecha ? true : cargandoHorarios}
+              disabled={!medicoId || !fecha || Boolean(episodioFijo) ? true : cargandoHorarios}
             >
               <option value="">
                 {cargandoHorarios
@@ -150,6 +152,9 @@ function FormularioAgendarConsulta({
                   ? "No hay horarios disponibles"
                   : "Selecciona un horario"}
               </option>
+              {episodioFijo && !horariosDisponibles.some((h) => String(h.hora || "").slice(0, 5) === episodioFijo.hora) && (
+                <option value={episodioFijo.hora}>{episodioFijo.hora} - horario del episodio</option>
+              )}
               {horariosDisponibles.map((horario) => (
                 <option
                   key={`${horario.medico_id}-${horario.hora}`}

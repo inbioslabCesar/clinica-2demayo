@@ -86,6 +86,10 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   const vieneDeReprogramacionRecordatorios = (origenFlujo === "recordatorios" && accionFlujo === "reprogramar");
   const { cart, addItems, count: cartCount } = useQuoteCart();
   const MySwal = withReactContent(Swal);
+  const hayEpisodioFijo = Boolean(isAdendaMode && adendaReferencia?.desdeServicios);
+  const episodioFijo = hayEpisodioFijo
+    ? { fecha: adendaReferencia.fecha, hora: adendaReferencia.hora }
+    : null;
   const medicoIdNormalizado = Number.parseInt(String(medicoId || "").trim(), 10) || 0;
   const medicoIdRespaldo = medicoIdNormalizado > 0 ? medicoIdNormalizado : medicoIdPrefill;
   const horasLibresNormalizadas = Array.from(new Set(
@@ -634,12 +638,29 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
           medicoRef = Number(detalleRef?.medico_id || 0);
         }
 
+        // Sin consulta previa: la consulta nueva se agrega al episodio con la fecha, hora y médico de los servicios ya cotizados.
+        let desdeServicios = false;
+        if (consultaRef <= 0 && !detalleRef) {
+          const conAgenda = detalles.filter((d) => (
+            /^\d{4}-\d{2}-\d{2}$/.test(String(d?.fecha_programada || "").slice(0, 10))
+            && /^\d{2}:\d{2}/.test(String(d?.hora_programada || ""))
+          ));
+          const detalleServicio = conAgenda.find((d) => Number(d?.medico_id || 0) > 0) || conAgenda[0] || null;
+          if (detalleServicio) {
+            desdeServicios = true;
+            fechaRef = String(detalleServicio.fecha_programada).slice(0, 10);
+            horaRef = String(detalleServicio.hora_programada).slice(0, 5);
+            medicoRef = Number(detalleServicio.medico_id || 0);
+          }
+        }
+
         if (!cancelado) {
           setAdendaReferencia({
             consultaId: consultaRef > 0 ? consultaRef : 0,
             medicoId: medicoRef > 0 ? medicoRef : 0,
             fecha: fechaRef,
             hora: horaRef,
+            desdeServicios,
           });
           setPrecioConsultaReferencia(Number.isFinite(subtotalRef) && subtotalRef >= 0 ? subtotalRef : null);
 
@@ -698,12 +719,12 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   }, [isAdendaMode, isEditingConsulta, cotizacionIdNum, consultaIdNum]);
 
   useEffect(() => {
-    if (tipoConsulta !== "espontanea") return;
+    if (tipoConsulta !== "espontanea" || hayEpisodioFijo) return;
     const hoy = getLimaDate();
     if (String(fecha || "").slice(0, 10) !== hoy) {
       setFecha(hoy);
     }
-  }, [tipoConsulta, fecha]);
+  }, [tipoConsulta, fecha, hayEpisodioFijo]);
 
   const seleccionarConsultaParaEditar = (detalle) => {
     setConsultasDisponibles([]);
@@ -1609,7 +1630,15 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
         </div>
         {/* Tarjeta formulario / selector */}
         <div className="w-full xl:max-w-[430px]">
-          {isAdendaMode && (
+          {isAdendaMode && episodioFijo && (
+            <div className="mb-3 rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+              <div className="font-semibold mb-1">Consulta del mismo episodio</div>
+              <div>
+                Se usa la fecha y hora de los servicios ya cotizados ({episodioFijo.fecha} {episodioFijo.hora}) para que todo quede asociado a la consulta.
+              </div>
+            </div>
+          )}
+          {isAdendaMode && !episodioFijo && (
             <div className="mb-3 rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
               <div className="font-semibold mb-1">Cambio de médico (migración de consulta)</div>
               <div>
@@ -1706,6 +1735,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
             setFecha={setFecha}
             fechaHoy={getLimaDate()}
             bloquearCambioFecha={tipoConsulta === "espontanea"}
+            episodioFijo={episodioFijo}
             hora={hora}
             setHora={setHora}
             onHoraManualChange={setHoraConGuardia}
