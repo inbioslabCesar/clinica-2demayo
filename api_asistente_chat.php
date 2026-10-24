@@ -18,6 +18,9 @@ if (!$sesionActiva) {
 $rolActual = $_SESSION['usuario']['rol'] ?? 'medico';
 $esAdmin   = ($rolActual === 'administrador');
 
+if (!defined('SKIP_MYSQLI_INIT')) {
+    define('SKIP_MYSQLI_INIT', true);
+}
 require_once __DIR__ . '/config.php';
 
 $isProductionEnv = defined('IS_PRODUCTION') ? (bool)IS_PRODUCTION : false;

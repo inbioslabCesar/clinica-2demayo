@@ -3,6 +3,9 @@ require_once __DIR__ . '/init_api.php';
 if (!defined('SKIP_PDO_INIT')) {
     define('SKIP_PDO_INIT', true);
 }
+if (!defined('SKIP_MYSQLI_INIT')) {
+    define('SKIP_MYSQLI_INIT', true);
+}
 require_once __DIR__ . '/config.php';
 
 function auth_status_normalizar_permisos($raw) {

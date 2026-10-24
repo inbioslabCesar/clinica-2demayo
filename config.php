@@ -28,8 +28,13 @@ if (!defined('ASISTENTE_KB_PASSWORD')) define('ASISTENTE_KB_PASSWORD', (string)(
 
 $dbSessionTimeZone = '-05:00'; // Hora oficial de Lima (sin DST)
 
-$dbConnectMaxAttempts = max(1, (int)(getenv('DB_CONNECT_RETRIES') ?: '5'));
-$dbConnectBaseDelayUs = max(0, (int)(getenv('DB_CONNECT_RETRY_DELAY_US') ?: '220000'));
+$scriptName = strtolower((string)basename((string)($_SERVER['SCRIPT_NAME'] ?? '')));
+$isApiScript = strpos($scriptName, 'api_') === 0;
+$defaultDbConnectRetries = $isApiScript ? '2' : '5';
+$defaultDbConnectRetryDelayUs = $isApiScript ? '120000' : '220000';
+
+$dbConnectMaxAttempts = max(1, (int)(getenv('DB_CONNECT_RETRIES') ?: $defaultDbConnectRetries));
+$dbConnectBaseDelayUs = max(0, (int)(getenv('DB_CONNECT_RETRY_DELAY_US') ?: $defaultDbConnectRetryDelayUs));
 
 if (!function_exists('db_connect_error_retryable')) {
     function db_connect_error_retryable($code, string $message): bool {
