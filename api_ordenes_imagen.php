@@ -835,7 +835,8 @@ if (!function_exists('oi_sync_ordenes_imagen_desde_agenda_medico')) {
               cd.descripcion AS descripcion_cd,
               a.titulo_evento AS descripcion_agenda,
               a.estado_evento AS estado_evento_raw,
-              cd.estado_item AS estado_item_raw
+              cd.estado_item AS estado_item_raw,
+              c.estado AS estado_cotizacion_raw
                 FROM agenda_servicios_cotizacion a
                 LEFT JOIN cotizaciones c ON c.id = a.cotizacion_id
                 LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id
@@ -939,6 +940,11 @@ if (!function_exists('oi_sync_ordenes_imagen_desde_agenda_medico')) {
             }
 
             $cargaAnticipada = oi_cotizacion_tiene_habilitacion_anticipada_activa($conn, $cotizId) ? 1 : 0;
+            // Una cotización sin pago (pendiente/informativa/anulada) no genera orden salvo habilitación anticipada.
+            $estadoCotizacion = strtolower(trim((string)($row['estado_cotizacion_raw'] ?? '')));
+            if ($cargaAnticipada !== 1 && in_array($estadoCotizacion, ['pendiente', 'informativo', 'anulada', 'anulado'], true)) {
+                continue;
+            }
             $consultaIdIns = $consultaId > 0 ? $consultaId : null;
             $stmtIns = $conn->prepare("INSERT INTO ordenes_imagen (consulta_id, paciente_id, medico_id, tipo, indicaciones, estado, solicitado_por, cotizacion_id, carga_anticipada)
                                        VALUES (?, ?, ?, ?, ?, 'pendiente', ?, ?, ?)");

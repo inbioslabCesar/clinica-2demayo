@@ -4542,37 +4542,21 @@ function cotizacion_sincronizar_medico_consulta(mysqli $conn, int $consultaId, i
     $stmtUpd->close();
 }
 
+// La firma es la identidad comercial del ítem. Excluye campos que el backend completa al guardar
+// (consulta_id, médico y hora tomados de agenda), para que lo recibido y lo persistido sean comparables.
 function firma_detalle_cotizacion($detalle) {
     $servicioTipo = strtolower(trim((string)($detalle['servicio_tipo'] ?? '')));
     $servicioId = (int)($detalle['servicio_id'] ?? 0);
-    $descripcion = trim((string)($detalle['descripcion'] ?? ''));
     $cantidad = (float)($detalle['cantidad'] ?? 0);
-    $precioUnitario = round((float)($detalle['precio_unitario'] ?? 0), 2);
     $subtotal = round((float)($detalle['subtotal'] ?? 0), 2);
-    $medicoId = (int)($detalle['medico_id'] ?? 0);
-    $consultaId = (int)($detalle['consulta_id'] ?? 0);
-    $fechaProgramada = trim((string)($detalle['fecha_programada'] ?? $detalle['fecha'] ?? ''));
-    $horaProgramada = trim((string)($detalle['hora_programada'] ?? $detalle['hora'] ?? ''));
-    $derivado = !empty($detalle['derivado']) ? 1 : 0;
-    $tipoDerivacion = strtolower(trim((string)($detalle['tipo_derivacion'] ?? '')));
-    $valorDerivacion = round((float)($detalle['valor_derivacion'] ?? 0), 2);
-    $laboratorioReferencia = round((float)($detalle['laboratorio_referencia'] ?? 0), 2);
+    $fechaProgramada = substr(trim((string)($detalle['fecha_programada'] ?? $detalle['fecha'] ?? '')), 0, 10);
 
     return [
         $servicioTipo,
         $servicioId,
-        $descripcion,
         $cantidad,
-        $precioUnitario,
         $subtotal,
-        $medicoId,
-        $consultaId,
         $fechaProgramada,
-        $horaProgramada,
-        $derivado,
-        $tipoDerivacion,
-        $valorDerivacion,
-        $laboratorioReferencia,
     ];
 }
 
@@ -4883,6 +4867,45 @@ function cotizacion_post_commit_no_bloqueante(mysqli $conn, int $cotizacionId, i
     return $bloqueId;
 }
 
+function normalizar_client_request_id_cotizacion($value): string {
+    $id = trim((string)$value);
+    if ($id === '') {
+        return '';
+    }
+    $id = substr($id, 0, 80);
+    return preg_match('/^[A-Za-z0-9_.:\-]+$/', $id) ? $id : '';
+}
+
+function buscar_cotizacion_por_client_request_id(mysqli $conn, int $usuarioId, string $clientRequestId): ?array {
+    if ($usuarioId <= 0 || $clientRequestId === '') {
+        return null;
+    }
+    $stmt = $conn->prepare('SELECT id, total FROM cotizaciones WHERE usuario_id = ? AND client_request_id = ? ORDER BY id DESC LIMIT 1');
+    if (!$stmt) {
+        return null;
+    }
+    $stmt->bind_param('is', $usuarioId, $clientRequestId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ?: null;
+}
+
+function cotizacion_resultado_reutilizado(mysqli $conn, int $cotizacionId, $fechaVencimiento, float $total, int $usuarioId, string $mensaje): array {
+    $cotizacionExistente = obtener_cotizacion($conn, $cotizacionId);
+    return [
+        'cotizacion_id' => $cotizacionId,
+        'bloque_id' => 0,
+        'numero_comprobante' => $cotizacionExistente['numero_comprobante'] ?? sprintf("Q%06d", $cotizacionId),
+        'fecha_vencimiento' => $fechaVencimiento,
+        'total' => (float)($cotizacionExistente['total'] ?? $total),
+        'duplicate' => true,
+        'message' => $mensaje,
+        'debe_sincronizar_clinico' => false,
+        'usuario_id' => $usuarioId,
+    ];
+}
+
 function registrar_cotizacion_core(mysqli $conn, array $data, array $options = []): array {
     $manageTransaction = array_key_exists('manage_transaction', $options) ? (bool)$options['manage_transaction'] : true;
     $skipDuplicateCheck = !empty($options['skip_duplicate_check']);
@@ -4952,23 +4975,38 @@ function registrar_cotizacion_core(mysqli $conn, array $data, array $options = [
     $hasResponsableFarmacia = column_exists($conn, 'cotizaciones', 'responsable_farmacia_id');
     $firmaDetalles = firma_cotizacion_detalles($detalles);
 
+    // Idempotencia por intento: el cliente reutiliza el mismo client_request_id al reintentar o repetir el envío.
+    $clientRequestId = normalizar_client_request_id_cotizacion($data['client_request_id'] ?? '');
+    $usaClientRequestId = $clientRequestId !== ''
+        && $usuarioId > 0
+        && column_exists($conn, 'cotizaciones', 'client_request_id');
+    if ($usaClientRequestId) {
+        $cotizacionPorRequest = buscar_cotizacion_por_client_request_id($conn, $usuarioId, $clientRequestId);
+        if ($cotizacionPorRequest) {
+            return cotizacion_resultado_reutilizado(
+                $conn,
+                (int)$cotizacionPorRequest['id'],
+                $fechaVencimiento,
+                (float)$total,
+                $usuarioId,
+                'Se reutilizó la cotización ya registrada para este intento'
+            );
+        }
+    }
+
     if (!$skipDuplicateCheck) {
         $cotizacionDuplicada = buscar_cotizacion_reciente_duplicada($conn, $pacienteId, $usuarioId, $total, $firmaDetalles, 2);
         if ($cotizacionDuplicada) {
             $cotizacionIdExistente = (int)($cotizacionDuplicada['id'] ?? 0);
             if ($cotizacionIdExistente > 0) {
-                $cotizacionExistente = obtener_cotizacion($conn, $cotizacionIdExistente);
-                return [
-                    'cotizacion_id' => $cotizacionIdExistente,
-                    'bloque_id' => 0,
-                    'numero_comprobante' => $cotizacionExistente['numero_comprobante'] ?? sprintf("Q%06d", $cotizacionIdExistente),
-                    'fecha_vencimiento' => $fechaVencimiento,
-                    'total' => (float)($cotizacionExistente['total'] ?? $total),
-                    'duplicate' => true,
-                    'message' => 'Se reutilizó una cotización reciente idéntica para evitar duplicados',
-                    'debe_sincronizar_clinico' => false,
-                    'usuario_id' => $usuarioId,
-                ];
+                return cotizacion_resultado_reutilizado(
+                    $conn,
+                    $cotizacionIdExistente,
+                    $fechaVencimiento,
+                    (float)$total,
+                    $usuarioId,
+                    'Se reutilizó una cotización reciente idéntica para evitar duplicados'
+                );
             }
         }
     }
@@ -5023,6 +5061,17 @@ function registrar_cotizacion_core(mysqli $conn, array $data, array $options = [
         }
         $stmt->execute();
         $cotizacionId = (int)$conn->insert_id;
+
+        if ($usaClientRequestId) {
+            // El índice único (usuario_id, client_request_id) serializa envíos simultáneos: el segundo falla con 1062 y se revierte.
+            $stmtReq = $conn->prepare('UPDATE cotizaciones SET client_request_id = ? WHERE id = ?');
+            if (!$stmtReq) {
+                throw new Exception('No se pudo registrar el identificador de la solicitud');
+            }
+            $stmtReq->bind_param('si', $clientRequestId, $cotizacionId);
+            $stmtReq->execute();
+            $stmtReq->close();
+        }
 
         if ($hasReferenciaOrigen) {
             $refGuardar = ($referenciaOrigen !== '') ? $referenciaOrigen : null;
@@ -5109,6 +5158,19 @@ function registrar_cotizacion_core(mysqli $conn, array $data, array $options = [
     } catch (Exception $e) {
         if ($manageTransaction) {
             $conn->rollback();
+            if ($usaClientRequestId && (int)$e->getCode() === 1062) {
+                $cotizacionPorRequest = buscar_cotizacion_por_client_request_id($conn, $usuarioId, $clientRequestId);
+                if ($cotizacionPorRequest) {
+                    return cotizacion_resultado_reutilizado(
+                        $conn,
+                        (int)$cotizacionPorRequest['id'],
+                        $fechaVencimiento,
+                        (float)$total,
+                        $usuarioId,
+                        'Se reutilizó la cotización ya registrada para este intento'
+                    );
+                }
+            }
         }
         throw $e;
     }
@@ -5175,6 +5237,12 @@ function registrar_split_cotizaciones($conn, $data) {
 
             if (trim((string)($payloadGrupo['referencia_origen'] ?? '')) === '') {
                 $payloadGrupo['referencia_origen'] = $splitToken;
+            }
+            $requestIdBase = normalizar_client_request_id_cotizacion($data['client_request_id'] ?? '');
+            if ($requestIdBase !== '') {
+                $payloadGrupo['client_request_id'] = substr($requestIdBase, 0, 74) . '-g' . ($idx + 1);
+            } else {
+                unset($payloadGrupo['client_request_id']);
             }
 
             $resultado = registrar_cotizacion_core($conn, $payloadGrupo, [
