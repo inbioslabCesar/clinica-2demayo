@@ -21,6 +21,7 @@ function verdadero($cond, string $msg = 'se esperaba true'): void {
 }
 
 require_once $root . '/modules/AgendaMedicoRegla.php';
+require_once $root . '/modules/EpisodioAtencionModule.php';
 
 /* ───────── Unitarias: regla "qué servicios ocupan al médico" ───────── */
 
@@ -181,6 +182,54 @@ prueba('cotización: 4 envíos simultáneos con el mismo id crean una sola cotiz
 prueba('cotización: client_request_id inválido no bloquea el registro', function () {
     $a = ejecutarApi('api_cotizaciones.php', 'POST', payloadCotizacion('id con espacios y !!'));
     verdadero(($a['success'] ?? false) === true, json_encode($a));
+}, true);
+
+prueba('episodio: la consulta de una adenda adopta los servicios huérfanos de la cotización base', function () {
+    global $mysqli, $marcador;
+    $consultaId = (int)($mysqli->query('SELECT id FROM consultas ORDER BY id DESC LIMIT 1')->fetch_assoc()['id'] ?? 0);
+    verdadero($consultaId > 0, 'se necesita una consulta existente como referencia');
+    $obs = $mysqli->real_escape_string($marcador);
+
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES (0, 18, 100, 'pagado', '$obs')");
+    $baseId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones, cotizacion_padre_id, es_adenda) VALUES (0, 18, 50, 'pagado', '$obs', $baseId, 1)");
+    $adendaId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal) VALUES ($baseId, 'ecografia', 'PHPTEST eco', 1, 90, 90), ($baseId, 'laboratorio', 'PHPTEST lab', 1, 10, 10), ($baseId, 'farmacia', 'PHPTEST farm', 1, 5, 5)");
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal, consulta_id) VALUES ($adendaId, 'consulta', 'PHPTEST consulta', 1, 50, 50, $consultaId)");
+    $mysqli->query("INSERT INTO bloques_atencion (paciente_id, consulta_origen_id, fecha_base) VALUES (0, NULL, CURDATE())");
+    $bloqueId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO bloques_atencion_cotizaciones (bloque_id, cotizacion_id) VALUES ($bloqueId, $baseId), ($bloqueId, $adendaId)");
+
+    try {
+        $r = episodio_adoptar_servicios_en_consulta($mysqli, $adendaId, $consultaId);
+        iguales(2, $r['detalles'], 'eco y laboratorio quedan asociados (la farmacia no)');
+        iguales(1, $r['bloques'], 'el bloque toma la consulta como origen');
+        $farm = $mysqli->query("SELECT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = $baseId AND servicio_tipo = 'farmacia'")->fetch_assoc();
+        verdadero($farm['consulta_id'] === null, 'la farmacia no se asocia');
+        $eco = $mysqli->query("SELECT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = $baseId AND servicio_tipo = 'ecografia'")->fetch_assoc();
+        iguales($consultaId, (int)$eco['consulta_id']);
+        $b = $mysqli->query("SELECT consulta_origen_id FROM bloques_atencion WHERE id = $bloqueId")->fetch_assoc();
+        iguales($consultaId, (int)$b['consulta_origen_id']);
+
+        $otraConsulta = $consultaId + 1000000;
+        $r2 = episodio_adoptar_servicios_en_consulta($mysqli, $adendaId, $otraConsulta);
+        iguales(0, $r2['detalles'] + $r2['ordenes'] + $r2['bloques'], 'no reasigna lo que ya tiene consulta');
+        $cadena = episodio_cotizaciones_cadena_ids($mysqli, $adendaId);
+        sort($cadena);
+        iguales([$baseId, $adendaId], $cadena, 'la cadena incluye base y adenda');
+    } finally {
+        $mysqli->query("DELETE FROM bloques_atencion WHERE id = $bloqueId");
+    }
+}, true);
+
+prueba('episodio: sin adendas no hay nada que adoptar', function () {
+    global $mysqli, $marcador;
+    $obs = $mysqli->real_escape_string($marcador);
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES (0, 18, 10, 'pagado', '$obs')");
+    $id = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal) VALUES ($id, 'ecografia', 'PHPTEST eco', 1, 10, 10)");
+    $r = episodio_adoptar_servicios_en_consulta($mysqli, $id, 1);
+    iguales(0, $r['detalles'] + $r['ordenes'] + $r['bloques']);
 }, true);
 
 /* ───────── Ejecución ───────── */

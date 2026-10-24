@@ -8,6 +8,7 @@ require_once "auth_check.php";
 require_once __DIR__ . '/modules/CotizacionSyncService.php';
 require_once __DIR__ . '/modules/ContratoModule.php';
 require_once __DIR__ . '/modules/BloqueAtencionModule.php';
+require_once __DIR__ . '/modules/EpisodioAtencionModule.php';
 require_once __DIR__ . '/modules/PaqueteComercialModule.php';
 require_once __DIR__ . '/modules/HonorarioRecuperoModule.php';
 require_once __DIR__ . '/modules/AtencionModule.php';
@@ -4646,6 +4647,10 @@ function sincronizar_servicios_clinicos_post_pago_cotizacion(mysqli $conn, int $
     crear_ordenes_lab_cotizacion($conn, $cotizacionId, $pacienteIdCot, $detallesCotizacion, $consultaId);
     crear_ordenes_imagen_cotizacion($conn, $cotizacionId, $pacienteIdCot, $detallesCotizacion, $consultaId);
 
+    if ($consultaId > 0) {
+        episodio_adoptar_servicios_en_consulta($conn, $cotizacionId, $consultaId);
+    }
+
     if (column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
         $stmtConsultas = $conn->prepare('SELECT DISTINCT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id > 0');
         if ($stmtConsultas) {
@@ -6492,9 +6497,12 @@ function crear_adenda_cotizacion($conn, $data) {
 
         $bloqueId = 0;
         try {
-            $bloqueId = (int)bloque_atencion_vincular_cotizacion($conn, $nuevaId, $usuarioId, [
-                'consulta_origen_id' => (int)bloque_atencion_resolver_consulta_ref($conn, $cotizacionId),
-            ]);
+            $ctxBloque = ['consulta_origen_id' => (int)bloque_atencion_resolver_consulta_ref($conn, $cotizacionId)];
+            if ($ctxBloque['consulta_origen_id'] <= 0 && ($fechaBasePadre = episodio_bloque_fecha_base_sin_consulta($conn, $cotizacionId)) !== '') {
+                // Sin consulta ancla aún: la adenda comparte el bloque de la cotización base.
+                $ctxBloque['fecha_base'] = $fechaBasePadre;
+            }
+            $bloqueId = (int)bloque_atencion_vincular_cotizacion($conn, $nuevaId, $usuarioId, $ctxBloque);
             if ($bloqueId > 0) {
                 bloque_atencion_vincular_cotizacion($conn, $cotizacionId, $usuarioId);
                 bloque_atencion_recalcular($conn, $bloqueId, $usuarioId);

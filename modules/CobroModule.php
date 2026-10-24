@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/PaqueteComercialModule.php';
 require_once __DIR__ . '/AgendaMedicoRegla.php';
+require_once __DIR__ . '/EpisodioAtencionModule.php';
 // Módulo de Cobros: lógica principal para registrar cobros y detalles
 class CobroModule
 {
@@ -2151,6 +2152,9 @@ class CobroModule
         self::crearOrdenesProcedimientosCotizacion($conn, $cotizacionId, $pacienteId, $detalles, $consultaId, (int)$usuarioId);
         self::crearOrdenesLaboratorioCotizacion($conn, $cotizacionId, $pacienteId, $detalles, $consultaId);
         self::crearOrdenesImagenCotizacion($conn, $cotizacionId, $pacienteId, $detalles, (int)$usuarioId, $consultaId);
+        if ($consultaId > 0) {
+            episodio_adoptar_servicios_en_consulta($conn, $cotizacionId, $consultaId);
+        }
         self::desbloquearConsultasPorCotizacion($conn, $cotizacionId);
     }
 
@@ -2807,6 +2811,7 @@ class CobroModule
         $cacheMedico = [];
         $cacheOrigenHc = [];
         $cacheConsultasCotizacion = [];
+        $cacheCadenaEpisodio = [];
         $cacheSlotMismaCotizacion = [];
         foreach ((array)$detalles as $detalle) {
             if (!is_array($detalle)) continue;
@@ -2896,17 +2901,22 @@ class CobroModule
                 continue;
             }
 
+            if (!isset($cacheCadenaEpisodio[$cotizacionId])) {
+                $cacheCadenaEpisodio[$cotizacionId] = $cotizacionId > 0 ? episodio_cotizaciones_cadena_ids($conn, $cotizacionId) : [];
+            }
+            $cadenaEpisodioIds = $cacheCadenaEpisodio[$cotizacionId] ?: [$cotizacionId];
+
             $choqueConsultas = false;
             if (self::tableExists($conn, 'consultas')) {
                 $hasConsultaCotizacionId = self::columnExists($conn, 'consultas', 'cotizacion_id');
                 if (!isset($cacheConsultasCotizacion[$cotizacionId])) {
                     $cacheConsultasCotizacion[$cotizacionId] = [];
+                    $cadenaEpisodioSql = implode(',', array_map('intval', $cadenaEpisodioIds));
                     if ($cotizacionId > 0
                         && self::tableExists($conn, 'cotizaciones_detalle')
                         && self::columnExists($conn, 'cotizaciones_detalle', 'consulta_id')) {
-                        $stmtConsultasCot = $conn->prepare('SELECT DISTINCT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND consulta_id > 0');
+                        $stmtConsultasCot = $conn->prepare('SELECT DISTINCT consulta_id FROM cotizaciones_detalle WHERE cotizacion_id IN (' . $cadenaEpisodioSql . ') AND consulta_id > 0');
                         if ($stmtConsultasCot) {
-                            $stmtConsultasCot->bind_param('i', $cotizacionId);
                             $stmtConsultasCot->execute();
                             $resConsultasCot = $stmtConsultasCot->get_result();
                             while ($resConsultasCot && ($rowConsultaCot = $resConsultasCot->fetch_assoc())) {
@@ -2998,7 +3008,7 @@ class CobroModule
                         if ($mismoAgenda) {
                             continue;
                         }
-                        $mismaCot = (int)($rowA['cotizacion_id'] ?? 0) === $cotizacionId;
+                        $mismaCot = in_array((int)($rowA['cotizacion_id'] ?? 0), $cadenaEpisodioIds, true);
                         if ($cotizacionId > 0 && $mismaCot) {
                             continue;
                         }
