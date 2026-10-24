@@ -22,6 +22,7 @@ function verdadero($cond, string $msg = 'se esperaba true'): void {
 
 require_once $root . '/modules/AgendaMedicoRegla.php';
 require_once $root . '/modules/EpisodioAtencionModule.php';
+require_once $root . '/modules/ConsultaClinicaModule.php';
 
 /* ───────── Unitarias: regla "qué servicios ocupan al médico" ───────── */
 
@@ -332,6 +333,76 @@ prueba('quitar ítems de una cotización pendiente libera agenda, orden y consul
     } finally {
         $mysqli->query("DELETE FROM consultas WHERE id = $consultaId AND paciente_id = $paciente");
     }
+}, true);
+
+function crearCotizacionConConsultaDePrueba($mysqli, string $marcador, int $medicoId): array {
+    $obs = $mysqli->real_escape_string($marcador);
+    $paciente = 570;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES ($paciente, 18, 160, 'pagado', '$obs')");
+    $cotId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal, medico_id) VALUES ($cotId, 'consulta', 'PHPTEST consulta (2099-01-02 08:30)', 1, 70, 70, $medicoId)");
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal) VALUES ($cotId, 'ecografia', 'PHPTEST eco', 1, 90, 90)");
+    return [$cotId, $paciente];
+}
+
+function verificarConsultaCreada($mysqli, int $cotId, int $consultaId): void {
+    verdadero($consultaId > 0, 'se creó la consulta');
+    $fila = $mysqli->query("SELECT fecha, hora, origen_creacion, edad_snapshot_valor FROM consultas WHERE id = $consultaId")->fetch_assoc();
+    iguales('2099-01-02', $fila['fecha'], 'fecha de la descripción');
+    iguales('08:30:00', $fila['hora'], 'hora de la descripción');
+    iguales('cotizador', $fila['origen_creacion']);
+    verdadero($fila['edad_snapshot_valor'] !== null, 'se guarda la edad del paciente');
+    $sinConsulta = (int)$mysqli->query("SELECT COUNT(*) c FROM cotizaciones_detalle WHERE cotizacion_id = $cotId AND (consulta_id IS NULL OR consulta_id <> $consultaId)")->fetch_assoc()['c'];
+    iguales(0, $sinConsulta, 'la consulta queda asociada a todos los servicios clínicos');
+}
+
+prueba('consulta clínica: la implementación única crea la consulta con fecha, edad y servicios asociados', function () {
+    global $mysqli, $marcador;
+    [$cotId] = crearCotizacionConConsultaDePrueba($mysqli, $marcador, 1);
+    $consultaId = 0;
+    try {
+        $r = cc_asegurar_consulta_desde_cotizacion($mysqli, $cotId);
+        verdadero($r['success'] === true && $r['tiene_item_consulta'] === true, json_encode($r));
+        $consultaId = (int)$r['consulta_id'];
+        verificarConsultaCreada($mysqli, $cotId, $consultaId);
+
+        $otra = cc_asegurar_consulta_desde_cotizacion($mysqli, $cotId);
+        iguales($consultaId, (int)$otra['consulta_id'], 'no crea una segunda consulta');
+        iguales(true, $otra['ya_existia']);
+    } finally {
+        if ($consultaId > 0) $mysqli->query("DELETE FROM consultas WHERE id = $consultaId AND paciente_id = 570");
+    }
+}, true);
+
+prueba('consulta clínica: el cobro usa la misma implementación (mismo resultado)', function () {
+    global $mysqli, $marcador;
+    [$cotId] = crearCotizacionConConsultaDePrueba($mysqli, $marcador, 1);
+    $consultaId = 0;
+    try {
+        require_once dirname(__DIR__, 2) . '/modules/CobroModule.php';
+        $metodo = new ReflectionMethod('CobroModule', 'asegurarConsultaDesdeCotizacion');
+        $metodo->setAccessible(true);
+        $r = $metodo->invoke(null, $mysqli, $cotId);
+        iguales(true, $r['success']);
+        $consultaId = (int)$r['consulta_id'];
+        verificarConsultaCreada($mysqli, $cotId, $consultaId);
+    } finally {
+        if ($consultaId > 0) $mysqli->query("DELETE FROM consultas WHERE id = $consultaId AND paciente_id = 570");
+    }
+}, true);
+
+prueba('consulta clínica: médico inexistente falla en el API pero nunca rompe el cobro', function () {
+    global $mysqli, $marcador;
+    [$cotId] = crearCotizacionConConsultaDePrueba($mysqli, $marcador, 999999);
+    $r = cc_asegurar_consulta_desde_cotizacion($mysqli, $cotId);
+    iguales(false, $r['success']);
+    verdadero(strpos((string)$r['error'], 'no existe') !== false, (string)$r['error']);
+    require_once dirname(__DIR__, 2) . '/modules/CobroModule.php';
+    $metodo = new ReflectionMethod('CobroModule', 'asegurarConsultaDesdeCotizacion');
+    $metodo->setAccessible(true);
+    $c = $metodo->invoke(null, $mysqli, $cotId);
+    iguales(true, $c['success']);
+    iguales(0, $c['consulta_id']);
 }, true);
 
 /* ───────── Ejecución ───────── */
