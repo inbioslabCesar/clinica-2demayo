@@ -270,6 +270,37 @@ prueba('episodio: adenda con detalle de consulta se une al bloque de la cotizaci
     }
 }, true);
 
+prueba('episodio: el cobro sugiere la adenda pendiente y la consulta se crea con la fecha de su descripción', function () {
+    global $mysqli, $marcador;
+    $obs = $mysqli->real_escape_string($marcador);
+    $paciente = 987654;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES ($paciente, 18, 90, 'pagado', '$obs')");
+    $baseId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones, cotizacion_padre_id, es_adenda) VALUES ($paciente, 18, 70, 'pendiente', '$obs', $baseId, 1)");
+    $adendaId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal) VALUES ($baseId, 'ecografia', 'PHPTEST eco', 1, 90, 90)");
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal, medico_id) VALUES ($adendaId, 'consulta', 'PHPTEST consulta (2099-01-02 08:30)', 1, 70, 70, 1)");
+    $consultaId = 0;
+    try {
+        foreach ([$baseId, $adendaId] as $desde) {
+            $g = ejecutarApi('api_cotizaciones.php', 'GET', "accion=sugerir_grupo_cobro&cotizacion_id=$desde");
+            iguales([$adendaId], $g['ids'] ?? null, "grupo sugerido desde #$desde");
+        }
+
+        $c = ejecutarApi('api_cotizaciones.php', 'POST', json_encode(['accion' => 'crear_consulta_desde_cotizacion', 'cotizacion_id' => $adendaId]));
+        verdadero(($c['success'] ?? false) === true, json_encode($c));
+        $consultaId = (int)$mysqli->query("SELECT consulta_id c FROM cotizaciones_detalle WHERE cotizacion_id = $adendaId")->fetch_assoc()['c'];
+        verdadero($consultaId > 0, 'la consulta quedó vinculada al detalle');
+        $fila = $mysqli->query("SELECT fecha, hora FROM consultas WHERE id = $consultaId")->fetch_assoc();
+        iguales('2099-01-02', $fila['fecha']);
+        iguales('08:30:00', $fila['hora']);
+    } finally {
+        if ($consultaId > 0) {
+            $mysqli->query("DELETE FROM consultas WHERE id = $consultaId AND paciente_id = $paciente");
+        }
+    }
+}, true);
+
 /* ───────── Ejecución ───────── */
 
 $bd = null;

@@ -1252,6 +1252,40 @@ function resolver_consulta_referente_lote_por_cotizaciones($conn, $cotizacionIds
     return $map;
 }
 
+function sugerir_grupo_cobro_miembros_pendientes_cadena($conn, array $cadenaIds): array {
+    $miembros = [];
+    foreach ($cadenaIds as $candId) {
+        $candId = (int)$candId;
+        if ($candId <= 0) {
+            continue;
+        }
+        $cand = obtener_cotizacion($conn, $candId);
+        if (!$cand) {
+            continue;
+        }
+        $estadoCand = strtolower(trim((string)($cand['estado'] ?? '')));
+        if (!in_array($estadoCand, ['pendiente', 'parcial'], true)) {
+            continue;
+        }
+        $fechaVenc = trim((string)($cand['fecha_vencimiento'] ?? ''));
+        if ($fechaVenc !== '') {
+            $tsVence = strtotime($fechaVenc);
+            if ($tsVence !== false && time() > $tsVence) {
+                continue;
+            }
+        }
+        $miembros[$candId] = [
+            'id' => $candId,
+            'consulta_ref_id' => (int)($cand['consulta_ref_id'] ?? 0),
+            'estado' => $cand['estado'] ?? '',
+            'saldo_pendiente' => $cand['saldo_pendiente'] ?? 0,
+            'servicios_tipos' => $cand['servicios_tipos'] ?? '',
+        ];
+    }
+    ksort($miembros);
+    return array_values($miembros);
+}
+
 function sugerir_grupo_cobro_unificado($conn, $cotizacionId) {
     $cotizacionId = (int)$cotizacionId;
     if ($cotizacionId <= 0) {
@@ -1269,6 +1303,8 @@ function sugerir_grupo_cobro_unificado($conn, $cotizacionId) {
     if (empty($cadenaIds)) {
         $cadenaIds = [$cotizacionId];
     }
+    // Las adendas pendientes del mismo episodio se cobran juntas aunque el episodio aún no tenga consulta.
+    $pendientesCadena = sugerir_grupo_cobro_miembros_pendientes_cadena($conn, $cadenaIds);
 
     if ($consultaRef <= 0) {
         foreach ($cadenaIds as $candCadenaId) {
@@ -1285,6 +1321,13 @@ function sugerir_grupo_cobro_unificado($conn, $cotizacionId) {
     }
 
     if ($pacienteId <= 0 || $consultaRef <= 0) {
+        if (!empty($pendientesCadena)) {
+            respond([
+                'success' => true,
+                'ids' => array_map(function ($m) { return (int)$m['id']; }, $pendientesCadena),
+                'grupo' => $pendientesCadena,
+            ]);
+        }
         respond([
             'success' => true,
             'ids' => [$cotizacionId],
@@ -1348,6 +1391,13 @@ function sugerir_grupo_cobro_unificado($conn, $cotizacionId) {
             'saldo_pendiente' => $cand['saldo_pendiente'] ?? 0,
             'servicios_tipos' => $cand['servicios_tipos'] ?? '',
         ];
+    }
+
+    foreach ($pendientesCadena as $miembroCadena) {
+        if (!in_array((int)$miembroCadena['id'], $ids, true)) {
+            $ids[] = (int)$miembroCadena['id'];
+            $grupo[] = $miembroCadena;
+        }
     }
 
     if (empty($ids)) {
@@ -4326,7 +4376,7 @@ function asegurar_consulta_desde_cotizacion_interno(mysqli $conn, int $cotizacio
 
     $hasFechaProgramadaDet = column_exists($conn, 'cotizaciones_detalle', 'fecha_programada');
     $hasHoraProgramadaDet = column_exists($conn, 'cotizaciones_detalle', 'hora_programada');
-    $camposDetalleConsulta = ['id'];
+    $camposDetalleConsulta = ['id', 'descripcion'];
     if ($hasMedicoId) {
         $camposDetalleConsulta[] = 'medico_id';
     } else {
@@ -4393,6 +4443,12 @@ function asegurar_consulta_desde_cotizacion_interno(mysqli $conn, int $cotizacio
 
     $fechaProgramadaConsulta = normalizar_fecha_programada_agenda($rowDet['fecha_programada'] ?? null);
     $horaProgramadaConsulta = normalizar_hora_programada_agenda($rowDet['hora_programada'] ?? null);
+    // El detalle de consulta no guarda fecha/hora propias: la descripción lleva "(YYYY-MM-DD HH:MM)".
+    if (($fechaProgramadaConsulta === null || $horaProgramadaConsulta === null)
+        && preg_match('/\((\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\)/', (string)($rowDet['descripcion'] ?? ''), $mDesc)) {
+        $fechaProgramadaConsulta = $fechaProgramadaConsulta ?? $mDesc[1];
+        $horaProgramadaConsulta = $horaProgramadaConsulta ?? normalizar_hora_programada_agenda($mDesc[2]);
+    }
 
     if ($fechaProgramadaConsulta !== null) {
         $fechaCot = $fechaProgramadaConsulta;

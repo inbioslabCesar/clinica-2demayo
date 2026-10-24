@@ -1309,11 +1309,11 @@ class CobroModule
             : '';
 
         if ($hasConsultaId && $hasMedicoId) {
-            $stmtDet = $conn->prepare("SELECT id, medico_id, consulta_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1");
+            $stmtDet = $conn->prepare("SELECT id, medico_id, consulta_id, descripcion FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1");
         } elseif ($hasMedicoId) {
-            $stmtDet = $conn->prepare("SELECT id, medico_id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1");
+            $stmtDet = $conn->prepare("SELECT id, medico_id, descripcion FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1");
         } else {
-            $stmtDet = $conn->prepare("SELECT id FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1");
+            $stmtDet = $conn->prepare("SELECT id, descripcion FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) = 'consulta'{$whereEstado} ORDER BY id ASC LIMIT 1");
         }
 
         if (!$stmtDet) {
@@ -1438,6 +1438,12 @@ class CobroModule
                 $detalleConsulta['hora_programada']
                 ?? ($detalleConsulta['hora_programada_servicio'] ?? null)
             );
+            // El detalle de consulta no guarda fecha/hora propias: la descripción lleva "(YYYY-MM-DD HH:MM)".
+            if (($fecha === null || $hora === null)
+                && preg_match('/\((\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\)/', (string)($detalleConsulta['descripcion'] ?? ''), $mDesc)) {
+                $fecha = $fecha ?? $mDesc[1];
+                $hora = $hora ?? self::normalizarHoraProgramadaAgenda($mDesc[2]);
+            }
         }
 
         if (self::tableExists($conn, 'agenda_servicios_cotizacion')
