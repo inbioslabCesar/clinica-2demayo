@@ -1995,12 +1995,12 @@ export default function RecordatoriosCitasPage() {
         const hintEl = document.getElementById("rc_hora_reprog_hint");
         if (!fechaEl || !horaEl || !selectEl || !hintEl) return;
 
-        const llenarSelect = (horasLibres = [], horasInicioValidas = []) => {
+        const llenarSelect = (horasLibres = [], horasInicioValidas = [], textoVacio = "Sin turnos libres en esta fecha") => {
           selectEl.innerHTML = "";
           if (!Array.isArray(horasLibres) || horasLibres.length === 0) {
             const opt = document.createElement("option");
             opt.value = "";
-            opt.textContent = "Sin turnos libres en esta fecha";
+            opt.textContent = textoVacio;
             selectEl.appendChild(opt);
             return;
           }
@@ -2040,9 +2040,14 @@ export default function RecordatoriosCitasPage() {
 
             const turnosLibresMedico = Array.isArray(data?.turnos_libres_medico) ? data.turnos_libres_medico : [];
             const turnos = Array.isArray(data?.turnos_libres_inicio) ? data.turnos_libres_inicio : [];
+            const medicoAtiendeEseDia = data?.medico_tiene_horario_regular !== false;
             iniciosValidos = [...turnos];
             turnosLibresMedicoActual = [...turnosLibresMedico];
-            llenarSelect(turnosLibresMedico, turnos);
+            llenarSelect(
+              turnosLibresMedico,
+              turnos,
+              medicoAtiendeEseDia ? "Sin turnos libres en esta fecha" : "El médico no atiende ese día"
+            );
             if (turnosLibresMedico.length > 0) {
               const horaActualInput = String(horaEl.value || "").slice(0, 5);
               const horaValida = conservarHoraActual && turnosLibresMedico.includes(horaActualInput);
@@ -2066,13 +2071,20 @@ export default function RecordatoriosCitasPage() {
                   const f = String(s?.fecha || "").trim();
                   const hs = Array.isArray(s?.turnos_inicio) ? s.turnos_inicio.slice(0, 4) : [];
                   if (!f || hs.length === 0) return "";
-                  return `${f}: ${hs.join(", ")}`;
+                  return `${formatFecha(f)}: ${hs.join(", ")}`;
                 })
                 .filter(Boolean)
                 .join(" | ");
-              hintEl.textContent = sugerenciasTxt
-                ? `No hay turnos libres ese día. Sugerencias: ${sugerenciasTxt}.`
-                : "No hay turnos libres ese día. Elige otra fecha.";
+              const fechaTxt = formatFecha(fecha);
+              if (!medicoAtiendeEseDia) {
+                hintEl.textContent = `El médico no tiene horario regular el ${fechaTxt}.`
+                  + (sugerenciasTxt ? ` Próximos días con horario: ${sugerenciasTxt}.` : "")
+                  + " Si necesitas esa fecha, ingresa la hora manual: se programará como adicional con autorización del médico.";
+              } else {
+                hintEl.textContent = sugerenciasTxt
+                  ? `Todos los turnos del ${fechaTxt} están ocupados. Próximos días con turnos libres: ${sugerenciasTxt}.`
+                  : `Todos los turnos del ${fechaTxt} están ocupados. Elige otra fecha.`;
+              }
             }
           } catch (err) {
             llenarSelect([]);
@@ -2152,21 +2164,39 @@ export default function RecordatoriosCitasPage() {
 
       let data = await enviarReprogramacion(false);
       if (!data?.success && Number(data?.diagnostico?.permite_forzar_adicional || 0) === 1) {
-        const horaAdicionalSugerida = String(data?.diagnostico?.sugerencia_adicional_hora || "").slice(0, 5);
-        const textoAdicional = horaAdicionalSugerida
-          ? `${data?.error || "No hay horario regular disponible."} Si el médico autoriza, puedo reprogramar toda la cotización como adicional en el primer horario libre (${horaAdicionalSugerida}).`
-          : `${data?.error || "No hay horario regular disponible."} Si el médico autoriza, puedo reprogramar como adicional a la hora solicitada (${String(hora).slice(0, 5)}).`;
+        const diag = data?.diagnostico || {};
+        const fechaTxt = formatFecha(diag.fecha_solicitada || fecha);
+        const horaTxt = String(diag.hora_solicitada || hora).slice(0, 5);
+        const motivoTxt = diag.medico_tiene_horario_regular === false
+          ? `El médico no tiene horario regular el ${fechaTxt}.`
+          : `Las ${horaTxt} quedan fuera del horario regular del médico el ${fechaTxt}.`;
+        const otrosDiasTxt = (Array.isArray(diag.sugerencias_otras_fechas) ? diag.sugerencias_otras_fechas : [])
+          .slice(0, 3)
+          .map((s) => {
+            const hs = Array.isArray(s?.turnos_inicio) ? s.turnos_inicio.slice(0, 4) : [];
+            return s?.fecha && hs.length > 0 ? `${formatFecha(s.fecha)} (${hs.join(", ")})` : "";
+          })
+          .filter(Boolean)
+          .join(" · ");
         const confirmAdicional = await Swal.fire({
           icon: "question",
           title: "¿Programar como adicional?",
-          text: textoAdicional,
+          html: `
+            <div style="text-align:left;font-size:14px;line-height:1.5;">
+              <p style="margin:0 0 8px 0;">${motivoTxt}</p>
+              <p style="margin:0 0 8px 0;">Si el médico lo autoriza, se programará <b>como adicional el ${fechaTxt} a las ${horaTxt}</b>.</p>
+              ${otrosDiasTxt ? `<p style="margin:0;color:#64748b;font-size:13px;">Días con horario regular: ${otrosDiasTxt}.</p>` : ""}
+            </div>
+          `,
           showCancelButton: true,
           confirmButtonText: "Sí, programar adicional",
-          cancelButtonText: "No",
+          cancelButtonText: "No, elegir otra fecha",
         });
-        if (confirmAdicional.isConfirmed) {
-          data = await enviarReprogramacion(true);
+        if (!confirmAdicional.isConfirmed) {
+          setMensaje("Reprogramación cancelada: elige otra fecha u hora.");
+          return false;
         }
+        data = await enviarReprogramacion(true);
       }
 
       if (!data?.success) {

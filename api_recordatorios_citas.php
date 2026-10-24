@@ -1552,6 +1552,7 @@ if ($method === 'GET') {
             'turnos_requeridos' => $turnosRequeridos,
             'turnos_libres_medico' => $turnosLibresMedico,
             'turnos_libres_inicio' => $turnosLibresInicio,
+            'medico_tiene_horario_regular' => !empty(rc_obtener_rangos_regulares_medico($conn, $medicoPrincipal, $fecha)),
             'sugerencias_otras_fechas' => $sugerenciasDias,
         ]);
         exit;
@@ -3150,16 +3151,18 @@ if ($method === 'POST' || $method === 'PUT') {
 
             $errores = is_array($evalPlan['errores'] ?? null) ? $evalPlan['errores'] : [];
             $primerError = $errores[0] ?? [];
+            $tipoPrimerError = (string)($primerError['tipo'] ?? '');
+            $tieneHorarioRegular = !empty(rc_obtener_rangos_regulares_medico($conn, $medicoPrincipal, $nuevaFecha));
             $motivo = 'No hay bloque de turnos disponible';
-            if (($primerError['tipo'] ?? '') === 'ocupado') {
+            if ($tipoPrimerError === 'ocupado') {
                 $motivo = 'Hay un turno ocupado en el bloque solicitado';
-            } elseif (($primerError['tipo'] ?? '') === 'fuera_horario_regular') {
-                $motivo = empty(rc_obtener_rangos_regulares_medico($conn, $medicoPrincipal, $nuevaFecha))
-                    ? 'El médico no tiene horario regular configurado para esa fecha'
-                    : 'Parte del bloque queda fuera del horario regular del médico';
-            } elseif (($primerError['tipo'] ?? '') === 'adicional_antes_de_fin_regular') {
+            } elseif ($tipoPrimerError === 'fuera_horario_regular') {
+                $motivo = $tieneHorarioRegular
+                    ? 'Parte del bloque queda fuera del horario regular del médico'
+                    : 'El médico no tiene horario regular configurado para esa fecha';
+            } elseif ($tipoPrimerError === 'adicional_antes_de_fin_regular') {
                 $motivo = 'Los turnos adicionales solo pueden ir después de la última hora regular del médico';
-            } elseif (($primerError['tipo'] ?? '') === 'hora_pasada_hoy') {
+            } elseif ($tipoPrimerError === 'hora_pasada_hoy') {
                 $motivo = 'La hora elegida ya pasó para hoy';
             }
 
@@ -3203,7 +3206,12 @@ if ($method === 'POST' || $method === 'PUT') {
                     'sugerencias_otras_fechas' => $sugerenciasDias,
                     'sugerencia_adicional_hora' => $sugerenciaAdicionalHora !== '' ? substr($sugerenciaAdicionalHora, 0, 5) : null,
                     'detalles_error' => $errores,
-                    'permite_forzar_adicional' => true,
+                    'tipo_error' => $tipoPrimerError,
+                    'medico_tiene_horario_regular' => $tieneHorarioRegular,
+                    'fecha_solicitada' => $nuevaFecha,
+                    'hora_solicitada' => substr($nuevaHora, 0, 5),
+                    // El adicional solo resuelve horas fuera del horario regular; un turno ocupado o una hora pasada seguiría fallando.
+                    'permite_forzar_adicional' => $tipoPrimerError === 'fuera_horario_regular',
                 ],
             ]);
             exit;
