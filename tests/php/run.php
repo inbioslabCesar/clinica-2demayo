@@ -295,6 +295,7 @@ prueba('episodio: el cobro sugiere la adenda pendiente y la consulta se crea con
         iguales('2099-01-02', $fila['fecha']);
         iguales('08:30:00', $fila['hora']);
     } finally {
+        $mysqli->query("DELETE FROM bloques_atencion WHERE paciente_id = $paciente");
         if ($consultaId > 0) {
             $mysqli->query("DELETE FROM consultas WHERE id = $consultaId AND paciente_id = $paciente");
         }
