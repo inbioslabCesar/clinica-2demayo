@@ -703,68 +703,20 @@ function rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, 
     if ($inicioMin === null) {
         return false;
     }
-    $inicioSeg = max(0, $inicioMin * 60);
-    $duracionSeg = $duracion * 60;
-    $finSeg = min(24 * 60 * 60, ($inicioMin + $duracion) * 60);
-    if ($finSeg <= $inicioSeg) {
+    $finMin = min(24 * 60, $inicioMin + $duracion);
+    if ($finMin <= $inicioMin) {
         return true;
     }
-    $consultaExcluidas = [];
-    foreach ((array)$excludeConsultaIds as $cid) {
-        $cid = (int)$cid;
-        if ($cid > 0) $consultaExcluidas[$cid] = true;
-    }
 
-    if (rc_table_exists($conn, 'consultas')) {
-        $sqlCons = 'SELECT id FROM consultas
-                    WHERE medico_id = ?
-                      AND fecha = ?
-                      AND TIME_TO_SEC(COALESCE(hora, "00:00:00")) < ?
-                      AND (TIME_TO_SEC(COALESCE(hora, "00:00:00")) + ?) > ?
-                      AND ' . agenda_sql_consulta_ocupa_medico('') . '
-                    ORDER BY hora ASC, id ASC
-                    LIMIT 20';
-        $stmtCons = $conn->prepare($sqlCons);
-        if ($stmtCons) {
-            $stmtCons->bind_param('isiii', $medicoId, $fechaYmd, $finSeg, $duracionSeg, $inicioSeg);
-            $stmtCons->execute();
-            $resCons = $stmtCons->get_result();
-            while ($rowCons = $resCons->fetch_assoc()) {
-                $consultaId = (int)($rowCons['id'] ?? 0);
-                if ($consultaId > 0 && !isset($consultaExcluidas[$consultaId])) {
-                    $stmtCons->close();
-                    return true;
-                }
-            }
-            $stmtCons->close();
+    // Misma fuente que la lista de horas ocupadas del modal: lo que se muestra es lo que se bloquea.
+    foreach (rc_listar_horas_ocupadas_medico_fecha($conn, $medicoId, $fechaYmd, $cotizacionIdExcluir, $excludeConsultaIds) as $ocupada) {
+        $inicioOcupada = rc_hora_a_minutos($ocupada['hora'] ?? '');
+        // Cada turno ocupado dura `$duracion` min: hay choque si los intervalos se solapan.
+        if ($inicioOcupada !== null && $inicioOcupada < $finMin && ($inicioOcupada + $duracion) > $inicioMin) {
+            return true;
         }
     }
-
-    if (!rc_table_exists($conn, 'agenda_servicios_cotizacion')) {
-        return false;
-    }
-
-    $sql = 'SELECT a.id
-            FROM agenda_servicios_cotizacion a
-            LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id
-            LEFT JOIN tarifas t ON t.id = COALESCE(cd.servicio_id, a.servicio_id)
-            WHERE COALESCE(a.medico_id, cd.medico_id, t.medico_id, 0) = ?
-              AND a.fecha_programada = ?
-              AND TIME_TO_SEC(COALESCE(a.hora_programada, "00:00:00")) < ?
-              AND (TIME_TO_SEC(COALESCE(a.hora_programada, "00:00:00")) + ?) > ?
-              AND a.cotizacion_id <> ?
-              AND ' . agenda_sql_evento_ocupa_medico('a') . '
-              AND ' . agenda_sql_servicio_ocupa_medico('a') . '
-            LIMIT 1';
-    $stmtAgenda = $conn->prepare($sql);
-    if (!$stmtAgenda) {
-        return false;
-    }
-    $stmtAgenda->bind_param('isiiii', $medicoId, $fechaYmd, $finSeg, $duracionSeg, $inicioSeg, $cotizacionIdExcluir);
-    $stmtAgenda->execute();
-    $rowAgenda = $stmtAgenda->get_result()->fetch_assoc();
-    $stmtAgenda->close();
-    return !empty($rowAgenda);
+    return false;
 }
 
 function rc_listar_horas_ocupadas_medico_fecha($conn, $medicoId, $fechaYmd, $cotizacionIdExcluir = 0, $excludeConsultaIds = []) {
