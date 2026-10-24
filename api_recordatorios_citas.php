@@ -815,6 +815,7 @@ function rc_construir_plan_turnos_reprogramacion($agendaItems, $horaInicioHms, $
         $plan[] = [
             'item_tipo' => $itemTipo,
             'item_id' => (int)($it['registro_id'] ?? $it['id'] ?? 0),
+            'cotizacion_id' => (int)($it['cotizacion_id'] ?? 0),
             'medico_id' => (int)($it['medico_id'] ?? 0),
             'servicio_label' => trim((string)($it['servicio_label'] ?? 'Servicio')),
             'turno_numero' => 1,
@@ -3334,7 +3335,10 @@ if ($method === 'POST' || $method === 'PUT') {
                 $okUpd = $stmtUpdateConsulta->execute();
                 $totalActualizados += (int)$stmtUpdateConsulta->affected_rows;
             } else {
-                $stmtUpdateAgenda->bind_param('ssiii', $nuevaFecha, $horaPlan, $usuarioId, $itemId, $cotizacionId);
+                // Los servicios de adendas pertenecen a otra cotizacion de la misma cadena.
+                $cotizacionItem = (int)($turnoPlan['cotizacion_id'] ?? 0);
+                if ($cotizacionItem <= 0) $cotizacionItem = $cotizacionId;
+                $stmtUpdateAgenda->bind_param('ssiii', $nuevaFecha, $horaPlan, $usuarioId, $itemId, $cotizacionItem);
                 $okUpd = $stmtUpdateAgenda->execute();
                 $totalActualizados += (int)$stmtUpdateAgenda->affected_rows;
             }
