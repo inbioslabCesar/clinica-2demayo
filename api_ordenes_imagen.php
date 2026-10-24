@@ -577,7 +577,7 @@ if (!function_exists('oi_slots_ocupados_medico_fecha')) {
         }
 
         if (oi_table_exists($conn, 'consultas')) {
-            $stmtC = $conn->prepare('SELECT hora FROM consultas WHERE medico_id = ? AND fecha = ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")');
+            $stmtC = $conn->prepare('SELECT hora FROM consultas WHERE medico_id = ? AND fecha = ? AND ' . agenda_sql_consulta_ocupa_medico(''));
             if ($stmtC) {
                 $stmtC->bind_param('is', $medicoId, $fechaYmd);
                 $stmtC->execute();
@@ -595,7 +595,7 @@ if (!function_exists('oi_slots_ocupados_medico_fecha')) {
             && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
             && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
             && oi_column_exists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
-            $stmtA = $conn->prepare('SELECT hora_programada FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")'
+            $stmtA = $conn->prepare('SELECT hora_programada FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND ' . agenda_sql_evento_ocupa_medico('')
                 . (oi_column_exists($conn, 'agenda_servicios_cotizacion', 'servicio_tipo') ? ' AND ' . agenda_sql_servicio_ocupa_medico('') : ''));
             if ($stmtA) {
                 $stmtA->bind_param('is', $medicoId, $fechaYmd);

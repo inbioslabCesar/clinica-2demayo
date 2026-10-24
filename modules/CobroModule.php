@@ -2381,7 +2381,7 @@ class CobroModule
         $ocupadas = [];
 
         if (self::tableExists($conn, 'consultas')) {
-            $stmtOccC = $conn->prepare('SELECT hora FROM consultas WHERE medico_id = ? AND fecha = ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")');
+            $stmtOccC = $conn->prepare('SELECT hora FROM consultas WHERE medico_id = ? AND fecha = ? AND ' . agenda_sql_consulta_ocupa_medico(''));
             if ($stmtOccC) {
                 $stmtOccC->bind_param('is', $medicoId, $fechaYmd);
                 $stmtOccC->execute();
@@ -2401,7 +2401,7 @@ class CobroModule
             && self::columnExists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
             && self::columnExists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
             && self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
-            $stmtOccA = $conn->prepare('SELECT hora_programada FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")' . self::filtroServicioOcupaMedicoSql($conn));
+            $stmtOccA = $conn->prepare('SELECT hora_programada FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND ' . agenda_sql_evento_ocupa_medico('') . self::filtroServicioOcupaMedicoSql($conn));
             if ($stmtOccA) {
                 $stmtOccA->bind_param('is', $medicoId, $fechaYmd);
                 $stmtOccA->execute();
@@ -2517,7 +2517,7 @@ class CobroModule
         $maxMin = null;
 
         if (self::tableExists($conn, 'consultas')) {
-            $sqlC = 'SELECT hora FROM consultas WHERE medico_id = ? AND fecha = ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")';
+            $sqlC = 'SELECT hora FROM consultas WHERE medico_id = ? AND fecha = ? AND ' . agenda_sql_consulta_ocupa_medico('');
             if ($consultaExcluirId > 0) {
                 $sqlC .= ' AND id <> ?';
             }
@@ -2547,7 +2547,8 @@ class CobroModule
             && self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
             $sqlA = 'SELECT id, cotizacion_id, cotizacion_detalle_id, hora_programada FROM agenda_servicios_cotizacion'
                 . ' WHERE medico_id = ? AND fecha_programada = ?'
-                . ' AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")';
+                . ' AND ' . agenda_sql_evento_ocupa_medico('')
+                . self::filtroServicioOcupaMedicoSql($conn);
             $stmtA = $conn->prepare($sqlA);
             if ($stmtA) {
                 $stmtA->bind_param('is', $medicoId, $fechaYmd);
@@ -2932,7 +2933,7 @@ class CobroModule
                 }
                 $consultasMismaCotizacion = $cacheConsultasCotizacion[$cotizacionId] ?? [];
                 if ($consultaId > 0) {
-                    $sqlChkC = 'SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND id <> ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")';
+                    $sqlChkC = 'SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND id <> ? AND ' . agenda_sql_consulta_ocupa_medico('');
                     if ($cotizacionId > 0 && $hasConsultaCotizacionId) {
                         $sqlChkC .= ' AND COALESCE(cotizacion_id, 0) <> ?';
                     }
@@ -2955,7 +2956,7 @@ class CobroModule
                         $stmtChkC->close();
                     }
                 } else {
-                    $sqlChkC = 'SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")';
+                    $sqlChkC = 'SELECT id FROM consultas WHERE medico_id = ? AND fecha = ? AND hora = ? AND ' . agenda_sql_consulta_ocupa_medico('');
                     if ($cotizacionId > 0 && $hasConsultaCotizacionId) {
                         $sqlChkC .= ' AND COALESCE(cotizacion_id, 0) <> ?';
                     }
@@ -2986,7 +2987,7 @@ class CobroModule
                 && self::columnExists($conn, 'agenda_servicios_cotizacion', 'fecha_programada')
                 && self::columnExists($conn, 'agenda_servicios_cotizacion', 'hora_programada')
                 && self::columnExists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
-                $sqlAgenda = 'SELECT id, cotizacion_id, cotizacion_detalle_id FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND hora_programada = ? AND LOWER(TRIM(COALESCE(estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada")' . self::filtroServicioOcupaMedicoSql($conn);
+                $sqlAgenda = 'SELECT id, cotizacion_id, cotizacion_detalle_id FROM agenda_servicios_cotizacion WHERE medico_id = ? AND fecha_programada = ? AND hora_programada = ? AND ' . agenda_sql_evento_ocupa_medico('') . self::filtroServicioOcupaMedicoSql($conn);
                 $stmtChkA = $conn->prepare($sqlAgenda);
                 if ($stmtChkA) {
                     $stmtChkA->bind_param('iss', $medicoId, $fecha, $hora);

@@ -42,6 +42,23 @@ prueba('el fragmento SQL respeta el alias de tabla', function () {
     verdadero(strpos(agenda_sql_servicio_ocupa_medico('a'), 'a.servicio_tipo') !== false);
     $sinAlias = agenda_sql_servicio_ocupa_medico('');
     verdadero(strpos($sinAlias, 'servicio_tipo') !== false && strpos($sinAlias, '.servicio_tipo') === false);
+    verdadero(strpos(agenda_sql_evento_ocupa_medico('a'), 'a.estado_evento') !== false);
+    verdadero(strpos(agenda_sql_consulta_ocupa_medico('c'), 'c.estado') !== false);
+});
+
+prueba('estados que liberan el turno: cancelado/anulado/completado/atendido no ocupan', function () {
+    foreach (['cancelada', 'anulada', 'completada'] as $e) {
+        verdadero(in_array($e, agenda_estados_consulta_liberan(), true), "consulta $e libera");
+    }
+    foreach (['cancelado', 'no_asistio', 'anulada', 'completado', 'atendido'] as $e) {
+        verdadero(in_array($e, agenda_estados_evento_liberan(), true), "evento $e libera");
+    }
+    foreach (['pendiente', 'confirmado'] as $e) {
+        verdadero(!in_array($e, agenda_estados_evento_liberan(), true), "evento $e ocupa");
+    }
+    foreach (['pendiente', 'falta_cancelar'] as $e) {
+        verdadero(!in_array($e, agenda_estados_consulta_liberan(), true), "consulta $e ocupa");
+    }
 });
 
 /* ───────── Con BD: ejecuta el SQL real y los endpoints ───────── */
@@ -118,6 +135,15 @@ prueba('el fragmento SQL filtra filas reales de agenda por tipo de servicio', fu
     $r = $mysqli->query("SELECT a.servicio_tipo FROM ($union) a WHERE " . agenda_sql_servicio_ocupa_medico('a') . ' ORDER BY a.servicio_tipo');
     $obtenidos = array_column($r->fetch_all(MYSQLI_ASSOC), 'servicio_tipo');
     iguales(['consulta', 'ecografia', 'operacion', 'procedimiento', 'rayosx'], $obtenidos);
+}, true);
+
+prueba('los filtros de estado en SQL real dejan solo consultas y eventos activos', function () {
+    global $mysqli;
+    $uniones = fn(array $v, string $col) => implode(' UNION ALL ', array_map(fn($x) => "SELECT '$x' AS $col", $v));
+    $c = $mysqli->query('SELECT estado FROM (' . $uniones(['pendiente', 'falta_cancelar', 'cancelada', 'anulada', 'completada'], 'estado') . ') c WHERE ' . agenda_sql_consulta_ocupa_medico('c') . ' ORDER BY estado');
+    iguales(['falta_cancelar', 'pendiente'], array_column($c->fetch_all(MYSQLI_ASSOC), 'estado'));
+    $e = $mysqli->query('SELECT estado_evento FROM (' . $uniones(['pendiente', 'confirmado', 'atendido', 'cancelado', 'no_asistio', 'anulada'], 'estado_evento') . ') a WHERE ' . agenda_sql_evento_ocupa_medico('a') . ' ORDER BY estado_evento');
+    iguales(['confirmado', 'pendiente'], array_column($e->fetch_all(MYSQLI_ASSOC), 'estado_evento'));
 }, true);
 
 prueba('cotización: el mismo client_request_id devuelve la misma cotización', function () {

@@ -129,7 +129,7 @@ if ($method === 'GET') {
             && hdisp_column_exists($conn, 'consultas', 'cotizacion_id');
         $sqlConsultas = '
                 SELECT hora FROM consultas 
-                WHERE medico_id = ? AND fecha = ? AND estado NOT IN ("cancelada", "completada")
+                WHERE medico_id = ? AND fecha = ? AND ' . agenda_sql_consulta_ocupa_medico('') . '
             ';
         if ($consulta_id_excluir > 0) {
             $sqlConsultas .= ' AND id <> ?';
@@ -196,7 +196,7 @@ if ($method === 'GET') {
             $medicoExpr = empty($medicoParts) ? '0' : ('COALESCE(' . implode(', ', $medicoParts) . ', 0)');
 
             $whereEstado = $hasAgendaEstado
-                ? ' AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado")'
+                ? ' AND ' . agenda_sql_evento_ocupa_medico('a')
                 : '';
 
             // Solo los servicios que realiza el médico ocupan su horario (no laboratorio ni líneas de paquete).

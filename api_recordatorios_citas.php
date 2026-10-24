@@ -721,7 +721,7 @@ function rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, 
                       AND fecha = ?
                       AND TIME_TO_SEC(COALESCE(hora, "00:00:00")) < ?
                       AND (TIME_TO_SEC(COALESCE(hora, "00:00:00")) + ?) > ?
-                      AND LOWER(TRIM(COALESCE(estado, ""))) NOT IN ("cancelada", "anulada", "completada")
+                      AND ' . agenda_sql_consulta_ocupa_medico('') . '
                     ORDER BY hora ASC, id ASC
                     LIMIT 20';
         $stmtCons = $conn->prepare($sqlCons);
@@ -753,7 +753,7 @@ function rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, 
               AND TIME_TO_SEC(COALESCE(a.hora_programada, "00:00:00")) < ?
               AND (TIME_TO_SEC(COALESCE(a.hora_programada, "00:00:00")) + ?) > ?
               AND a.cotizacion_id <> ?
-              AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado", "atendido", "espontaneo", "pagado")
+              AND ' . agenda_sql_evento_ocupa_medico('a') . '
               AND ' . agenda_sql_servicio_ocupa_medico('a') . '
             LIMIT 1';
     $stmtAgenda = $conn->prepare($sql);
@@ -804,7 +804,7 @@ function rc_listar_horas_ocupadas_medico_fecha($conn, $medicoId, $fechaYmd, $cot
              LEFT JOIN pacientes p ON p.id = c.paciente_id
              WHERE c.medico_id = ?
                AND c.fecha = ?
-               AND LOWER(TRIM(COALESCE(c.estado, ""))) NOT IN ("cancelada", "anulada", "completada")
+               AND ' . agenda_sql_consulta_ocupa_medico('c') . '
              ORDER BY c.hora ASC, c.id ASC'
         );
         if ($stmtCons) {
@@ -829,7 +829,7 @@ function rc_listar_horas_ocupadas_medico_fecha($conn, $medicoId, $fechaYmd, $cot
              WHERE COALESCE(a.medico_id, cd.medico_id, t.medico_id, 0) = ?
                AND a.fecha_programada = ?
                AND a.cotizacion_id <> ?
-               AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado", "atendido", "espontaneo", "pagado")
+               AND ' . agenda_sql_evento_ocupa_medico('a') . '
                AND ' . agenda_sql_servicio_ocupa_medico('a') . '
              ORDER BY a.hora_programada ASC, a.id ASC'
         );
@@ -1698,7 +1698,7 @@ if ($method === 'GET') {
                                  ' . $joinCotRef . '
                                  ' . $joinCot . '
                  WHERE c.medico_id = ? AND c.fecha = ?
-                   AND LOWER(TRIM(COALESCE(c.estado, ""))) NOT IN ("cancelada", "anulada", "completada")
+                   AND ' . agenda_sql_consulta_ocupa_medico('c') . '
                  ORDER BY c.hora ASC, c.id ASC'
             );
             if ($stmtCons) {
@@ -1781,7 +1781,7 @@ if ($method === 'GET') {
             $medicoExpr = empty($medicoParts) ? '0' : ('COALESCE(' . implode(', ', $medicoParts) . ', 0)');
 
             $whereEstado = $hasAgendaEstado
-                ? ' AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado", "atendido", "espontaneo", "pagado")'
+                ? ' AND ' . agenda_sql_evento_ocupa_medico('a')
                 : '';
 
             $whereServicioMedico = ' AND ' . rc_where_servicios_agendables_disponibilidad('a');
