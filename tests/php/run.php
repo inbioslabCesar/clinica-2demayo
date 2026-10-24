@@ -432,6 +432,47 @@ prueba('órdenes de procedimientos: se crea una sola orden por cotización y se 
     iguales(1, (int)$mysqli->query("SELECT COUNT(*) c FROM ordenes_procedimientos WHERE cotizacion_id = $cotId")->fetch_assoc()['c'], 'sin procedimientos no crea nada');
 }, true);
 
+prueba('órdenes de laboratorio: una sola orden por episodio y se cancela la duplicada sin resultados', function () {
+    global $mysqli, $marcador;
+    require_once dirname(__DIR__, 2) . '/modules/OrdenesClinicasModule.php';
+    require_once dirname(__DIR__, 2) . '/modules/CobroModule.php';
+    $obs = $mysqli->real_escape_string($marcador);
+    $paciente = 987654;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES ($paciente, 18, 30, 'pagado', '$obs')");
+    $baseId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones, cotizacion_padre_id, es_adenda) VALUES ($paciente, 18, 15, 'pagado', '$obs', $baseId, 1)");
+    $adendaId = (int)$mysqli->insert_id;
+    $snapshot = $mysqli->real_escape_string(json_encode(['version_id' => 77, 'valores_referenciales' => [['nombre' => 'x']]]));
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, snapshot_json) VALUES ($baseId, 'laboratorio', 9001, 'PHPTEST lab 1', 1, 15, 15, '$snapshot')");
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal) VALUES ($baseId, 'laboratorio', 9002, 'PHPTEST lab 2', 1, 15, 15)");
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal) VALUES ($adendaId, 'laboratorio', 9003, 'PHPTEST lab 3', 1, 15, 15)");
+    // Orden del episodio en la raíz y otra suelta de la adenda (sin resultados): la suelta debe quedar cancelada.
+    $mysqli->query("INSERT INTO ordenes_laboratorio (cotizacion_id, examenes, paciente_id, estado) VALUES ($baseId, '[9001]', $paciente, 'pendiente')");
+    $ordenRaizId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO ordenes_laboratorio (cotizacion_id, examenes, paciente_id, estado) VALUES ($adendaId, '[9003]', $paciente, 'pendiente')");
+    $ordenSueltaId = (int)$mysqli->insert_id;
+
+    $detallesAdenda = [['servicio_tipo' => 'laboratorio', 'servicio_id' => 9003, 'descripcion' => 'PHPTEST lab 3']];
+    oc_crear_ordenes_laboratorio($mysqli, $adendaId, $paciente, $detallesAdenda, 0);
+
+    $activas = $mysqli->query("SELECT id, cotizacion_id, examenes FROM ordenes_laboratorio WHERE cotizacion_id IN ($baseId, $adendaId) AND estado <> 'cancelada'")->fetch_all(MYSQLI_ASSOC);
+    iguales(1, count($activas), 'una sola orden activa en el episodio');
+    iguales($ordenRaizId, (int)$activas[0]['id'], 'se reutiliza la orden de la cotización raíz');
+    iguales($baseId, (int)$activas[0]['cotizacion_id'], 'queda en la cotización raíz');
+    $examenes = json_decode($activas[0]['examenes'], true);
+    $ids = array_map(fn($e) => (int)$e['id'], $examenes);
+    sort($ids);
+    iguales([9001, 9002, 9003], $ids, 'incluye los exámenes de la base y de la adenda');
+    $conVersion = array_values(array_filter($examenes, fn($e) => (int)$e['id'] === 9001))[0];
+    iguales(77, (int)$conVersion['examen_version_id'], 'conserva la versión del examen');
+    iguales('cancelada', $mysqli->query("SELECT estado FROM ordenes_laboratorio WHERE id = $ordenSueltaId")->fetch_assoc()['estado'], 'la orden duplicada se cancela');
+
+    $metodo = new ReflectionMethod('CobroModule', 'crearOrdenesLaboratorioCotizacion');
+    $metodo->setAccessible(true);
+    $metodo->invoke(null, $mysqli, $adendaId, $paciente, $detallesAdenda, 0);
+    iguales(1, (int)$mysqli->query("SELECT COUNT(*) c FROM ordenes_laboratorio WHERE cotizacion_id IN ($baseId, $adendaId) AND estado <> 'cancelada'")->fetch_assoc()['c'], 'el cobro produce el mismo resultado sin duplicar');
+}, true);
+
 /* ───────── Ejecución ───────── */
 
 $bd = null;
