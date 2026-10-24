@@ -2001,7 +2001,7 @@ export default function RecordatoriosCitasPage() {
             <label style="font-size:12px;font-weight:600;color:#334155;">Nueva hora</label>
             <input id="rc_hora_reprog" type="time" class="swal2-input" style="margin:0;width:100%;" value="${horaActual}" />
           </div>
-          <div id="rc_horas_ocupadas" style="display:none;font-size:12px;line-height:1.45;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 10px;color:#991b1b;"></div>
+          <div id="rc_horas_ocupadas" style="display:none;max-height:64px;overflow-y:auto;font-size:12px;line-height:1.4;color:#991b1b;"></div>
           <div id="rc_hora_reprog_alerta" style="display:none;font-size:12px;font-weight:700;color:#b91c1c;"></div>
           <div id="rc_hora_reprog_hint" style="font-size:12px;color:#64748b;line-height:1.35;"></div>
         </div>
@@ -2021,23 +2021,29 @@ export default function RecordatoriosCitasPage() {
 
         const renderOcupadas = () => {
           ocupadasEl.innerHTML = "";
-          if (horasOcupadasActual.length === 0) {
+          // Una sola chip por hora; el detalle (paciente/servicio) queda en el tooltip.
+          const porHora = new Map();
+          horasOcupadasActual.forEach((o) => {
+            const h = String(o?.hora || "").slice(0, 5);
+            if (!h) return;
+            porHora.set(h, [...(porHora.get(h) || []), describirOcupada(o)]);
+          });
+          if (porHora.size === 0) {
             ocupadasEl.style.display = "none";
             return;
           }
-          const titulo = document.createElement("div");
+          const titulo = document.createElement("span");
           titulo.style.fontWeight = "700";
-          titulo.textContent = "Horas ocupadas del médico ese día (no se pueden pisar):";
+          titulo.style.marginRight = "6px";
+          titulo.textContent = "Horas ocupadas:";
           ocupadasEl.appendChild(titulo);
-          const lista = document.createElement("div");
-          lista.style.maxHeight = "96px";
-          lista.style.overflowY = "auto";
-          horasOcupadasActual.forEach((o) => {
-            const fila = document.createElement("div");
-            fila.textContent = describirOcupada(o);
-            lista.appendChild(fila);
+          [...porHora.keys()].sort().forEach((h) => {
+            const chip = document.createElement("span");
+            chip.textContent = h;
+            chip.title = porHora.get(h).join("\n");
+            chip.style.cssText = "display:inline-block;margin:2px 4px 2px 0;padding:0 8px;border-radius:999px;background:#fee2e2;border:1px solid #fecaca;font-weight:600;cursor:help;";
+            ocupadasEl.appendChild(chip);
           });
-          ocupadasEl.appendChild(lista);
           ocupadasEl.style.display = "block";
         };
 
@@ -2049,7 +2055,7 @@ export default function RecordatoriosCitasPage() {
             alertaEl.textContent = "";
             return;
           }
-          alertaEl.textContent = `⚠ ${hh} choca con un turno ocupado: ${describirOcupada(choque)}. Elige otra hora.`;
+          alertaEl.textContent = `⚠ ${hh} está ocupada. Elige otra hora.`;
           alertaEl.style.display = "block";
         };
         const llenarSelect = (horasLibres = [], horasInicioValidas = [], textoVacio = "Sin turnos libres en esta fecha") => {
@@ -2140,13 +2146,13 @@ export default function RecordatoriosCitasPage() {
                 .join(" | ");
               const fechaTxt = formatFecha(fecha);
               if (!medicoAtiendeEseDia) {
-                hintEl.textContent = `El médico no tiene horario regular el ${fechaTxt}.`
+                hintEl.textContent = `Sin horario regular el ${fechaTxt}.`
                   + (sugerenciasTxt ? ` Próximos días con horario: ${sugerenciasTxt}.` : "")
-                  + " Si necesitas esa fecha, ingresa la hora manual: se programará como adicional con autorización del médico.";
+                  + " Una hora manual se programa como adicional.";
               } else {
                 hintEl.textContent = sugerenciasTxt
-                  ? `Todos los turnos del ${fechaTxt} están ocupados. Próximos días con turnos libres: ${sugerenciasTxt}.`
-                  : `Todos los turnos del ${fechaTxt} están ocupados. Elige otra fecha.`;
+                  ? `Turnos del ${fechaTxt} ocupados. Próximos días libres: ${sugerenciasTxt}.`
+                  : `Turnos del ${fechaTxt} ocupados. Elige otra fecha.`;
               }
             }
           } catch (err) {
@@ -2205,7 +2211,7 @@ export default function RecordatoriosCitasPage() {
         }
         const choqueOcupado = buscarChoqueOcupado(hora);
         if (choqueOcupado) {
-          Swal.showValidationMessage(`La hora ${hora} ya está ocupada: ${describirOcupada(choqueOcupado)}. Elige otra hora.`);
+          Swal.showValidationMessage(`La hora ${hora} ya está ocupada. Elige otra hora.`);
           return null;
         }
         return { fecha, hora };
