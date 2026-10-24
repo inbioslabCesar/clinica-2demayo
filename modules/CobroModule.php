@@ -3137,6 +3137,56 @@ class CobroModule
                 }
             }
 
+            $nombre_paciente = self::registrarIngresosYHonorariosDelCobro(
+                $conn,
+                $data,
+                $cobro_id,
+                $caja_abierta,
+                $caja_id,
+                $cotizacionId,
+                $cotizacionIdFlujo,
+                $usarHonorarioDiferido,
+                $fechaHoraIngresoBase
+            );
+
+            self::procesarVentasFarmaciaDelCobro($conn, $data, $cobro_id, $nombre_paciente, $cotizacionId);
+
+            // ...el bloque de registro de honorarios médicos ya se ejecuta arriba, no repetir aquí...
+
+            self::registrarAtencionDelCobro($conn, $data, $cobro_id);
+
+            self::sincronizarCotizacionesTrasCobro($conn, $data, $cobro_id, $resumenPorCotizacion);
+
+            // Hardening anti-huerfanos: no confirmar cobro si no quedo asentado en caja.
+            $validacionAsiento = self::validarAsientoCobroEnCaja(
+                $conn,
+                (int)$caja_id,
+                (int)$cobro_id,
+                (float)($data['total'] ?? 0)
+            );
+            if (!$validacionAsiento['ok']) {
+                throw new \Exception($validacionAsiento['error'] ?? 'El cobro no quedo correctamente asentado en caja.');
+            }
+
+            // Commit y respuesta
+            $conn->commit();
+            $numero_comprobante = sprintf("C%06d", $cobro_id);
+            return [
+                'success' => true,
+                'cobro_id' => $cobro_id,
+                'numero_comprobante' => $numero_comprobante,
+                'message' => 'Cobro procesado exitosamente'
+            ];
+        } catch (\Exception $e) {
+            $conn->rollback();
+            return ['success' => false, 'error' => 'Error al procesar el cobro: ' . $e->getMessage()];
+        }
+    }
+
+    // Registra el ingreso en caja de cada detalle cobrado (cargos de paquete, honorarios médicos, laboratorio de referencia, etc.).
+    // Devuelve el nombre del paciente usado en los ingresos. El cuerpo conserva su sangría original para que el cambio sea verificable.
+    private static function registrarIngresosYHonorariosDelCobro($conn, $data, $cobro_id, $caja_abierta, $caja_id, $cotizacionId, $cotizacionIdFlujo, $usarHonorarioDiferido, $fechaHoraIngresoBase)
+    {
             // Registrar ingreso en caja
             if ($caja_abierta) {
                 $servicio_key = $data['servicio_info']['key'] ?? 'otros';
@@ -3628,38 +3678,7 @@ class CobroModule
                 // Eliminado: registro duplicado de ingreso general para consultas médicas
             }
 
-            self::procesarVentasFarmaciaDelCobro($conn, $data, $cobro_id, $nombre_paciente, $cotizacionId);
-
-            // ...el bloque de registro de honorarios médicos ya se ejecuta arriba, no repetir aquí...
-
-            self::registrarAtencionDelCobro($conn, $data, $cobro_id);
-
-            self::sincronizarCotizacionesTrasCobro($conn, $data, $cobro_id, $resumenPorCotizacion);
-
-            // Hardening anti-huerfanos: no confirmar cobro si no quedo asentado en caja.
-            $validacionAsiento = self::validarAsientoCobroEnCaja(
-                $conn,
-                (int)$caja_id,
-                (int)$cobro_id,
-                (float)($data['total'] ?? 0)
-            );
-            if (!$validacionAsiento['ok']) {
-                throw new \Exception($validacionAsiento['error'] ?? 'El cobro no quedo correctamente asentado en caja.');
-            }
-
-            // Commit y respuesta
-            $conn->commit();
-            $numero_comprobante = sprintf("C%06d", $cobro_id);
-            return [
-                'success' => true,
-                'cobro_id' => $cobro_id,
-                'numero_comprobante' => $numero_comprobante,
-                'message' => 'Cobro procesado exitosamente'
-            ];
-        } catch (\Exception $e) {
-            $conn->rollback();
-            return ['success' => false, 'error' => 'Error al procesar el cobro: ' . $e->getMessage()];
-        }
+            return $nombre_paciente;
     }
 
     private static function obtenerAsientoCobroEnCaja($conn, $cajaId, $cobroId)
