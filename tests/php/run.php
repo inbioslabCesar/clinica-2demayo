@@ -302,6 +302,38 @@ prueba('episodio: el cobro sugiere la adenda pendiente y la consulta se crea con
     }
 }, true);
 
+prueba('quitar ítems de una cotización pendiente libera agenda, orden y consulta', function () {
+    global $mysqli, $marcador;
+    $obs = $mysqli->real_escape_string($marcador);
+    $paciente = 987654;
+    $mysqli->query("INSERT INTO consultas (paciente_id, medico_id, fecha, hora, tipo_consulta, estado) VALUES ($paciente, 1, '2099-01-02', '08:30:00', 'programada', 'pendiente')");
+    $consultaId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES ($paciente, 18, 160, 'pendiente', '$obs')");
+    $cotId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal, medico_id, consulta_id) VALUES ($cotId, 'consulta', 'PHPTEST consulta', 1, 70, 70, 1, $consultaId)");
+    $detConsulta = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal, medico_id, consulta_id) VALUES ($cotId, 'ecografia', 'PHPTEST eco', 1, 90, 90, 1, $consultaId)");
+    $detEco = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO agenda_servicios_cotizacion (cotizacion_id, cotizacion_detalle_id, paciente_id, servicio_tipo, titulo_evento, medico_id, fecha_programada, hora_programada, estado_evento) VALUES ($cotId, $detEco, $paciente, 'ecografia', 'PHPTEST', 1, '2099-01-02', '08:30:00', 'pendiente')");
+    $mysqli->query("INSERT INTO ordenes_imagen (paciente_id, cotizacion_id, tipo, estado, fecha) VALUES ($paciente, $cotId, 'ecografia', 'pendiente', '2099-01-02')");
+
+    try {
+        $r = ejecutarApi('api_cotizaciones.php', 'POST', json_encode(['accion' => 'eliminar_detalle', 'cotizacion_id' => $cotId, 'detalle_id' => $detConsulta, 'motivo' => 'PHPTEST']));
+        verdadero(($r['success'] ?? false) === true, 'quitar consulta: ' . json_encode($r));
+        iguales('cancelada', $mysqli->query("SELECT estado FROM consultas WHERE id = $consultaId")->fetch_assoc()['estado'], 'la consulta se cancela');
+        $eco = $mysqli->query("SELECT consulta_id FROM cotizaciones_detalle WHERE id = $detEco")->fetch_assoc();
+        verdadero($eco['consulta_id'] === null, 'la ecografía queda sin la consulta cancelada');
+
+        $r = ejecutarApi('api_cotizaciones.php', 'POST', json_encode(['accion' => 'eliminar_detalle', 'cotizacion_id' => $cotId, 'detalle_id' => $detEco, 'motivo' => 'PHPTEST']));
+        verdadero(($r['success'] ?? false) === true, 'quitar ecografía: ' . json_encode($r));
+        iguales('cancelado', $mysqli->query("SELECT estado_evento e FROM agenda_servicios_cotizacion WHERE cotizacion_detalle_id = $detEco")->fetch_assoc()['e'], 'se libera el horario');
+        iguales('cancelado', $mysqli->query("SELECT estado FROM ordenes_imagen WHERE cotizacion_id = $cotId")->fetch_assoc()['estado'], 'se cancela la orden pendiente');
+        iguales(0.0, (float)$mysqli->query("SELECT total FROM cotizaciones WHERE id = $cotId")->fetch_assoc()['total'], 'el total queda en cero');
+    } finally {
+        $mysqli->query("DELETE FROM consultas WHERE id = $consultaId AND paciente_id = $paciente");
+    }
+}, true);
+
 /* ───────── Ejecución ───────── */
 
 $bd = null;

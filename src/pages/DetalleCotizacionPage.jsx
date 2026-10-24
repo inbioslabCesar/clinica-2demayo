@@ -67,6 +67,16 @@ function normalizarServicio(value) {
   return base;
 }
 
+// Servicios que se pueden quitar de una cotización pendiente sin pagos (libera agenda y consulta/órdenes asociadas).
+const TIPOS_QUITABLES_PENDIENTE = ["consulta", "ecografia", "rayosx", "rx", "procedimiento"];
+const NOMBRE_QUITAR_SERVICIO = {
+  consulta: "consulta",
+  ecografia: "ecografía",
+  rayosx: "estudio de Rayos X",
+  rx: "estudio de Rayos X",
+  procedimiento: "procedimiento",
+};
+
 function labelServicio(tipo) {
   const key = normalizarServicio(tipo);
   return serviceLabels[key] || "Otros";
@@ -1479,16 +1489,25 @@ export default function DetalleCotizacionPage() {
     const servicioTipo = normalizarServicio(detalle?.servicio_tipo);
     const estadoActual = String(cotizacion?.estado || "").toLowerCase();
     if (cotizacionActualId <= 0 || detalleId <= 0 || cantidadActual <= 0) return;
-    if (!(servicioTipo === "farmacia" || servicioTipo === "laboratorio")) return;
+    const esQuitableSinCobro = TIPOS_QUITABLES_PENDIENTE.includes(servicioTipo);
+    if (!(servicioTipo === "farmacia" || servicioTipo === "laboratorio" || esQuitableSinCobro)) return;
     if (!(estadoActual === "pendiente" || estadoActual === "parcial")) {
       await Swal.fire("No permitido", "Solo puedes quitar ítems en cotizaciones pendientes o parciales.", "info");
       return;
     }
+    if (esQuitableSinCobro && (estadoActual !== "pendiente" || Number(cotizacion?.total_pagado || 0) > 0)) {
+      await Swal.fire("No permitido", "Este servicio solo se puede quitar mientras la cotización no tenga pagos. Usa Devolver / Quitar.", "info");
+      return;
+    }
     const esLaboratorio = servicioTipo === "laboratorio";
-    const nombreTipo = esLaboratorio ? "análisis" : "medicamento";
-    const placeholderMotivo = esLaboratorio
-      ? "Ej. examen duplicado o ya no indicado en evolución"
-      : "Ej. paciente ya no desea este medicamento";
+    const nombreTipo = esQuitableSinCobro
+      ? (NOMBRE_QUITAR_SERVICIO[servicioTipo] || "servicio")
+      : (esLaboratorio ? "análisis" : "medicamento");
+    const placeholderMotivo = esQuitableSinCobro
+      ? "Ej. el paciente ya no desea este servicio"
+      : (esLaboratorio
+        ? "Ej. examen duplicado o ya no indicado en evolución"
+        : "Ej. paciente ya no desea este medicamento");
 
     const confirm = await Swal.fire({
       title: `Quitar ${nombreTipo} de la cotización`,
@@ -1540,7 +1559,7 @@ export default function DetalleCotizacionPage() {
       }
 
       await refrescarCotizacionActual(cotizacionActualId);
-      await Swal.fire("Eliminado", `El ${nombreTipo} se quitó correctamente.`, "success");
+      await Swal.fire("Eliminado", `Se quitó ${nombreTipo} de la cotización.`, "success");
     } catch (err) {
       await Swal.fire("Error", err?.message || `No se pudo quitar el ${nombreTipo}`, "error");
     } finally {
@@ -2444,6 +2463,23 @@ export default function DetalleCotizacionPage() {
                         && puedeEditar
                         && estado === "pendiente"
                         && row.servicioNorm === "laboratorio"
+                        && Number(d?.cantidad || 0) > 0 && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => eliminarDetalleInline(d)}
+                              disabled={eliminandoDetalleId === Number(d?.id || 0) || ajustandoDetalleId === Number(d?.id || 0) || devolviendoDetalleId === Number(d?.id || 0)}
+                              className="text-[11px] px-2 py-1 rounded border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                              {eliminandoDetalleId === Number(d?.id || 0) ? "Quitando..." : "Quitar"}
+                            </button>
+                          </div>
+                        )}
+                      {!esVistaGrupo
+                        && !esFilaPaqueteColapsada
+                        && puedeEditar
+                        && estado === "pendiente"
+                        && Number(cotizacion?.total_pagado || 0) <= 0
+                        && TIPOS_QUITABLES_PENDIENTE.includes(row.servicioNorm)
                         && Number(d?.cantidad || 0) > 0 && (
                           <div className="flex items-center gap-1">
                             <button

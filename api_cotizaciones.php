@@ -7159,6 +7159,80 @@ function registrar_abono_cotizacion($conn, $data) {
     }
 }
 
+// Al quitar un ítem de una cotización sin cobrar: libera su horario en agenda y, si era el último de su
+// tipo de imagen, cancela las órdenes de imagen pendientes. No toca cobros ni honorarios.
+function cotizacion_liberar_servicio_eliminado($conn, int $cotizacionId, int $detalleId, string $servicioTipo, int $usuarioId, string $motivo): void {
+    if ($cotizacionId <= 0 || $detalleId <= 0) {
+        return;
+    }
+
+    if (table_exists($conn, 'agenda_servicios_cotizacion')
+        && column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_detalle_id')
+        && column_exists($conn, 'agenda_servicios_cotizacion', 'estado_evento')) {
+        $marca = " | ITEM #{$detalleId} QUITADO DE COTIZACION #{$cotizacionId}: {$motivo}";
+        $setAgenda = ["estado_evento = 'cancelado'"];
+        if (column_exists($conn, 'agenda_servicios_cotizacion', 'observaciones')) {
+            $setAgenda[] = "observaciones = CONCAT(COALESCE(observaciones, ''), ?)";
+        }
+        if (column_exists($conn, 'agenda_servicios_cotizacion', 'updated_by')) {
+            $setAgenda[] = 'updated_by = ' . (int)$usuarioId;
+        }
+        if (column_exists($conn, 'agenda_servicios_cotizacion', 'updated_at')) {
+            $setAgenda[] = 'updated_at = NOW()';
+        }
+        $sql = 'UPDATE agenda_servicios_cotizacion SET ' . implode(', ', $setAgenda)
+            . ' WHERE cotizacion_id = ? AND cotizacion_detalle_id = ?'
+            . " AND LOWER(TRIM(COALESCE(estado_evento, ''))) IN ('pendiente', 'confirmado', 'reprogramado')";
+        $stmt = $conn->prepare($sql);
+        if ($stmt) {
+            if (column_exists($conn, 'agenda_servicios_cotizacion', 'observaciones')) {
+                $stmt->bind_param('sii', $marca, $cotizacionId, $detalleId);
+            } else {
+                $stmt->bind_param('ii', $cotizacionId, $detalleId);
+            }
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
+
+    $tipo = strtolower(trim($servicioTipo));
+    $tiposPorFamilia = [
+        'ecografia' => ['ecografia'],
+        'rx' => ['rayosx', 'rayos_x', 'rayos x', 'rx'],
+    ];
+    $familia = '';
+    foreach ($tiposPorFamilia as $nombre => $tipos) {
+        if (in_array($tipo, $tipos, true)) {
+            $familia = $nombre;
+        }
+    }
+    if ($familia === '' || !table_exists($conn, 'ordenes_imagen')) {
+        return;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($tiposPorFamilia[$familia]), '?'));
+    $filtroEstado = column_exists($conn, 'cotizaciones_detalle', 'estado_item') ? " AND COALESCE(estado_item, 'activo') <> 'eliminado'" : '';
+    $stmtRestantes = $conn->prepare("SELECT COUNT(*) AS n FROM cotizaciones_detalle WHERE cotizacion_id = ? AND LOWER(TRIM(servicio_tipo)) IN ({$placeholders}){$filtroEstado}");
+    if (!$stmtRestantes) {
+        return;
+    }
+    $params = array_merge([$cotizacionId], $tiposPorFamilia[$familia]);
+    $stmtRestantes->bind_param('i' . str_repeat('s', count($tiposPorFamilia[$familia])), ...$params);
+    $stmtRestantes->execute();
+    $restantes = (int)($stmtRestantes->get_result()->fetch_assoc()['n'] ?? 0);
+    $stmtRestantes->close();
+    if ($restantes > 0) {
+        return;
+    }
+
+    $stmtOrdenes = $conn->prepare("UPDATE ordenes_imagen SET estado = 'cancelado' WHERE cotizacion_id = ? AND LOWER(TRIM(COALESCE(tipo, ''))) = ? AND LOWER(TRIM(COALESCE(estado, ''))) = 'pendiente'");
+    if ($stmtOrdenes) {
+        $stmtOrdenes->bind_param('is', $cotizacionId, $familia);
+        $stmtOrdenes->execute();
+        $stmtOrdenes->close();
+    }
+}
+
 function eliminar_detalle_cotizacion($conn, $data) {
     $cotizacionId = isset($data['cotizacion_id']) ? (int)$data['cotizacion_id'] : 0;
     $detalleId    = isset($data['detalle_id'])    ? (int)$data['detalle_id']    : 0;
@@ -7262,14 +7336,25 @@ function eliminar_detalle_cotizacion($conn, $data) {
         $stmtUp->execute();
 
         $servicioTipoEliminado = strtolower(trim((string)($detalleInfo['servicio_tipo'] ?? '')));
+        cotizacion_liberar_servicio_eliminado($conn, $cotizacionId, $detalleId, $servicioTipoEliminado, (int)$usuarioId, $motivo);
         if ($servicioTipoEliminado === 'consulta') {
-            cotizacion_cancelar_consulta_por_anulacion(
+            $consultaEliminadaId = (int)($detalleInfo['consulta_id'] ?? 0);
+            $consultaCancelada = cotizacion_cancelar_consulta_por_anulacion(
                 $conn,
-                (int)($detalleInfo['consulta_id'] ?? 0),
+                $consultaEliminadaId,
                 $cotizacionId,
                 "Eliminación de ítem de consulta en cotización #{$cotizacionId}: {$motivo}",
                 'api_cotizaciones:eliminar_detalle_cotizacion'
             );
+            // Los servicios que colgaban de esa consulta quedan sin ancla hasta que se agregue otra.
+            if ($consultaCancelada && $consultaEliminadaId > 0 && column_exists($conn, 'cotizaciones_detalle', 'consulta_id')) {
+                $stmtDesvincular = $conn->prepare('UPDATE cotizaciones_detalle SET consulta_id = NULL WHERE cotizacion_id = ? AND consulta_id = ?');
+                if ($stmtDesvincular) {
+                    $stmtDesvincular->bind_param('ii', $cotizacionId, $consultaEliminadaId);
+                    $stmtDesvincular->execute();
+                    $stmtDesvincular->close();
+                }
+            }
         }
         if ($servicioTipoEliminado === 'laboratorio') {
             $detallesDespues = cargar_detalles_cotizacion($conn, $cotizacionId);
