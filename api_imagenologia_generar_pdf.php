@@ -12,6 +12,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/auth_check.php';
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/imagenologia_encoding.php';
+require_once __DIR__ . '/modules/EpisodioAtencionModule.php';
 
 use Mpdf\Mpdf;
 use Mpdf\Config\ConfigVariables;
@@ -1250,16 +1251,20 @@ try {
     $mpdf->Output($rutaCompleta, \Mpdf\Output\Destination::FILE);
     
     // Actualizar BD con ruta del PDF
+    // Generar el PDF final cierra el informe: no depende de que el cliente envie despues la accion "completar".
     $ahora = date('Y-m-d H:i:s');
-    $stmt = $mysqli->prepare('
+    $stmt = $mysqli->prepare("
         UPDATE imagenologia_informes 
-        SET pdf_path = ?, pdf_generado_at = ?, updated_at = ?
+        SET pdf_path = ?, pdf_generado_at = ?, updated_at = ?,
+            estado = CASE WHEN estado = 'archivado' THEN estado ELSE 'completado' END
         WHERE id = ?
-    ');
+    ");
     
     $stmt->bind_param('sssi', $rutaRelativa, $ahora, $ahora, $informeId);
     $stmt->execute();
     $stmt->close();
+
+    episodio_marcar_agenda_imagen_atendida($mysqli, $ordenImagenId, $usuarioId);
     
     // Registrar en historial
     $stmtHist = $mysqli->prepare('
