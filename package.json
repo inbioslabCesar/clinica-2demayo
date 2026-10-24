@@ -26,6 +26,9 @@
     "test:js": "node --import ./tests/js/support/register.mjs --test \"tests/js/*.test.js\"",
     "test:php": "php tests/php/run.php",
     "test:db": "php tests/php/run.php --db",
+    "test:db:clone": "node tests/php/support/clone-test-db.mjs",
+    "test:cobro": "php tests/php/cobro_caracterizacion.php",
+    "test:cobro:grabar": "php tests/php/cobro_caracterizacion.php --record",
     "preview": "vite preview",
     "preview:public": "vite preview --config vite.public.config.js"
   },

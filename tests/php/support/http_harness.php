@@ -7,6 +7,16 @@ $method = strtoupper($argv[2] ?? 'GET');
 $payload = is_file($argv[3] ?? '') ? trim((string)file_get_contents($argv[3])) : '';
 $root = dirname(__DIR__, 3);
 
+// POLI_TEST_DB redirige la conexión a una base clon (siempre debe terminar en _test).
+$bdPrueba = (string)getenv('POLI_TEST_DB');
+if ($bdPrueba !== '') {
+    if (substr($bdPrueba, -5) !== '_test') {
+        fwrite(STDERR, "POLI_TEST_DB debe terminar en _test\n");
+        exit(2);
+    }
+    define('DB_NAME', $bdPrueba);
+}
+
 $body = '';
 class HarnessInput {
     public $context;
