@@ -4116,5 +4116,456 @@
                 }
             ]
         }
+    },
+    "10_atencion_solidaria_cobro_cero_sin_honorario": {
+        "respuesta": {
+            "message": "Cobro procesado exitosamente",
+            "success": true
+        },
+        "estado": {
+            "agenda_servicios_cotizacion.cotizacion_id": [
+                {
+                    "cotizacion_detalle_id": "<cotizacion_detalle_id#1>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "estado_evento": "confirmado",
+                    "fecha_programada": "<fecha_cita>",
+                    "hora_programada": "14:00:00",
+                    "medico_id": "<medico_id#1>",
+                    "observaciones": "Programado desde cotizacion",
+                    "paciente_id": "<paciente_id#1>",
+                    "servicio_id": "<servicio_id#1>",
+                    "servicio_tipo": "ecografia",
+                    "titulo_evento": "ECOGRAFIA MUSCULO ESQUELETICO"
+                },
+                {
+                    "cotizacion_detalle_id": "<cotizacion_detalle_id#2>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "estado_evento": "confirmado",
+                    "fecha_programada": "<fecha_cita>",
+                    "hora_programada": "14:00:00",
+                    "medico_id": "0",
+                    "observaciones": "Programado desde cotizacion",
+                    "paciente_id": "<paciente_id#1>",
+                    "servicio_id": "<servicio_id#2>",
+                    "servicio_tipo": "laboratorio",
+                    "titulo_evento": "LIPASA"
+                }
+            ],
+            "atenciones.cobro_id": [
+                {
+                    "cobro_id": "<cobro_id#1>",
+                    "estado": "pendiente",
+                    "fecha": "<ts>",
+                    "observaciones": null,
+                    "paciente_id": "<paciente_id#1>",
+                    "servicio": "consulta",
+                    "usuario_id": "<usuario_id#1>"
+                }
+            ],
+            "bloques_atencion_cotizaciones.cotizacion_id": [
+                {
+                    "bloque_id": "<bloque_id#1>",
+                    "cotizacion_id": "<cotizacion_id#1>"
+                }
+            ],
+            "cobros_cotizaciones.cobro_id": [
+                {
+                    "cobro_id": "<cobro_id#1>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "descuento_aplicado": "260.00",
+                    "estado_resultado": "pagado",
+                    "monto_aplicado": "0.00",
+                    "monto_original": "260.00",
+                    "orden_aplicacion": "1",
+                    "saldo_anterior": "260.00",
+                    "saldo_nuevo": "0.00",
+                    "usuario_id": "<usuario_id#1>"
+                }
+            ],
+            "cobros_cotizaciones.cotizacion_id": [
+                {
+                    "cobro_id": "<cobro_id#1>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "descuento_aplicado": "260.00",
+                    "estado_resultado": "pagado",
+                    "monto_aplicado": "0.00",
+                    "monto_original": "260.00",
+                    "orden_aplicacion": "1",
+                    "saldo_anterior": "260.00",
+                    "saldo_nuevo": "0.00",
+                    "usuario_id": "<usuario_id#1>"
+                }
+            ],
+            "cobros_detalle.cobro_id": [
+                {
+                    "cantidad": "3",
+                    "cobro_id": "<cobro_id#1>",
+                    "descripcion": "[{\"id\":N,\"cotizacion_id\":N,\"servicio_tipo\":\"consulta\",\"servicio_id\":N,\"examen_version_id\":null,\"descripcion\":\"CONSULTA CIRUGIA GENERAL - L. HILDEMARO TECCO DAVILA (<fecha_cita> 14:00)\",\"cantidad\":1,\"precio_unitario\":0,\"subtotal\":0,\"estado_item\":\"activo\",\"version_item\":1,\"detalle_padre_id\":null,\"editado_por\":18,\"editado_en\":\"<ts>\",\"motivo_edicion\":null,\"es_externo\":0,\"incluir_en_cobro\":1,\"nombre_externo\":null,\"motivo_externo\":null,\"consulta_id\":N,\"contrato_paciente_id\":null,\"contrato_paciente_servicio_id\":null,\"origen_cobro\":\"regular\",\"monto_lista_referencial\":\"70.00\",\"medico_id\":N,\"derivado\":0,\"tipo_derivacion\":\"\",\"valor_derivacion\":\"0.00\",\"laboratorio_referencia\":\"\",\"snapshot_json\":null,\"fecha_programada\":\"\",\"hora_programada\":\"\",\"medico_nombre\":\"L. HILDEMARO\",\"medico_apellido\":\"TECCO DAVILA\",\"medico_nombre_completo\":\"L. HILDEMARO TECCO DAVILA\",\"es_adicional_dinamico\":0,\"cotizacion_detalle_id\":N,\"detalle_id\":N,\"subtotal_original\":70,\"descuento_item\":70,\"renuncia_honorario_medico\":true},{\"id\":N,\"cotizacion_id\":N,\"servicio_tipo\":\"ecografia\",\"servicio_id\":N,\"examen_version_id\":null,\"descripcion\":\"ECOGRAFIA MUSCULO ESQUELETICO\",\"cantidad\":1,\"precio_unitario\":0,\"subtotal\":0,\"estado_item\":\"activo\",\"version_item\":1,\"detalle_padre_id\":null,\"editado_por\":18,\"editado_en\":\"<ts>\",\"motivo_edicion\":null,\"es_externo\":0,\"incluir_en_cobro\":1,\"nombre_externo\":null,\"motivo_externo\":null,\"consulta_id\":N,\"contrato_paciente_id\":null,\"contrato_paciente_servicio_id\":null,\"origen_cobro\":\"regular\",\"monto_lista_referencial\":\"120.00\",\"medico_id\":N,\"derivado\":0,\"tipo_derivacion\":\"\",\"valor_derivacion\":\"0.00\",\"laboratorio_referencia\":\"\",\"snapshot_json\":null,\"fecha_programada\":\"<fecha_cita>\",\"hora_programada\":\"14:00:00\",\"medico_nombre\":\"L. HILDEMARO\",\"medico_apellido\":\"TECCO DAVILA\",\"medico_nombre_completo\":\"L. HILDEMARO TECCO DAVILA\",\"es_adicional_dinamico\":0,\"cotizacion_detalle_id\":N,\"detalle_id\":N,\"subtotal_original\":120,\"descuento_item\":120,\"renuncia_honorario_medico\":true},{\"id\":N,\"cotizacion_id\":N,\"servicio_tipo\":\"laboratorio\",\"servicio_id\":N,\"examen_version_id\":N,\"descripcion\":\"LIPASA\",\"cantidad\":1,\"precio_unitario\":0,\"subtotal\":0,\"estado_item\":\"activo\",\"version_item\":1,\"detalle_padre_id\":null,\"editado_por\":18,\"editado_en\":\"<ts>\",\"motivo_edicion\":null,\"es_externo\":0,\"incluir_en_cobro\":1,\"nombre_externo\":null,\"motivo_externo\":null,\"consulta_id\":N,\"contrato_paciente_id\":null,\"contrato_paciente_servicio_id\":null,\"origen_cobro\":\"regular\",\"monto_lista_referencial\":\"70.00\",\"medico_id\":null,\"derivado\":0,\"tipo_derivacion\":\"\",\"valor_derivacion\":\"0.00\",\"laboratorio_referencia\":\"\",\"snapshot_json\":\"{\\\"id\\\":N,\\\"version_id\\\":N,\\\"version_num\\\":6,\\\"hash_contenido\\\":\\\"f9e7dc59608e008dd678904b8fbc08fc6cb28e640e1b7e169cbd922564cec914\\\",\\\"nombre\\\":\\\"LIPASA\\\",\\\"descripcion\\\":\\\"LIPASA\\\",\\\"metodologia\\\":\\\"CINETICO\\\",\\\"condicion_paciente\\\":\\\"No requiere ayuno\\\",\\\"tiempo_resultado\\\":\\\"12 a 24 horas \\\",\\\"valores_referenciales\\\":[{\\\"tipo\\\":\\\"Par\\u00e1metro\\\",\\\"nombre\\\":\\\"LIPASA\\\",\\\"codigo_interno\\\":\\\"lipasa\\\",\\\"metodologia\\\":\\\"CINETICO\\\",\\\"unidad\\\":\\\"U\\\\\\/L\\\",\\\"opciones\\\":[],\\\"texto_por_defecto\\\":\\\"\\\",\\\"referencias\\\":[],\\\"formula\\\":\\\"\\\",\\\"negrita\\\":false,\\\"cursiva\\\":false,\\\"alineacion\\\":\\\"left\\\",\\\"color_texto\\\":\\\"#N\\\",\\\"color_fondo\\\":\\\"#ffffff\\\",\\\"decimales\\\":null,\\\"rows\\\":null,\\\"orden\\\":1}],\\\"precio_publico\\\":70,\\\"precio_convenio\\\":30,\\\"tipo_tubo\\\":\\\"Tapa Roja\\\\\\/Amarilla \\\",\\\"tipo_frasco\\\":\\\"\\\",\\\"preanalitica\\\":\\\"CHACHAPOYAS\\\"}\",\"fecha_programada\":\"<fecha_cita>\",\"hora_programada\":\"14:00:00\",\"medico_nombre\":\"L. HILDEMARO\",\"medico_apellido\":\"TECCO DAVILA\",\"medico_nombre_completo\":\"L. HILDEMARO TECCO DAVILA\",\"es_adicional_dinamico\":0,\"cotizacion_detalle_id\":N,\"detalle_id\":N,\"subtotal_original\":70,\"descuento_item\":70,\"renuncia_honorario_medico\":true}]",
+                    "precio_unitario": "0.00",
+                    "servicio_id": null,
+                    "servicio_tipo": "mixto",
+                    "subtotal": "0.00"
+                }
+            ],
+            "consultas": [
+                {
+                    "clasificacion": null,
+                    "cobro_id": null,
+                    "edad_snapshot_es_estimada": "0",
+                    "edad_snapshot_fecha_calculo": "<fecha_cita>",
+                    "edad_snapshot_unidad": "años",
+                    "edad_snapshot_valor": "<edad>",
+                    "es_control": "0",
+                    "es_reprogramada": "0",
+                    "estado": "pendiente",
+                    "fecha": "<fecha_cita>",
+                    "hc_origen_id": null,
+                    "hora": "14:00:00",
+                    "medico_id": "<medico_id#1>",
+                    "origen_creacion": "cotizador",
+                    "paciente_id": "<paciente_id#1>",
+                    "tipo_consulta": "programada",
+                    "triaje_realizado": "0"
+                }
+            ],
+            "cotizacion_eventos.cotizacion_id": [
+                {
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "evento_tipo": "creada",
+                    "ip_origen": null,
+                    "motivo": "Creación de cotización",
+                    "payload_json": "{\"total\":260,\"items\":3,\"modo_informativo\":false}",
+                    "usuario_id": "<usuario_id#1>",
+                    "version": "1"
+                }
+            ],
+            "cotizacion_movimientos.cobro_id": [
+                {
+                    "cobro_id": "<cobro_id#1>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "descripcion": "Descuento aplicado en cobro #N",
+                    "monto": "260.00",
+                    "saldo_anterior": "260.00",
+                    "saldo_nuevo": "0.00",
+                    "tipo_movimiento": "devolucion",
+                    "usuario_id": "<usuario_id#1>"
+                }
+            ],
+            "cotizacion_movimientos.cotizacion_id": [
+                {
+                    "cobro_id": "<cobro_id#1>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "descripcion": "Descuento aplicado en cobro #N",
+                    "monto": "260.00",
+                    "saldo_anterior": "260.00",
+                    "saldo_nuevo": "0.00",
+                    "tipo_movimiento": "devolucion",
+                    "usuario_id": "<usuario_id#1>"
+                }
+            ],
+            "cotizaciones_detalle.cotizacion_id": [
+                {
+                    "cantidad": "1",
+                    "consulta_id": "<consulta_id#1>",
+                    "contrato_paciente_id": null,
+                    "contrato_paciente_servicio_id": null,
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "derivado": "0",
+                    "descripcion": "CONSULTA CIRUGIA GENERAL - L. HILDEMARO TECCO DAVILA (<fecha_cita> 14:00)",
+                    "detalle_padre_id": null,
+                    "editado_por": "18",
+                    "es_externo": "0",
+                    "estado_item": "activo",
+                    "examen_version_id": null,
+                    "incluir_en_cobro": "1",
+                    "laboratorio_referencia": "",
+                    "medico_id": "<medico_id#1>",
+                    "monto_lista_referencial": "70.00",
+                    "motivo_edicion": null,
+                    "motivo_externo": null,
+                    "nombre_externo": null,
+                    "origen_cobro": "regular",
+                    "precio_unitario": "70.00",
+                    "servicio_id": "<servicio_id#3>",
+                    "servicio_tipo": "consulta",
+                    "snapshot_json": null,
+                    "subtotal": "70.00",
+                    "tipo_derivacion": "",
+                    "valor_derivacion": "0.00",
+                    "version_item": "1"
+                },
+                {
+                    "cantidad": "1",
+                    "consulta_id": "<consulta_id#1>",
+                    "contrato_paciente_id": null,
+                    "contrato_paciente_servicio_id": null,
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "derivado": "0",
+                    "descripcion": "ECOGRAFIA MUSCULO ESQUELETICO",
+                    "detalle_padre_id": null,
+                    "editado_por": "18",
+                    "es_externo": "0",
+                    "estado_item": "activo",
+                    "examen_version_id": null,
+                    "incluir_en_cobro": "1",
+                    "laboratorio_referencia": "",
+                    "medico_id": "<medico_id#1>",
+                    "monto_lista_referencial": "120.00",
+                    "motivo_edicion": null,
+                    "motivo_externo": null,
+                    "nombre_externo": null,
+                    "origen_cobro": "regular",
+                    "precio_unitario": "120.00",
+                    "servicio_id": "<servicio_id#1>",
+                    "servicio_tipo": "ecografia",
+                    "snapshot_json": null,
+                    "subtotal": "120.00",
+                    "tipo_derivacion": "",
+                    "valor_derivacion": "0.00",
+                    "version_item": "1"
+                },
+                {
+                    "cantidad": "1",
+                    "consulta_id": "<consulta_id#1>",
+                    "contrato_paciente_id": null,
+                    "contrato_paciente_servicio_id": null,
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "derivado": "0",
+                    "descripcion": "LIPASA",
+                    "detalle_padre_id": null,
+                    "editado_por": "18",
+                    "es_externo": "0",
+                    "estado_item": "activo",
+                    "examen_version_id": "<examen_version_id#1>",
+                    "incluir_en_cobro": "1",
+                    "laboratorio_referencia": "",
+                    "medico_id": null,
+                    "monto_lista_referencial": "70.00",
+                    "motivo_edicion": null,
+                    "motivo_externo": null,
+                    "nombre_externo": null,
+                    "origen_cobro": "regular",
+                    "precio_unitario": "70.00",
+                    "servicio_id": "<servicio_id#2>",
+                    "servicio_tipo": "laboratorio",
+                    "snapshot_json": "{\"id\":N,\"version_id\":N,\"version_num\":6,\"hash_contenido\":\"f9e7dc59608e008dd678904b8fbc08fc6cb28e640e1b7e169cbd922564cec914\",\"nombre\":\"LIPASA\",\"descripcion\":\"LIPASA\",\"metodologia\":\"CINETICO\",\"condicion_paciente\":\"No requiere ayuno\",\"tiempo_resultado\":\"12 a 24 horas \",\"valores_referenciales\":[{\"tipo\":\"Parámetro\",\"nombre\":\"LIPASA\",\"codigo_interno\":\"lipasa\",\"metodologia\":\"CINETICO\",\"unidad\":\"U\\/L\",\"opciones\":[],\"texto_por_defecto\":\"\",\"referencias\":[],\"formula\":\"\",\"negrita\":false,\"cursiva\":false,\"alineacion\":\"left\",\"color_texto\":\"#N\",\"color_fondo\":\"#ffffff\",\"decimales\":null,\"rows\":null,\"orden\":1}],\"precio_publico\":70,\"precio_convenio\":30,\"tipo_tubo\":\"Tapa Roja\\/Amarilla \",\"tipo_frasco\":\"\",\"preanalitica\":\"CHACHAPOYAS\"}",
+                    "subtotal": "70.00",
+                    "tipo_derivacion": "",
+                    "valor_derivacion": "0.00",
+                    "version_item": "1"
+                }
+            ],
+            "cotizaciones_detalle_snapshot_versionado.cotizacion_id": [
+                {
+                    "cotizacion_detalle_id": "<cotizacion_detalle_id#2>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "examen_id": "<examen_id#1>",
+                    "examen_version_id": "<examen_version_id#1>",
+                    "fuente_snapshot": "version_examen",
+                    "servicio_id": "<servicio_id#2>",
+                    "servicio_tipo": "laboratorio",
+                    "snapshot_json": "{\"id\":N,\"version_id\":N,\"version_num\":6,\"hash_contenido\":\"f9e7dc59608e008dd678904b8fbc08fc6cb28e640e1b7e169cbd922564cec914\",\"nombre\":\"LIPASA\",\"descripcion\":\"LIPASA\",\"metodologia\":\"CINETICO\",\"condicion_paciente\":\"No requiere ayuno\",\"tiempo_resultado\":\"12 a 24 horas \",\"valores_referenciales\":[{\"tipo\":\"Parámetro\",\"nombre\":\"LIPASA\",\"codigo_interno\":\"lipasa\",\"metodologia\":\"CINETICO\",\"unidad\":\"U\\/L\",\"opciones\":[],\"texto_por_defecto\":\"\",\"referencias\":[],\"formula\":\"\",\"negrita\":false,\"cursiva\":false,\"alineacion\":\"left\",\"color_texto\":\"#N\",\"color_fondo\":\"#ffffff\",\"decimales\":null,\"rows\":null,\"orden\":1}],\"precio_publico\":70,\"precio_convenio\":30,\"tipo_tubo\":\"Tapa Roja\\/Amarilla \",\"tipo_frasco\":\"\",\"preanalitica\":\"CHACHAPOYAS\"}"
+                }
+            ],
+            "descuentos_aplicados.cobro_id": [
+                {
+                    "cobro_id": "<cobro_id#1>",
+                    "fecha": "<hoy>",
+                    "monto_descuento": "260.00",
+                    "monto_final": "0.00",
+                    "monto_original": "260.00",
+                    "motivo": "Atencion solidaria de prueba",
+                    "paciente_id": "<paciente_id#1>",
+                    "paciente_nombre": "PACIENTE PRUEBA",
+                    "servicio": "consulta",
+                    "tipo_descuento": "monto",
+                    "usuario_id": "<usuario_id#1>",
+                    "usuario_nombre": "PHP Test",
+                    "valor_descuento": "260.00"
+                }
+            ],
+            "ordenes_imagen.cotizacion_id": [
+                {
+                    "carga_anticipada": "0",
+                    "consulta_id": "<consulta_id#1>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "estado": "pendiente",
+                    "fecha": "<ts>",
+                    "historia_clinica_id": null,
+                    "indicaciones": "Detalle #N - ECOGRAFIA MUSCULO ESQUELETICO | Orden creada desde cotización #N",
+                    "medico_id": "<medico_id#1>",
+                    "paciente_id": "<paciente_id#1>",
+                    "solicitado_por": "18",
+                    "tipo": "ecografia"
+                }
+            ],
+            "ordenes_laboratorio.cotizacion_id": [
+                {
+                    "carga_anticipada": "0",
+                    "cobro_id": null,
+                    "consulta_id": "<consulta_id#1>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "estado": "pendiente",
+                    "examenes": "[{\"id\":N,\"descripcion\":\"LIPASA\",\"nombre\":\"LIPASA\",\"snapshot_json\":{\"id\":N,\"version_id\":N,\"version_num\":6,\"hash_contenido\":\"f9e7dc59608e008dd678904b8fbc08fc6cb28e640e1b7e169cbd922564cec914\",\"nombre\":\"LIPASA\",\"descripcion\":\"LIPASA\",\"metodologia\":\"CINETICO\",\"condicion_paciente\":\"No requiere ayuno\",\"tiempo_resultado\":\"12 a 24 horas \",\"valores_referenciales\":[{\"tipo\":\"Parámetro\",\"nombre\":\"LIPASA\",\"codigo_interno\":\"lipasa\",\"metodologia\":\"CINETICO\",\"unidad\":\"U\\/L\",\"opciones\":[],\"texto_por_defecto\":\"\",\"referencias\":[],\"formula\":\"\",\"negrita\":false,\"cursiva\":false,\"alineacion\":\"left\",\"color_texto\":\"#N\",\"color_fondo\":\"#ffffff\",\"decimales\":null,\"rows\":null,\"orden\":1}],\"precio_publico\":70,\"precio_convenio\":30,\"tipo_tubo\":\"Tapa Roja\\/Amarilla \",\"tipo_frasco\":\"\",\"preanalitica\":\"CHACHAPOYAS\"},\"valores_referenciales\":[{\"tipo\":\"Parámetro\",\"nombre\":\"LIPASA\",\"codigo_interno\":\"lipasa\",\"metodologia\":\"CINETICO\",\"unidad\":\"U\\/L\",\"opciones\":[],\"texto_por_defecto\":\"\",\"referencias\":[],\"formula\":\"\",\"negrita\":false,\"cursiva\":false,\"alineacion\":\"left\",\"color_texto\":\"#N\",\"color_fondo\":\"#ffffff\",\"decimales\":null,\"rows\":null,\"orden\":1}],\"examen_version_id\":N}]",
+                    "fecha": "<ts>",
+                    "historia_clinica_id": null,
+                    "paciente_id": "<paciente_id#1>"
+                }
+            ],
+            "produccion_medica_detalle.cobro_id": [
+                {
+                    "caja_id": "<caja_id#1>",
+                    "cantidad": "1.00",
+                    "clasificacion_origen": "produccion_medica",
+                    "cobro_detalle_idx": "1",
+                    "cobro_id": "<cobro_id#1>",
+                    "consulta_id": "<consulta_id#1>",
+                    "cotizacion_detalle_id": "<cotizacion_detalle_id#3>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "descuento_item": "70.00",
+                    "fecha_cobro": "<ts>",
+                    "medico_id": "<medico_id#1>",
+                    "monto_bruto_item": "70.00",
+                    "monto_neto_item": "0.00",
+                    "origen_operacion": "cotizacion",
+                    "paciente_id": "<paciente_id#1>",
+                    "periodo_yyyymm": "202610",
+                    "precio_unitario_lista": "70.00",
+                    "servicio_id": "<servicio_id#3>",
+                    "servicio_nombre": "CONSULTA CIRUGIA GENERAL - L. HILDEMARO TECCO DAVILA (<fecha_cita> 14:00)",
+                    "servicio_tipo": "consulta",
+                    "tipo_pago": "efectivo",
+                    "turno": "tarde",
+                    "usuario_caja_id": "<usuario_caja_id#1>"
+                },
+                {
+                    "caja_id": "<caja_id#1>",
+                    "cantidad": "1.00",
+                    "clasificacion_origen": "produccion_medica",
+                    "cobro_detalle_idx": "2",
+                    "cobro_id": "<cobro_id#1>",
+                    "consulta_id": "<consulta_id#1>",
+                    "cotizacion_detalle_id": "<cotizacion_detalle_id#1>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "descuento_item": "120.00",
+                    "fecha_cobro": "<ts>",
+                    "medico_id": "<medico_id#1>",
+                    "monto_bruto_item": "120.00",
+                    "monto_neto_item": "0.00",
+                    "origen_operacion": "cotizacion",
+                    "paciente_id": "<paciente_id#1>",
+                    "periodo_yyyymm": "202610",
+                    "precio_unitario_lista": "120.00",
+                    "servicio_id": "<servicio_id#1>",
+                    "servicio_nombre": "ECOGRAFIA MUSCULO ESQUELETICO",
+                    "servicio_tipo": "ecografia",
+                    "tipo_pago": "efectivo",
+                    "turno": "tarde",
+                    "usuario_caja_id": "<usuario_caja_id#1>"
+                },
+                {
+                    "caja_id": "<caja_id#1>",
+                    "cantidad": "1.00",
+                    "clasificacion_origen": "produccion_medica",
+                    "cobro_detalle_idx": "3",
+                    "cobro_id": "<cobro_id#1>",
+                    "consulta_id": "<consulta_id#1>",
+                    "cotizacion_detalle_id": "<cotizacion_detalle_id#2>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "descuento_item": "70.00",
+                    "fecha_cobro": "<ts>",
+                    "medico_id": "<medico_id#1>",
+                    "monto_bruto_item": "70.00",
+                    "monto_neto_item": "0.00",
+                    "origen_operacion": "cotizacion",
+                    "paciente_id": "<paciente_id#1>",
+                    "periodo_yyyymm": "202610",
+                    "precio_unitario_lista": "70.00",
+                    "servicio_id": "<servicio_id#2>",
+                    "servicio_nombre": "LIPASA",
+                    "servicio_tipo": "laboratorio",
+                    "tipo_pago": "efectivo",
+                    "turno": "tarde",
+                    "usuario_caja_id": "<usuario_caja_id#1>"
+                }
+            ],
+            "produccion_medica_detalle.cotizacion_id": [
+                {
+                    "caja_id": "<caja_id#1>",
+                    "cantidad": "1.00",
+                    "clasificacion_origen": "produccion_medica",
+                    "cobro_detalle_idx": "1",
+                    "cobro_id": "<cobro_id#1>",
+                    "consulta_id": "<consulta_id#1>",
+                    "cotizacion_detalle_id": "<cotizacion_detalle_id#3>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "descuento_item": "70.00",
+                    "fecha_cobro": "<ts>",
+                    "medico_id": "<medico_id#1>",
+                    "monto_bruto_item": "70.00",
+                    "monto_neto_item": "0.00",
+                    "origen_operacion": "cotizacion",
+                    "paciente_id": "<paciente_id#1>",
+                    "periodo_yyyymm": "202610",
+                    "precio_unitario_lista": "70.00",
+                    "servicio_id": "<servicio_id#3>",
+                    "servicio_nombre": "CONSULTA CIRUGIA GENERAL - L. HILDEMARO TECCO DAVILA (<fecha_cita> 14:00)",
+                    "servicio_tipo": "consulta",
+                    "tipo_pago": "efectivo",
+                    "turno": "tarde",
+                    "usuario_caja_id": "<usuario_caja_id#1>"
+                },
+                {
+                    "caja_id": "<caja_id#1>",
+                    "cantidad": "1.00",
+                    "clasificacion_origen": "produccion_medica",
+                    "cobro_detalle_idx": "2",
+                    "cobro_id": "<cobro_id#1>",
+                    "consulta_id": "<consulta_id#1>",
+                    "cotizacion_detalle_id": "<cotizacion_detalle_id#1>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "descuento_item": "120.00",
+                    "fecha_cobro": "<ts>",
+                    "medico_id": "<medico_id#1>",
+                    "monto_bruto_item": "120.00",
+                    "monto_neto_item": "0.00",
+                    "origen_operacion": "cotizacion",
+                    "paciente_id": "<paciente_id#1>",
+                    "periodo_yyyymm": "202610",
+                    "precio_unitario_lista": "120.00",
+                    "servicio_id": "<servicio_id#1>",
+                    "servicio_nombre": "ECOGRAFIA MUSCULO ESQUELETICO",
+                    "servicio_tipo": "ecografia",
+                    "tipo_pago": "efectivo",
+                    "turno": "tarde",
+                    "usuario_caja_id": "<usuario_caja_id#1>"
+                },
+                {
+                    "caja_id": "<caja_id#1>",
+                    "cantidad": "1.00",
+                    "clasificacion_origen": "produccion_medica",
+                    "cobro_detalle_idx": "3",
+                    "cobro_id": "<cobro_id#1>",
+                    "consulta_id": "<consulta_id#1>",
+                    "cotizacion_detalle_id": "<cotizacion_detalle_id#2>",
+                    "cotizacion_id": "<cotizacion_id#1>",
+                    "descuento_item": "70.00",
+                    "fecha_cobro": "<ts>",
+                    "medico_id": "<medico_id#1>",
+                    "monto_bruto_item": "70.00",
+                    "monto_neto_item": "0.00",
+                    "origen_operacion": "cotizacion",
+                    "paciente_id": "<paciente_id#1>",
+                    "periodo_yyyymm": "202610",
+                    "precio_unitario_lista": "70.00",
+                    "servicio_id": "<servicio_id#2>",
+                    "servicio_nombre": "LIPASA",
+                    "servicio_tipo": "laboratorio",
+                    "tipo_pago": "efectivo",
+                    "turno": "tarde",
+                    "usuario_caja_id": "<usuario_caja_id#1>"
+                }
+            ]
+        }
     }
 }

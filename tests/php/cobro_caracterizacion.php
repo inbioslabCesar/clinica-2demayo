@@ -327,6 +327,15 @@ $ejecutar('09_cobro_de_farmacia_descuenta_stock', function () use ($mysqli, $pac
     return ['respuesta' => limpiarRespuesta($resp), 'stock_descontado' => $antes - $stock(), 'estado' => fotoEstado($mysqli, [$cid], idsCobro($mysqli, [$cid]))];
 });
 
+$ejecutar('10_atencion_solidaria_cobro_cero_sin_honorario', function () use ($mysqli, $pacienteId, $fechaCita, $detConsultaEco) {
+    $cot = crearCotizacion($detConsultaEco('14:00'), $pacienteId, $fechaCita);
+    if (empty($cot['cotizacion_id'])) throw new Exception('no se creó la cotización: ' . json_encode($cot));
+    $cid = (int)$cot['cotizacion_id'];
+    $detalles = detallesDeCotizacion($cid);
+    $resp = api('api_cobros.php', 'POST', payloadCobro([$cid], $detalles, 0, ['atencion_solidaria' => true, 'motivo' => 'Atencion solidaria de prueba', 'tipo_descuento' => 'monto', 'valor_descuento' => 260]));
+    return ['respuesta' => limpiarRespuesta($resp), 'estado' => fotoEstado($mysqli, [$cid], idsCobro($mysqli, [$cid]))];
+});
+
 if ($problemas) {
     fwrite(STDERR, "Escenarios con problemas de preparación:\n - " . implode("\n - ", $problemas) . "\n");
 }

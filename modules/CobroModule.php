@@ -2784,6 +2784,125 @@ class CobroModule
             return ['success' => false, 'error' => 'Error al actualizar: ' . $e->getMessage()];
         }
     }
+    // Enriquece y expande los detalles (paquetes) y fija los montos del cobro: original, descuento y total.
+    // Devuelve ['data' => datos con detalles ya con descuento proporcional, 'monto_original', 'monto_descuento', 'total_cobro'].
+    private static function prepararDetallesYMontosDelCobro($conn, $data)
+    {
+        $detallesOriginales = is_array($data['detalles'] ?? null) ? $data['detalles'] : [];
+        foreach ($detallesOriginales as &$detalleOriginal) {
+            $detalleOriginal = self::enriquecerDetalleDesdeCotizacionDetalle($conn, $detalleOriginal);
+        }
+        unset($detalleOriginal);
+        $detallesExpandido = self::expandirDetallesPaquete($detallesOriginales, $conn);
+        $detallesExpandido = PaqueteComercialModule::completarComponentesCobro($conn, $detallesExpandido);
+        if (empty($detallesExpandido)) {
+            throw new \Exception('No hay detalles válidos para procesar el cobro.');
+        }
+        $data['detalles'] = $detallesExpandido;
+
+        // Normalizar montos de cobro en backend para evitar desfaces entre UI y persistencia.
+        $montoOriginal = self::toFloatFlexible($data['monto_original'] ?? 0);
+        if ($montoOriginal <= 0) {
+            $montoOriginal = self::calcularMontoOriginalDesdeDetalles($data['detalles'] ?? []);
+        }
+        $montoDescuento = self::normalizarDescuento($data, $montoOriginal);
+        $totalCobro = max(0.0, round($montoOriginal - $montoDescuento, 2));
+
+        // Aplicar descuento proporcional a cada item para mantener consistencia
+        // entre caja, honorarios, derivaciones y farmacia.
+        $data['detalles'] = self::distribuirDescuentoProporcionalEnDetalles($data['detalles'], $montoDescuento);
+        $data['detalles'] = PaqueteComercialModule::aplicarDescuentos($data['detalles'], $conn, !empty($data['atencion_solidaria']));
+
+        return [
+            'data' => $data,
+            'monto_original' => $montoOriginal,
+            'monto_descuento' => $montoDescuento,
+            'total_cobro' => $totalCobro,
+        ];
+    }
+
+    // Aplica la reprogramación pedida en el cobro y valida choques de horario.
+    // Devuelve null si todo está bien; si hay conflicto revierte la transacción y devuelve la respuesta de error.
+    private static function aplicarReprogramacionYValidarHorario($conn, &$data, $cotizacionIdsFlujo, $cotizacionesBloqueadas, $usuarioSesionId)
+    {
+        $reprogramacionHorariaMap = self::normalizarReprogramacionHorariaPayload($data['reprogramacion_horaria'] ?? null);
+        if (!empty($reprogramacionHorariaMap)) {
+            self::aplicarReprogramacionHorariaEnDetalles($data['detalles'], $reprogramacionHorariaMap);
+            self::persistirReprogramacionEnCotizacionDetalle($conn, $data['detalles'], $reprogramacionHorariaMap);
+            self::persistirReprogramacionEnAgendaServicios($conn, $data['detalles'], $reprogramacionHorariaMap, (int)$usuarioSesionId);
+        }
+
+        $omitirValidacionHorariaSaldo = self::debeOmitirValidacionHorariaCobroSaldo(
+            $conn,
+            $cotizacionIdsFlujo,
+            $cotizacionesBloqueadas,
+            $reprogramacionHorariaMap
+        );
+        if (!$omitirValidacionHorariaSaldo) {
+            $validacionHoraria = self::validarChoquesHorarioAntesCobro($conn, $data['detalles'], $cotizacionesBloqueadas, $reprogramacionHorariaMap);
+            if (!$validacionHoraria['ok']) {
+                $conn->rollback();
+                return [
+                    'success' => false,
+                    'code' => 'conflicto_horario',
+                    'error' => (string)($validacionHoraria['message'] ?? 'Conflicto de horario detectado.'),
+                    'conflictos' => $validacionHoraria['conflictos'] ?? [],
+                ];
+            }
+        }
+        return null;
+    }
+
+    // Reparte el cobro entre las cotizaciones involucradas y valida que no supere su saldo vigente.
+    private static function resumirYValidarMontoPorCotizacion($data, $cotizacionId, $cotizacionesBloqueadas, $montoOriginal, $montoDescuento, $totalCobro)
+    {
+        $resumenPorCotizacion = self::construirResumenCobroPorCotizacion($data['detalles']);
+        if (empty($resumenPorCotizacion) && $cotizacionId > 0) {
+            $resumenPorCotizacion[$cotizacionId] = [
+                'cotizacion_id' => $cotizacionId,
+                'monto_original' => round($montoOriginal, 2),
+                'descuento_aplicado' => round($montoDescuento, 2),
+                'monto_aplicado' => round($totalCobro, 2),
+                'orden_aplicacion' => 1,
+            ];
+        }
+
+        // Anti-duplicado: el monto a aplicar no puede superar el saldo vigente de la cotización
+        // (bloqueada FOR UPDATE). Evita doble envío del mismo cobro sobre un saldo ya abonado.
+        self::validarMontoContraSaldoCotizaciones($resumenPorCotizacion, $cotizacionesBloqueadas);
+        return $resumenPorCotizacion;
+    }
+
+    // Reglas de atención solidaria (descuento total, motivo, sin honorario médico) y referencia de origen heredada de la cotización.
+    private static function aplicarAtencionSolidariaYReferenciaOrigen($data, $cotizacionesBloqueadas, $montoOriginal, $montoDescuento, $totalCobro)
+    {
+        $esAtencionSolidaria = !empty($data['atencion_solidaria']);
+        if ($esAtencionSolidaria) {
+            if ($montoOriginal <= 0 || $montoDescuento < ($montoOriginal - 0.00001) || $totalCobro > 0.00001) {
+                throw new \Exception('La atención solidaria requiere un descuento total y un cobro final de S/ 0.00.');
+            }
+            if (trim((string)($data['motivo'] ?? '')) === '') {
+                throw new \Exception('La atención solidaria requiere registrar el motivo de la atención.');
+            }
+            foreach ($data['detalles'] as &$detalleSolidario) {
+                if (is_array($detalleSolidario)) {
+                    $detalleSolidario['renuncia_honorario_medico'] = true;
+                }
+            }
+            unset($detalleSolidario);
+        }
+        if (empty(trim((string)($data['referencia_origen'] ?? ''))) && !empty($cotizacionesBloqueadas)) {
+            foreach ($cotizacionesBloqueadas as $cotizacionBloqueada) {
+                $refOrigenCot = trim((string)($cotizacionBloqueada['referencia_origen'] ?? ''));
+                if ($refOrigenCot !== '') {
+                    $data['referencia_origen'] = $refOrigenCot;
+                    break;
+                }
+            }
+        }
+        return $data;
+    }
+
     // Descuenta stock y registra la venta de cada ítem de farmacia del cobro.
     private static function procesarVentasFarmaciaDelCobro($conn, $data, $cobro_id, $nombre_paciente, $cotizacionId)
     {
@@ -2942,101 +3061,25 @@ class CobroModule
                 }
             }
 
-            $detallesOriginales = is_array($data['detalles'] ?? null) ? $data['detalles'] : [];
-            foreach ($detallesOriginales as &$detalleOriginal) {
-                $detalleOriginal = self::enriquecerDetalleDesdeCotizacionDetalle($conn, $detalleOriginal);
-            }
-            unset($detalleOriginal);
-            $detallesExpandido = self::expandirDetallesPaquete($detallesOriginales, $conn);
-            $detallesExpandido = PaqueteComercialModule::completarComponentesCobro($conn, $detallesExpandido);
-            if (empty($detallesExpandido)) {
-                throw new \Exception('No hay detalles válidos para procesar el cobro.');
-            }
-            $data['detalles'] = $detallesExpandido;
+            $preparado = self::prepararDetallesYMontosDelCobro($conn, $data);
+            $data = $preparado['data'];
+            $montoOriginal = $preparado['monto_original'];
+            $montoDescuento = $preparado['monto_descuento'];
+            $totalCobro = $preparado['total_cobro'];
 
-            // Normalizar montos de cobro en backend para evitar desfaces entre UI y persistencia.
-            $montoOriginal = self::toFloatFlexible($data['monto_original'] ?? 0);
-            if ($montoOriginal <= 0) {
-                $montoOriginal = self::calcularMontoOriginalDesdeDetalles($data['detalles'] ?? []);
-            }
-            $montoDescuento = self::normalizarDescuento($data, $montoOriginal);
-            $totalCobro = max(0.0, round($montoOriginal - $montoDescuento, 2));
-
-            // Aplicar descuento proporcional a cada item para mantener consistencia
-            // entre caja, honorarios, derivaciones y farmacia.
-            $data['detalles'] = self::distribuirDescuentoProporcionalEnDetalles($data['detalles'], $montoDescuento);
-            $data['detalles'] = PaqueteComercialModule::aplicarDescuentos($data['detalles'], $conn, !empty($data['atencion_solidaria']));
-
-            $reprogramacionHorariaMap = self::normalizarReprogramacionHorariaPayload($data['reprogramacion_horaria'] ?? null);
-            if (!empty($reprogramacionHorariaMap)) {
-                self::aplicarReprogramacionHorariaEnDetalles($data['detalles'], $reprogramacionHorariaMap);
-                self::persistirReprogramacionEnCotizacionDetalle($conn, $data['detalles'], $reprogramacionHorariaMap);
-                self::persistirReprogramacionEnAgendaServicios($conn, $data['detalles'], $reprogramacionHorariaMap, (int)$usuarioSesionId);
+            $conflictoHorario = self::aplicarReprogramacionYValidarHorario($conn, $data, $cotizacionIdsFlujo, $cotizacionesBloqueadas, (int)$usuarioSesionId);
+            if ($conflictoHorario !== null) {
+                return $conflictoHorario;
             }
 
-            $omitirValidacionHorariaSaldo = self::debeOmitirValidacionHorariaCobroSaldo(
-                $conn,
-                $cotizacionIdsFlujo,
-                $cotizacionesBloqueadas,
-                $reprogramacionHorariaMap
-            );
-            if (!$omitirValidacionHorariaSaldo) {
-                $validacionHoraria = self::validarChoquesHorarioAntesCobro($conn, $data['detalles'], $cotizacionesBloqueadas, $reprogramacionHorariaMap);
-                if (!$validacionHoraria['ok']) {
-                    $conn->rollback();
-                    return [
-                        'success' => false,
-                        'code' => 'conflicto_horario',
-                        'error' => (string)($validacionHoraria['message'] ?? 'Conflicto de horario detectado.'),
-                        'conflictos' => $validacionHoraria['conflictos'] ?? [],
-                    ];
-                }
-            }
-
-            $resumenPorCotizacion = self::construirResumenCobroPorCotizacion($data['detalles']);
-            if (empty($resumenPorCotizacion) && $cotizacionId > 0) {
-                $resumenPorCotizacion[$cotizacionId] = [
-                    'cotizacion_id' => $cotizacionId,
-                    'monto_original' => round($montoOriginal, 2),
-                    'descuento_aplicado' => round($montoDescuento, 2),
-                    'monto_aplicado' => round($totalCobro, 2),
-                    'orden_aplicacion' => 1,
-                ];
-            }
-
-            // Anti-duplicado: el monto a aplicar no puede superar el saldo vigente de la cotización
-            // (bloqueada FOR UPDATE). Evita doble envío del mismo cobro sobre un saldo ya abonado.
-            self::validarMontoContraSaldoCotizaciones($resumenPorCotizacion, $cotizacionesBloqueadas);
+            $resumenPorCotizacion = self::resumirYValidarMontoPorCotizacion($data, $cotizacionId, $cotizacionesBloqueadas, $montoOriginal, $montoDescuento, $totalCobro);
 
             $data['monto_original'] = $montoOriginal;
             $data['monto_descuento'] = $montoDescuento;
             $data['total'] = $totalCobro;
             $data['cotizacion_ids'] = $cotizacionIdsFlujo;
 
-            $esAtencionSolidaria = !empty($data['atencion_solidaria']);
-            if ($esAtencionSolidaria) {
-                if ($montoOriginal <= 0 || $montoDescuento < ($montoOriginal - 0.00001) || $totalCobro > 0.00001) {
-                    throw new \Exception('La atención solidaria requiere un descuento total y un cobro final de S/ 0.00.');
-                }
-                if (trim((string)($data['motivo'] ?? '')) === '') {
-                    throw new \Exception('La atención solidaria requiere registrar el motivo de la atención.');
-                }
-                foreach ($data['detalles'] as &$detalleSolidario) {
-                    if (is_array($detalleSolidario)) {
-                        $detalleSolidario['renuncia_honorario_medico'] = true;
-                    }
-                }
-                unset($detalleSolidario);
-            }
-            if (empty(trim((string)($data['referencia_origen'] ?? ''))) && !empty($cotizacionesBloqueadas)) {
-                foreach ($cotizacionesBloqueadas as $cotizacionBloqueada) {
-                    $refOrigenCot = trim((string)($cotizacionBloqueada['referencia_origen'] ?? ''));
-                    if ($refOrigenCot !== '') {
-                        $data['referencia_origen'] = $refOrigenCot;
-                        break;
-                    }
-                }
-            }
+            $data = self::aplicarAtencionSolidariaYReferenciaOrigen($data, $cotizacionesBloqueadas, $montoOriginal, $montoDescuento, $totalCobro);
 
             // Validar que exista una caja abierta antes de cualquier registro
             $fecha_cobro = $data['fecha'] ?? date('Y-m-d');
