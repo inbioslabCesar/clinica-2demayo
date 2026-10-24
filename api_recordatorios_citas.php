@@ -765,6 +765,89 @@ function rc_medico_esta_ocupado_en_turno($conn, $medicoId, $fechaYmd, $horaHms, 
     return !empty($rowAgenda);
 }
 
+function rc_listar_horas_ocupadas_medico_fecha($conn, $medicoId, $fechaYmd, $cotizacionIdExcluir = 0, $excludeConsultaIds = []) {
+    $medicoId = (int)$medicoId;
+    $cotizacionIdExcluir = (int)$cotizacionIdExcluir;
+    $fechaYmd = trim((string)$fechaYmd);
+    if ($medicoId <= 0 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaYmd)) {
+        return [];
+    }
+
+    $consultaExcluidas = [];
+    foreach ((array)$excludeConsultaIds as $cid) {
+        $cid = (int)$cid;
+        if ($cid > 0) $consultaExcluidas[$cid] = true;
+    }
+
+    // Mismas reglas que rc_medico_esta_ocupado_en_turno: lo que se muestra es lo que luego bloquea el guardado.
+    $ocupadas = [];
+    $registrar = function ($horaHms, $paciente, $servicio) use (&$ocupadas) {
+        $hora = substr(rc_normalizar_hora_hms($horaHms), 0, 5);
+        if ($hora === '') return;
+        $paciente = trim((string)$paciente);
+        $clave = $hora . '|' . $paciente;
+        if (!isset($ocupadas[$clave])) {
+            $ocupadas[$clave] = ['hora' => $hora, 'paciente' => $paciente, 'servicios' => []];
+        }
+        $servicio = trim((string)$servicio);
+        if ($servicio !== '' && !in_array($servicio, $ocupadas[$clave]['servicios'], true)) {
+            $ocupadas[$clave]['servicios'][] = $servicio;
+        }
+    };
+
+    if (rc_table_exists($conn, 'consultas')) {
+        $stmtCons = $conn->prepare(
+            'SELECT c.id, c.hora, TRIM(CONCAT(COALESCE(p.nombre, ""), " ", COALESCE(p.apellido, ""))) AS paciente
+             FROM consultas c
+             LEFT JOIN pacientes p ON p.id = c.paciente_id
+             WHERE c.medico_id = ?
+               AND c.fecha = ?
+               AND LOWER(TRIM(COALESCE(c.estado, ""))) NOT IN ("cancelada", "anulada", "completada")
+             ORDER BY c.hora ASC, c.id ASC'
+        );
+        if ($stmtCons) {
+            $stmtCons->bind_param('is', $medicoId, $fechaYmd);
+            $stmtCons->execute();
+            $resCons = $stmtCons->get_result();
+            while ($row = $resCons->fetch_assoc()) {
+                if (isset($consultaExcluidas[(int)($row['id'] ?? 0)])) continue;
+                $registrar($row['hora'] ?? '', $row['paciente'] ?? '', 'Consulta');
+            }
+            $stmtCons->close();
+        }
+    }
+
+    if (rc_table_exists($conn, 'agenda_servicios_cotizacion')) {
+        $stmtAgenda = $conn->prepare(
+            'SELECT a.hora_programada, a.titulo_evento, TRIM(CONCAT(COALESCE(p.nombre, ""), " ", COALESCE(p.apellido, ""))) AS paciente
+             FROM agenda_servicios_cotizacion a
+             LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id
+             LEFT JOIN tarifas t ON t.id = COALESCE(cd.servicio_id, a.servicio_id)
+             LEFT JOIN pacientes p ON p.id = a.paciente_id
+             WHERE COALESCE(a.medico_id, cd.medico_id, t.medico_id, 0) = ?
+               AND a.fecha_programada = ?
+               AND a.cotizacion_id <> ?
+               AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado", "no_asistio", "anulada", "completado", "atendido", "espontaneo", "pagado")
+             ORDER BY a.hora_programada ASC, a.id ASC'
+        );
+        if ($stmtAgenda) {
+            $stmtAgenda->bind_param('isi', $medicoId, $fechaYmd, $cotizacionIdExcluir);
+            $stmtAgenda->execute();
+            $resAgenda = $stmtAgenda->get_result();
+            while ($row = $resAgenda->fetch_assoc()) {
+                $registrar($row['hora_programada'] ?? '', $row['paciente'] ?? '', $row['titulo_evento'] ?? '');
+            }
+            $stmtAgenda->close();
+        }
+    }
+
+    $lista = array_values($ocupadas);
+    usort($lista, function ($a, $b) {
+        return strcmp($a['hora'] . '|' . $a['paciente'], $b['hora'] . '|' . $b['paciente']);
+    });
+    return $lista;
+}
+
 function rc_construir_plan_turnos_reprogramacion($agendaItems, $horaInicioHms, $duracionTurnoMin) {
     $inicioMin = rc_hora_a_minutos($horaInicioHms);
     if ($inicioMin === null) {
@@ -1543,6 +1626,7 @@ if ($method === 'GET') {
         );
         $turnosLibresInicio = rc_sugerir_inicios_reprogramacion($conn, $agendaItems, $fecha, $duracionTurnoMin, $cotizacionId, 48);
         $sugerenciasDias = rc_sugerir_dias_reprogramacion($conn, $agendaItems, $fecha, $duracionTurnoMin, $cotizacionId, 14, 5);
+        $horasOcupadas = rc_listar_horas_ocupadas_medico_fecha($conn, $medicoPrincipal, $fecha, $cotizacionId, $excludeConsultaIds);
 
         echo json_encode([
             'success' => true,
@@ -1553,6 +1637,7 @@ if ($method === 'GET') {
             'turnos_libres_medico' => $turnosLibresMedico,
             'turnos_libres_inicio' => $turnosLibresInicio,
             'medico_tiene_horario_regular' => !empty(rc_obtener_rangos_regulares_medico($conn, $medicoPrincipal, $fecha)),
+            'horas_ocupadas' => $horasOcupadas,
             'sugerencias_otras_fechas' => $sugerenciasDias,
         ]);
         exit;

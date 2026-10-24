@@ -1962,7 +1962,27 @@ export default function RecordatoriosCitasPage() {
     const horaActual = item.hora ? String(item.hora).slice(0, 5) : "";
     let iniciosValidos = [];
     let turnosLibresMedicoActual = [];
-    
+    let horasOcupadasActual = [];
+    let duracionTurnoActual = 20;
+
+    const hmAMinutos = (hm) => {
+      const [h, m] = String(hm || "").slice(0, 5).split(":").map(Number);
+      return Number.isFinite(h) && Number.isFinite(m) ? (h * 60) + m : null;
+    };
+    // Un turno dura `duracionTurnoActual` min: choca si los intervalos se solapan.
+    const buscarChoqueOcupado = (hm) => {
+      const ini = hmAMinutos(hm);
+      if (ini === null) return null;
+      return horasOcupadasActual.find((o) => {
+        const oi = hmAMinutos(o?.hora);
+        return oi !== null && ini < oi + duracionTurnoActual && oi < ini + duracionTurnoActual;
+      }) || null;
+    };
+    const describirOcupada = (o) => {
+      const servicios = Array.isArray(o?.servicios) && o.servicios.length > 0 ? ` (${o.servicios.join(", ")})` : "";
+      return `${o?.hora} · ${String(o?.paciente || "Paciente").replace(/\s+/g, " ").trim()}${servicios}`;
+    };
+
     const modal = await Swal.fire({
       title: "Reprogramar servicios",
       html: `
@@ -1981,6 +2001,8 @@ export default function RecordatoriosCitasPage() {
             <label style="font-size:12px;font-weight:600;color:#334155;">Nueva hora</label>
             <input id="rc_hora_reprog" type="time" class="swal2-input" style="margin:0;width:100%;" value="${horaActual}" />
           </div>
+          <div id="rc_horas_ocupadas" style="display:none;font-size:12px;line-height:1.45;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 10px;color:#991b1b;"></div>
+          <div id="rc_hora_reprog_alerta" style="display:none;font-size:12px;font-weight:700;color:#b91c1c;"></div>
           <div id="rc_hora_reprog_hint" style="font-size:12px;color:#64748b;line-height:1.35;"></div>
         </div>
       `,
@@ -1993,8 +2015,43 @@ export default function RecordatoriosCitasPage() {
         const horaEl = document.getElementById("rc_hora_reprog");
         const selectEl = document.getElementById("rc_hora_reprog_sugerida");
         const hintEl = document.getElementById("rc_hora_reprog_hint");
-        if (!fechaEl || !horaEl || !selectEl || !hintEl) return;
+        const ocupadasEl = document.getElementById("rc_horas_ocupadas");
+        const alertaEl = document.getElementById("rc_hora_reprog_alerta");
+        if (!fechaEl || !horaEl || !selectEl || !hintEl || !ocupadasEl || !alertaEl) return;
 
+        const renderOcupadas = () => {
+          ocupadasEl.innerHTML = "";
+          if (horasOcupadasActual.length === 0) {
+            ocupadasEl.style.display = "none";
+            return;
+          }
+          const titulo = document.createElement("div");
+          titulo.style.fontWeight = "700";
+          titulo.textContent = "Horas ocupadas del médico ese día (no se pueden pisar):";
+          ocupadasEl.appendChild(titulo);
+          const lista = document.createElement("div");
+          lista.style.maxHeight = "96px";
+          lista.style.overflowY = "auto";
+          horasOcupadasActual.forEach((o) => {
+            const fila = document.createElement("div");
+            fila.textContent = describirOcupada(o);
+            lista.appendChild(fila);
+          });
+          ocupadasEl.appendChild(lista);
+          ocupadasEl.style.display = "block";
+        };
+
+        const actualizarAlertaChoque = () => {
+          const hh = String(horaEl.value || "").slice(0, 5);
+          const choque = hh ? buscarChoqueOcupado(hh) : null;
+          if (!choque) {
+            alertaEl.style.display = "none";
+            alertaEl.textContent = "";
+            return;
+          }
+          alertaEl.textContent = `⚠ ${hh} choca con un turno ocupado: ${describirOcupada(choque)}. Elige otra hora.`;
+          alertaEl.style.display = "block";
+        };
         const llenarSelect = (horasLibres = [], horasInicioValidas = [], textoVacio = "Sin turnos libres en esta fecha") => {
           selectEl.innerHTML = "";
           if (!Array.isArray(horasLibres) || horasLibres.length === 0) {
@@ -2024,6 +2081,9 @@ export default function RecordatoriosCitasPage() {
           hintEl.textContent = "Consultando turnos libres...";
           iniciosValidos = [];
           turnosLibresMedicoActual = [];
+          horasOcupadasActual = [];
+          renderOcupadas();
+          actualizarAlertaChoque();
           llenarSelect([]);
           try {
             const params = new URLSearchParams({
@@ -2041,6 +2101,9 @@ export default function RecordatoriosCitasPage() {
             const turnosLibresMedico = Array.isArray(data?.turnos_libres_medico) ? data.turnos_libres_medico : [];
             const turnos = Array.isArray(data?.turnos_libres_inicio) ? data.turnos_libres_inicio : [];
             const medicoAtiendeEseDia = data?.medico_tiene_horario_regular !== false;
+            horasOcupadasActual = Array.isArray(data?.horas_ocupadas) ? data.horas_ocupadas : [];
+            duracionTurnoActual = Number(data?.duracion_turno_min) > 0 ? Number(data.duracion_turno_min) : 20;
+            renderOcupadas();
             iniciosValidos = [...turnos];
             turnosLibresMedicoActual = [...turnosLibresMedico];
             llenarSelect(
@@ -2090,15 +2153,19 @@ export default function RecordatoriosCitasPage() {
             llenarSelect([]);
             hintEl.textContent = err?.message || "No se pudo cargar turnos libres.";
           }
+          actualizarAlertaChoque();
         };
 
         fechaEl.addEventListener("change", () => {
           cargarTurnos(String(fechaEl.value || "").trim(), false);
         });
+        horaEl.addEventListener("input", actualizarAlertaChoque);
+        horaEl.addEventListener("change", actualizarAlertaChoque);
         selectEl.addEventListener("change", () => {
           const hh = String(selectEl.value || "").slice(0, 5);
           if (hh) {
             horaEl.value = hh;
+            actualizarAlertaChoque();
             if (iniciosValidos.includes(hh)) {
               hintEl.textContent = `Turno ${hh} seleccionado: inicio válido de bloque.`;
             } else if (turnosLibresMedicoActual.includes(hh)) {
@@ -2135,6 +2202,11 @@ export default function RecordatoriosCitasPage() {
             Swal.showValidationMessage("La hora elegida ya pasó para hoy. Elige una hora futura.");
             return null;
           }
+        }
+        const choqueOcupado = buscarChoqueOcupado(hora);
+        if (choqueOcupado) {
+          Swal.showValidationMessage(`La hora ${hora} ya está ocupada: ${describirOcupada(choqueOcupado)}. Elige otra hora.`);
+          return null;
         }
         return { fecha, hora };
       },
