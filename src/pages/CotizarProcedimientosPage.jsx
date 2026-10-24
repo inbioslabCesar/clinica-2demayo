@@ -9,6 +9,7 @@ import { getMedicoAccentColor, getMedicoSoftColor } from "../utils/medicoAccent"
 import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
 import useSubmitGuard from "../hooks/useSubmitGuard";
+import { confirmarLimpiezaCarrito, finalizarRegistroCotizacion, registrarConFallbackAdenda } from "../utils/cotizacionSubmit";
 import { getLimaDate, getLimaTime as getDefaultTime, normalizeAgendaProgramacionModo, normalizeHourHm } from "../utils/dateTime";
 
 export default function CotizarProcedimientosPage() {
@@ -788,22 +789,9 @@ export default function CotizarProcedimientosPage() {
     const sp = new URLSearchParams(location.search);
     const cotizacionId = sp.get('cotizacion_id');
 
-    let limpiarCarritoAlFinal = false;
-    const cartItemsCount = Array.isArray(cart?.items) ? cart.items.length : 0;
-    const esMismoPacienteCarrito = Number(cart?.patientId || 0) === Number(pacienteId || 0);
-    if (cartItemsCount > 0 && esMismoPacienteCarrito) {
-      const esEdicionCotizacion = Boolean(cotizacionId);
-      const confirm = await Swal.fire({
-        title: 'Carrito activo detectado',
-        text: `Hay ${cartItemsCount} item(s) en el carrito. Si ${esEdicionCotizacion ? 'actualizas' : 'registras'} desde este cotizador, el carrito se limpiara para evitar inconsistencias.`,
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonText: esEdicionCotizacion ? 'Actualizar y limpiar carrito' : 'Registrar y limpiar carrito',
-        cancelButtonText: 'Cancelar',
-      });
-      if (!confirm.isConfirmed) return;
-      limpiarCarritoAlFinal = true;
-    }
+    const carrito = await confirmarLimpiezaCarrito({ Swal, cart, pacienteId, esEdicion: Boolean(cotizacionId) });
+    if (carrito.cancelado) return;
+    const limpiarCarritoAlFinal = carrito.limpiarCarrito;
 
     const detallesFinales = cotizacionId && !esModoAdenda
       ? await construirDetallesEditados(cotizacionId, detalles)
@@ -841,43 +829,19 @@ export default function CotizarProcedimientosPage() {
         };
 
     try {
-      let data;
-      const res = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+      const { data, cancelada } = await registrarConFallbackAdenda({
+        authFetch,
+        baseUrl: BASE_URL,
+        Swal,
+        payload,
+        cotizacionId,
+        detallesAdenda: detalles,
+        totalAdenda: detalles.reduce((acc, detalle) => acc + Number(detalle.subtotal || 0), 0),
+        motivoAdenda: 'Adenda confirmada por usuario desde cotizador de Procedimientos (cotización pagada)',
       });
-      data = await res.json();
-
-      const noEditable = /no esta en estado editable|no está en estado editable/i.test(String(data?.error || ''));
-      if (!data?.success && cotizacionId && noEditable) {
-        const confirmAdenda = await Swal.fire({
-          title: 'Cotización ya pagada',
-          text: `La cotización #${Number(cotizacionId)} no se puede editar directamente. ¿Deseas crear una adenda nueva con estos cambios?`,
-          icon: 'warning',
-          showCancelButton: true,
-          confirmButtonText: 'Sí, crear adenda',
-          cancelButtonText: 'No, cancelar',
-        });
-        if (!confirmAdenda.isConfirmed) {
-          setMensaje('Operación cancelada. No se creó ninguna adenda.');
-          return;
-        }
-        const payloadAdenda = {
-          accion: 'adenda',
-          cotizacion_id: Number(cotizacionId),
-          detalles,
-          total: detalles.reduce((acc, detalle) => acc + Number(detalle.subtotal || 0), 0),
-          motivo: 'Adenda confirmada por usuario desde cotizador de Procedimientos (cotización pagada)'
-        };
-        const resAdenda = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payloadAdenda)
-        });
-        data = await resAdenda.json();
+      if (cancelada) {
+        setMensaje('Operación cancelada. No se creó ninguna adenda.');
+        return;
       }
 
       if (!data?.success) {
@@ -885,35 +849,17 @@ export default function CotizarProcedimientosPage() {
       }
       releaseRequestId();
 
-      const cotizacionDestino = Number(data?.cotizacion_id || cotizacionId || 0);
-      const fueAdenda = Boolean(cotizacionId) && cotizacionDestino > 0 && cotizacionDestino !== Number(cotizacionId);
-
-      setMensaje(
-        fueAdenda
-          ? 'Adenda creada correctamente.'
-          : (cotizacionId ? 'Cotización actualizada correctamente.' : 'Cotización registrada correctamente.')
-      );
-      Swal.fire('Listo', fueAdenda ? 'Adenda creada.' : (cotizacionId ? 'Cotización actualizada.' : 'Cotización registrada.'), 'success').then(async () => {
-        if (limpiarCarritoAlFinal) {
-          clearCart();
-        }
-        if (irACobro && cotizacionDestino > 0) {
-          navigate(`/cobrar-cotizacion/${Number(cotizacionDestino)}`);
-          return;
-        }
-        if (cotizacionDestino > 0 && cotizacionId) {
-          try {
-            const refrescados = await obtenerDetallesCotizacion(cotizacionDestino);
-            setCotizacionDetallesOriginales(refrescados);
-          } catch {
-            // Continuar navegación aunque falle el refresco.
-          }
-          navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionDestino)}&modo=editar&back_to=/cotizaciones`, {
-            state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionDestino), backTo: '/cotizaciones', modo: 'editar' },
-          });
-          return;
-        }
-        navigate('/cotizaciones');
+      finalizarRegistroCotizacion({
+        Swal,
+        navigate,
+        data,
+        cotizacionId,
+        pacienteId,
+        irACobro,
+        limpiarCarritoAlFinal,
+        clearCart,
+        setMensaje,
+        refrescarDetalles: async (id) => setCotizacionDetallesOriginales(await obtenerDetallesCotizacion(id)),
       });
     } catch (error) {
       Swal.fire('Error', error?.message || 'No se pudo registrar la cotización', 'error');

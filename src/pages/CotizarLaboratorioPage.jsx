@@ -8,6 +8,7 @@ import { useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import useSubmitGuard from "../hooks/useSubmitGuard";
+import { confirmarLimpiezaCarrito } from "../utils/cotizacionSubmit";
 import { getLimaDate, getLimaTime as getDefaultTime } from "../utils/dateTime";
 import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import { aplicarExclusionConsultaDelCarrito, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
@@ -1046,22 +1047,9 @@ export default function CotizarLaboratorioPage() {
       return;
     }
 
-    let limpiarCarritoAlFinal = false;
-    const cartItemsCount = Array.isArray(cart?.items) ? cart.items.length : 0;
-    const esMismoPacienteCarrito = Number(cart?.patientId || 0) === Number(pacienteId || 0);
-    if (cartItemsCount > 0 && esMismoPacienteCarrito) {
-      const esEdicionCotizacion = Boolean(cotizacionId);
-      const confirm = await Swal.fire({
-        title: 'Carrito activo detectado',
-        text: `Hay ${cartItemsCount} item(s) en el carrito. Si ${esEdicionCotizacion ? 'actualizas' : 'registras'} desde este cotizador, el carrito se limpiara para evitar inconsistencias.`,
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonText: esEdicionCotizacion ? 'Actualizar y limpiar carrito' : 'Registrar y limpiar carrito',
-        cancelButtonText: 'Cancelar',
-      });
-      if (!confirm.isConfirmed) return;
-      limpiarCarritoAlFinal = true;
-    }
+    const carrito = await confirmarLimpiezaCarrito({ Swal, cart, pacienteId, esEdicion: Boolean(cotizacionId) });
+    if (carrito.cancelado) return;
+    const limpiarCarritoAlFinal = carrito.limpiarCarrito;
 
     const detallesLaboratorio = secuenciarDetallesPacienteSinCruce({
       detalles: construirDetallesSeleccionados(),
