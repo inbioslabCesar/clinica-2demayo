@@ -232,6 +232,43 @@ prueba('episodio: sin adendas no hay nada que adoptar', function () {
     iguales(0, $r['detalles'] + $r['ordenes'] + $r['bloques']);
 }, true);
 
+prueba('episodio: adenda con detalle de consulta se une al bloque de la cotización base', function () {
+    global $mysqli, $marcador;
+    $obs = $mysqli->real_escape_string($marcador);
+    $paciente = 987654;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, estado, observaciones) VALUES ($paciente, 18, 90, 'pagado', '$obs')");
+    $baseId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, descripcion, cantidad, precio_unitario, subtotal, medico_id) VALUES ($baseId, 'ecografia', 'PHPTEST eco', 1, 90, 90, 1)");
+    $detalleBaseId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO agenda_servicios_cotizacion (cotizacion_id, cotizacion_detalle_id, paciente_id, servicio_tipo, titulo_evento, medico_id, fecha_programada, hora_programada, estado_evento) VALUES ($baseId, $detalleBaseId, $paciente, 'ecografia', 'PHPTEST', 1, CURDATE(), '08:30:00', 'confirmado')");
+    $mysqli->query("INSERT INTO bloques_atencion (paciente_id, consulta_origen_id, fecha_base) VALUES ($paciente, NULL, CURDATE())");
+    $bloqueBase = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO bloques_atencion_cotizaciones (bloque_id, cotizacion_id) VALUES ($bloqueBase, $baseId)");
+
+    try {
+        $r = ejecutarApi('api_cotizaciones.php', 'POST', json_encode([
+            'accion' => 'adenda',
+            'cotizacion_id' => $baseId,
+            'fecha_ref' => date('Y-m-d'),
+            'observaciones' => $marcador,
+            'motivo' => 'PHPTEST',
+            'detalles' => [[
+                'servicio_tipo' => 'consulta', 'servicio_id' => 999999, 'descripcion' => 'PHPTEST consulta',
+                'cantidad' => 1, 'precio_unitario' => 70, 'subtotal' => 70, 'medico_id' => 1,
+                'fecha_programada' => date('Y-m-d'), 'hora_programada' => '08:30',
+            ]],
+        ]));
+        verdadero(($r['success'] ?? false) === true, 'adenda: ' . json_encode($r));
+        $adendaId = (int)$r['cotizacion_id'];
+        $padre = (int)$mysqli->query("SELECT cotizacion_padre_id p FROM cotizaciones WHERE id = $adendaId")->fetch_assoc()['p'];
+        iguales($baseId, $padre, 'la adenda cuelga de la base');
+        $bloqueAdenda = (int)$mysqli->query("SELECT bloque_id b FROM bloques_atencion_cotizaciones WHERE cotizacion_id = $adendaId")->fetch_assoc()['b'];
+        iguales($bloqueBase, $bloqueAdenda, 'misma atención/bloque que la cotización base');
+    } finally {
+        $mysqli->query("DELETE FROM bloques_atencion WHERE paciente_id = $paciente");
+    }
+}, true);
+
 /* ───────── Ejecución ───────── */
 
 $bd = null;

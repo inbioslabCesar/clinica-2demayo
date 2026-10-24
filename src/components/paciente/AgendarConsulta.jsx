@@ -661,6 +661,7 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
             fecha: fechaRef,
             hora: horaRef,
             desdeServicios,
+            estadoCotizacion: String(cot?.estado || "").toLowerCase(),
           });
           setPrecioConsultaReferencia(Number.isFinite(subtotalRef) && subtotalRef >= 0 ? subtotalRef : null);
 
@@ -1234,6 +1235,121 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     }
   };
 
+  // Consulta nueva dentro de un episodio ya cotizado: pendiente/parcial se edita; pagada genera adenda.
+  const registrarConsultaEnEpisodio = async (irACobro = false) => {
+    if (!pacienteId || !medicoId || !fecha || !hora) {
+      setMsg("Completa todos los campos");
+      return;
+    }
+    if (!iniciarAccion(irACobro ? "cobrar" : "editar")) return;
+    setMsg("");
+
+    try {
+      const fechaProgramada = String(episodioFijo?.fecha || fecha).slice(0, 10);
+      let horaProgramada = String(episodioFijo?.hora || hora).slice(0, 5);
+      let adicionalAutorizado = false;
+
+      const agendaCheck = await validarAgendaAntesDeCotizar({
+        authFetch,
+        baseUrl: BASE_URL,
+        Swal: MySwal,
+        useCartSessionFilter: false,
+        entries: [{
+          tipo: "consulta",
+          medicoId: Number(medicoId),
+          fecha: fechaProgramada,
+          hora: horaProgramada,
+          cotizacionIdExcluir: cotizacionIdNum,
+        }],
+        onApplySuggestion: (_entry, nuevaHora, _nuevaFecha, meta = {}) => {
+          horaProgramada = String(nuevaHora || horaProgramada).slice(0, 5);
+          adicionalAutorizado = Boolean(meta?.isAdicional);
+          setHora(horaProgramada);
+        },
+      });
+      if (!agendaCheck?.ok) return;
+
+      const tarifa = await obtenerTarifaConsulta(medicoId);
+      const precio = getPrecioConsultaNeto(tarifa);
+      if (!Number.isFinite(precio) || precio < 0) {
+        throw new Error("La tarifa de consulta no tiene un precio válido");
+      }
+
+      const medicoSeleccionado = medicos.find((m) => String(m.id) === String(medicoId));
+      const medicoNombre = `${medicoSeleccionado?.nombre || medicoSeleccionado?.nombres || ""} ${
+        medicoSeleccionado?.apellido || medicoSeleccionado?.apellidos || ""
+      }`.trim();
+      const descripcionBase = `${tarifa.descripcion || "Consulta médica"} - ${medicoNombre || "Sin médico"} (${fechaProgramada} ${horaProgramada})`;
+      const detalle = {
+        servicio_tipo: "consulta",
+        servicio_id: Number(tarifa.id || 0),
+        descripcion: adicionalAutorizado ? `${descripcionBase} · Adicional autorizado` : descripcionBase,
+        cantidad: 1,
+        precio_unitario: precio,
+        subtotal: precio,
+        medico_id: Number(medicoId),
+        fecha_programada: fechaProgramada,
+        hora_programada: horaProgramada,
+        adicional_autorizado: adicionalAutorizado,
+        observacion_programacion: adicionalAutorizado ? "Adicional autorizado por recepción" : "",
+      };
+
+      const esAdenda = !["pendiente", "parcial"].includes(String(adendaReferencia?.estadoCotizacion || ""));
+      const confirmacion = await MySwal.fire({
+        icon: "question",
+        title: "Actualizar cotización",
+        text: esAdenda
+          ? `La cotización #${cotizacionIdNum} ya está pagada: se creará una adenda con la consulta (S/ ${Number(precio).toFixed(2)}) el ${fechaProgramada} a las ${horaProgramada}.`
+          : `Se agregará la consulta (S/ ${Number(precio).toFixed(2)}) a la cotización #${cotizacionIdNum} el ${fechaProgramada} a las ${horaProgramada}.`,
+        showCancelButton: true,
+        confirmButtonText: "Actualizar",
+        cancelButtonText: "Cancelar",
+      });
+      if (!confirmacion.isConfirmed) return;
+
+      const respuesta = await authFetch(`${BASE_URL}api_cotizaciones.php`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(
+          esAdenda
+            ? {
+              accion: "adenda",
+              cotizacion_id: cotizacionIdNum,
+              detalles: [detalle],
+              total: precio,
+              motivo: "Consulta agregada al episodio desde Agendar consulta",
+            }
+            : {
+              accion: "agregar_detalle",
+              cotizacion_id: cotizacionIdNum,
+              detalle,
+              motivo: "Consulta agregada al episodio desde Agendar consulta",
+            }
+        ),
+      });
+      const data = await respuesta.json();
+      if (!data?.success) {
+        throw new Error(data?.error || "No se pudo actualizar la cotización");
+      }
+
+      const cotizacionDestino = Number(data?.cotizacion_id || cotizacionIdNum);
+      setRefreshDisponibilidadKey((prev) => prev + 1);
+      await MySwal.fire({
+        icon: "success",
+        title: "Cotización actualizada",
+        text: esAdenda ? `Se creó la adenda #${cotizacionDestino} con la consulta.` : "La consulta se agregó a la cotización.",
+        confirmButtonText: "Aceptar",
+        confirmButtonColor: "#2563eb",
+      });
+      navigate(irACobro ? `/cobrar-cotizacion/${cotizacionDestino}` : (backTo || "/cotizaciones"));
+    } catch (error) {
+      setMsg(error?.message || "No se pudo actualizar la cotización");
+    } finally {
+      finalizarAccion();
+    }
+  };
+
   const handleCotizar = async () => {
     if (esPacienteTemporal && !isEditingConsulta) {
       await MySwal.fire({
@@ -1246,6 +1362,10 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     }
     if (modoAgregarConsulta) {
       await agregarNuevaConsultaACotizacion();
+      return;
+    }
+    if (hayEpisodioFijo) {
+      await registrarConsultaEnEpisodio(false);
       return;
     }
     if (isEditingConsulta) {
@@ -1268,6 +1388,10 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
     }
     if (modoAgregarConsulta) {
       await agregarNuevaConsultaACotizacion();
+      return;
+    }
+    if (hayEpisodioFijo) {
+      await registrarConsultaEnEpisodio(true);
       return;
     }
     if (isEditingConsulta) {

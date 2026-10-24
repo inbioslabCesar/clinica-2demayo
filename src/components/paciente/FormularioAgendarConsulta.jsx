@@ -40,6 +40,7 @@ function FormularioAgendarConsulta({
   const precioReferenciaNum = Number(precioReferenciaConsulta);
   const mostrarComparativoAdenda =
     isAdendaMode &&
+    !episodioFijo &&
     isEditingConsulta &&
     medicoId &&
     Number.isFinite(precioReferenciaNum) &&
@@ -223,6 +224,8 @@ function FormularioAgendarConsulta({
             >
               {processingAction === "editar"
                 ? "Actualizando..."
+                : episodioFijo
+                ? "Actualizar cotización"
                 : isAdendaMode
                 ? "Guardar cambio sin cobro"
                 : isEditingCotizacion
@@ -235,8 +238,10 @@ function FormularioAgendarConsulta({
                 disabled={processingAction !== ""}
                 className="bg-green-600 text-white rounded px-4 py-2 md:px-6 md:py-3 font-bold text-base md:text-lg disabled:opacity-60"
               >
-                {processingAction === "editar"
+                {processingAction === "editar" || processingAction === "cobrar"
                   ? "Actualizando..."
+                  : episodioFijo
+                  ? "Actualizar y cobrar"
                   : "Guardar cambio y cobrar diferencia"}
               </button>
             )}
@@ -280,7 +285,7 @@ function FormularioAgendarConsulta({
             </button>
           </div>
         )}
-        {isAdendaMode && (
+        {isAdendaMode && !episodioFijo && (
           <div className="mt-1 text-xs text-slate-600">
             Si el cambio de médico genera diferencia, puedes cobrarla de inmediato; si no hay diferencia, solo se guarda el cambio.
           </div>
