@@ -7505,7 +7505,7 @@ function normalizar_rango_fechas_iso($fechaInicioRaw, $fechaFinRaw, $usarHoySiVa
     ];
 }
 
-function cargar_pagos_cotizaciones_map($conn, $cotizacionIds) {
+function cargar_pagos_cotizaciones_map($conn, $cotizacionIds, $options = []) {
     $map = [];
     $ids = array_values(array_filter(array_map('intval', (array)$cotizacionIds), function($id) {
         return $id > 0;
@@ -7514,24 +7514,43 @@ function cargar_pagos_cotizaciones_map($conn, $cotizacionIds) {
         return $map;
     }
 
+    $fechaInicio = trim((string)($options['fecha_inicio'] ?? ''));
+    $fechaFin = trim((string)($options['fecha_fin'] ?? ''));
+    $filtrarPorFecha = fecha_iso_valida($fechaInicio) && fecha_iso_valida($fechaFin) && column_exists($conn, 'cotizacion_movimientos', 'created_at');
+    $fechaFinExclusiva = '';
+    if ($filtrarPorFecha) {
+        $fechaFinExclusiva = (new DateTime($fechaFin))->modify('+1 day')->format('Y-m-d');
+    }
+
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
     $types = str_repeat('i', count($ids));
     $hasCobros = table_exists($conn, 'cobros');
     $hasTipoPagoCobro = $hasCobros && column_exists($conn, 'cobros', 'tipo_pago');
     $selectMetodoPago = $hasTipoPagoCobro ? ', c.tipo_pago AS metodo_pago' : ', NULL AS metodo_pago';
     $joinCobros = $hasTipoPagoCobro ? ' LEFT JOIN cobros c ON c.id = cm.cobro_id ' : ' ';
+    $whereFechaSql = '';
+    if ($filtrarPorFecha) {
+        $whereFechaSql = " AND cm.created_at >= ? AND cm.created_at < ?";
+        $types .= 'ss';
+    }
 
     $sql = "SELECT cm.cotizacion_id, cm.tipo_movimiento, cm.monto{$selectMetodoPago}
             FROM cotizacion_movimientos cm
             {$joinCobros}
             WHERE cm.cotizacion_id IN ({$placeholders})
-              AND cm.tipo_movimiento IN ('abono','devolucion')";
+              AND cm.tipo_movimiento IN ('abono','devolucion')
+              {$whereFechaSql}";
 
     $stmt = $conn->prepare($sql);
     if (!$stmt) {
         return $map;
     }
-    $stmt->bind_param($types, ...$ids);
+    $params = $ids;
+    if ($filtrarPorFecha) {
+        $params[] = $fechaInicio;
+        $params[] = $fechaFinExclusiva;
+    }
+    $stmt->bind_param($types, ...$params);
     $stmt->execute();
     $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
@@ -7642,6 +7661,10 @@ function reporte_atenciones_detallado($conn) {
     $q = trim((string)($_GET['q'] ?? ''));
     $rol = normalizar_rol_usuario_reporte($_GET['rol'] ?? 'todos');
     $usuarioId = isset($_GET['usuario_id']) ? (int)$_GET['usuario_id'] : 0;
+    $filtroSolicitudHC = strtolower(trim((string)($_GET['filtro_solicitud'] ?? 'todas')));
+    if (!in_array($filtroSolicitudHC, ['todas', 'solo_hc', 'solo_incompleto'], true)) {
+        $filtroSolicitudHC = 'todas';
+    }
     $expandirMetodosPago = !isset($_GET['expandir_metodos_pago']) || (string)$_GET['expandir_metodos_pago'] !== '0';
 
     $rango = normalizar_rango_fechas_iso($fechaInicioRaw, $fechaFinRaw, true);
@@ -7652,13 +7675,16 @@ function reporte_atenciones_detallado($conn) {
     $fechaFin = $rango['fecha_fin'];
 
     $hasCotizacionMovimientosCreatedAt = table_exists($conn, 'cotizacion_movimientos') && column_exists($conn, 'cotizacion_movimientos', 'created_at');
+    $hasReferenciaOrigen = column_exists($conn, 'cotizaciones', 'referencia_origen');
+    $hasNumeroComprobante = column_exists($conn, 'cotizaciones', 'numero_comprobante');
+    $registroIncompletoExpr = "(p.id IS NOT NULL"
+        . " AND (p.fecha_nacimiento IS NULL OR CAST(p.fecha_nacimiento AS CHAR) = '0000-00-00' OR TRIM(CAST(p.fecha_nacimiento AS CHAR)) = '')"
+        . " AND (p.edad IS NULL OR TRIM(CAST(p.edad AS CHAR)) = '')"
+        . ")";
     $subqueryUltimoPagoAt = "(SELECT MAX(cm.created_at) FROM cotizacion_movimientos cm WHERE cm.cotizacion_id = c.id AND LOWER(TRIM(COALESCE(cm.tipo_movimiento, ''))) = 'abono' AND COALESCE(cm.monto, 0) > 0)";
-    $fechaOperativaExpr = $hasCotizacionMovimientosCreatedAt
-        ? "COALESCE({$subqueryUltimoPagoAt}, c.fecha)"
-        : 'c.fecha';
 
     $fechaFinExclusiva = (new DateTime($fechaFin))->modify('+1 day')->format('Y-m-d');
-    $where = ["{$fechaOperativaExpr} >= ? AND {$fechaOperativaExpr} < ?"];
+    $where = ["c.fecha >= ? AND c.fecha < ?"];
     $types = 'ss';
     $params = [$fechaInicio, $fechaFinExclusiva];
 
@@ -7689,8 +7715,13 @@ function reporte_atenciones_detallado($conn) {
     }
 
     if ($q !== '') {
-        $where[] = "(p.nombre LIKE ? OR p.apellido LIKE ? OR p.dni LIKE ? OR p.historia_clinica LIKE ? OR c.observaciones LIKE ? OR CAST(c.id AS CHAR) LIKE ?)";
-        $types .= 'ssssss';
+        if ($hasNumeroComprobante) {
+            $where[] = "(p.nombre LIKE ? OR p.apellido LIKE ? OR p.dni LIKE ? OR p.historia_clinica LIKE ? OR c.observaciones LIKE ? OR CAST(c.id AS CHAR) LIKE ? OR c.numero_comprobante LIKE ?)";
+            $types .= 'sssssss';
+        } else {
+            $where[] = "(p.nombre LIKE ? OR p.apellido LIKE ? OR p.dni LIKE ? OR p.historia_clinica LIKE ? OR c.observaciones LIKE ? OR CAST(c.id AS CHAR) LIKE ?)";
+            $types .= 'ssssss';
+        }
         $like = "%{$q}%";
         $params[] = $like;
         $params[] = $like;
@@ -7698,6 +7729,31 @@ function reporte_atenciones_detallado($conn) {
         $params[] = $like;
         $params[] = $like;
         $params[] = $like;
+        if ($hasNumeroComprobante) {
+            $params[] = $like;
+        }
+    }
+
+    if ($filtroSolicitudHC === 'solo_incompleto') {
+        $where[] = $registroIncompletoExpr;
+    } elseif ($filtroSolicitudHC === 'solo_hc') {
+        if ($hasReferenciaOrigen) {
+            $where[] = "("
+                . "LOWER(COALESCE(c.referencia_origen, '')) LIKE '%hc consulta%'"
+                . " OR LOWER(COALESCE(c.referencia_origen, '')) LIKE '%desde hc%'"
+                . " OR LOWER(COALESCE(c.referencia_origen, '')) LIKE '%historia clinica%'"
+                . " OR LOWER(COALESCE(c.referencia_origen, '')) LIKE '%historia clínica%'"
+                . " OR LOWER(COALESCE(c.observaciones, '')) LIKE '%desde consulta #%'"
+                . " OR LOWER(COALESCE(c.observaciones, '')) LIKE '%procedimientos desde consulta #%'"
+                . " OR LOWER(COALESCE(c.observaciones, '')) LIKE '%solicitud hc%'"
+                . ")";
+        } else {
+            $where[] = "("
+                . "LOWER(COALESCE(c.observaciones, '')) LIKE '%desde consulta #%'"
+                . " OR LOWER(COALESCE(c.observaciones, '')) LIKE '%procedimientos desde consulta #%'"
+                . " OR LOWER(COALESCE(c.observaciones, '')) LIKE '%solicitud hc%'"
+                . ")";
+        }
     }
 
     $whereSql = 'WHERE ' . implode(' AND ', $where);
@@ -7705,9 +7761,11 @@ function reporte_atenciones_detallado($conn) {
     $selectUltimoPagoAt = $hasCotizacionMovimientosCreatedAt
         ? "{$subqueryUltimoPagoAt} AS ultimo_pago_at,"
         : 'NULL AS ultimo_pago_at,';
-    $selectFechaReporte = "{$fechaOperativaExpr} AS fecha_reporte,";
+    $selectFechaReporte = "c.fecha AS fecha_reporte,";
+    $selectReferenciaOrigen = $hasReferenciaOrigen ? 'c.referencia_origen,' : 'NULL AS referencia_origen,';
+    $selectNumeroComprobante = $hasNumeroComprobante ? 'c.numero_comprobante,' : 'NULL AS numero_comprobante,';
 
-    $sql = "SELECT c.id, c.fecha, {$selectUltimoPagoAt} {$selectFechaReporte} c.paciente_id, c.usuario_id, c.total, c.total_pagado, c.saldo_pendiente, c.estado,
+    $sql = "SELECT c.id, c.fecha, {$selectUltimoPagoAt} {$selectFechaReporte} {$selectReferenciaOrigen} {$selectNumeroComprobante} c.paciente_id, c.usuario_id, c.total, c.total_pagado, c.saldo_pendiente, c.estado,
                    c.observaciones, p.nombre, p.apellido, p.dni, p.historia_clinica,
                    COALESCE(u.nombre, 'Sistema') AS usuario_nombre,
                    COALESCE(u.rol, '') AS usuario_rol
@@ -7734,10 +7792,14 @@ function reporte_atenciones_detallado($conn) {
                 'fecha_fin' => $fechaFin,
                 'rol' => $rol,
                 'usuario_id' => $usuarioId,
+                'usuario_nombre' => '',
                 'estado' => $estado,
                 'q' => $q,
+                'filtro_solicitud' => $filtroSolicitudHC,
             ],
             'resumen_por_rol' => [],
+            'resumen_metodos_pago' => [],
+            'total_pagado_rango' => 0,
             'detalle' => [],
         ]);
     }
@@ -7746,11 +7808,17 @@ function reporte_atenciones_detallado($conn) {
         return (int)($row['id'] ?? 0);
     }, $cotizaciones);
     $detallesPorCotizacion = cargar_detalles_cotizaciones($conn, $ids);
-    $pagosPorCotizacion = cargar_pagos_cotizaciones_map($conn, $ids);
+    $pagosPorCotizacion = cargar_pagos_cotizaciones_map($conn, $ids, [
+        'fecha_inicio' => $fechaInicio,
+        'fecha_fin' => $fechaFin,
+    ]);
     $medicoSolicitantePorCotizacion = cargar_medico_solicitante_map_por_cotizaciones($conn, $ids);
 
     $resumenPorRol = [];
+    $resumenMetodosPago = [];
+    $totalPagadoRangoGlobal = 0.0;
     $detalle = [];
+    $usuarioFiltroNombre = '';
 
     foreach ($cotizaciones as $cot) {
         aplicar_fallback_paciente_temporal($cot);
@@ -7774,6 +7842,9 @@ function reporte_atenciones_detallado($conn) {
         $rolLabel = etiqueta_rol_usuario_reporte($rolNormalizado);
         $usuarioNombre = trim((string)($cot['usuario_nombre'] ?? 'Sistema'));
         if ($usuarioNombre === '') $usuarioNombre = 'Sistema';
+        if ($usuarioId > 0 && (int)($cot['usuario_id'] ?? 0) === $usuarioId && $usuarioFiltroNombre === '') {
+            $usuarioFiltroNombre = $usuarioNombre;
+        }
 
         if (!isset($resumenPorRol[$rolLabel])) {
             $resumenPorRol[$rolLabel] = [
@@ -7787,7 +7858,6 @@ function reporte_atenciones_detallado($conn) {
 
         $resumenPorRol[$rolLabel]['cantidad_cotizaciones'] += 1;
         $resumenPorRol[$rolLabel]['total_cotizado'] += (float)($cot['total'] ?? 0);
-        $resumenPorRol[$rolLabel]['total_pagado'] += (float)($cot['total_pagado'] ?? 0);
         $resumenPorRol[$rolLabel]['saldo_pendiente'] += (float)($cot['saldo_pendiente'] ?? 0);
 
         $detallesRaw = $detallesPorCotizacion[$cotizacionId] ?? [];
@@ -7824,6 +7894,20 @@ function reporte_atenciones_detallado($conn) {
         if (empty($pagosMetodo)) {
             $pagosMetodo['sin_pago'] = 0.0;
         }
+        $totalPagadoRangoCot = 0.0;
+        foreach ($pagosMetodo as $metodoPago => $montoPago) {
+            $montoRedondeado = round((float)$montoPago, 2);
+            $totalPagadoRangoCot += $montoRedondeado;
+            if ($metodoPago !== 'sin_pago' && abs($montoRedondeado) > 0.00001) {
+                if (!isset($resumenMetodosPago[$metodoPago])) {
+                    $resumenMetodosPago[$metodoPago] = 0.0;
+                }
+                $resumenMetodosPago[$metodoPago] += $montoRedondeado;
+            }
+        }
+        $totalPagadoRangoCot = round($totalPagadoRangoCot, 2);
+        $totalPagadoRangoGlobal += $totalPagadoRangoCot;
+        $resumenPorRol[$rolLabel]['total_pagado'] += $totalPagadoRangoCot;
 
         $metodosConMonto = array_values(array_filter(array_keys($pagosMetodo), function($key) use ($pagosMetodo) {
             if ($key === 'sin_pago') return false;
@@ -7908,7 +7992,7 @@ function reporte_atenciones_detallado($conn) {
                         'tipo_pago' => (string)$metodo,
                         'monto_tipo_pago' => round((float)$montoMetodo, 2),
                         'total_cotizacion' => round((float)($cot['total'] ?? 0), 2),
-                        'total_pagado' => round((float)($cot['total_pagado'] ?? 0), 2),
+                        'total_pagado' => $totalPagadoRangoCot,
                         'saldo_pendiente' => round((float)($cot['saldo_pendiente'] ?? 0), 2),
                     ];
                 }
@@ -7936,12 +8020,23 @@ function reporte_atenciones_detallado($conn) {
                     'subtotal_servicio' => round($subtotal, 2),
                     'tipo_pago_resumen' => $resumenMetodo,
                     'tipo_pago' => (string)$metodosLista,
-                    'monto_tipo_pago' => round((float)($cot['total_pagado'] ?? 0), 2),
+                    'monto_tipo_pago' => $totalPagadoRangoCot,
                     'total_cotizacion' => round((float)($cot['total'] ?? 0), 2),
-                    'total_pagado' => round((float)($cot['total_pagado'] ?? 0), 2),
+                    'total_pagado' => $totalPagadoRangoCot,
                     'saldo_pendiente' => round((float)($cot['saldo_pendiente'] ?? 0), 2),
                 ];
             }
+        }
+    }
+
+    if ($usuarioId > 0 && $usuarioFiltroNombre === '') {
+        $stmtUsuario = $conn->prepare("SELECT COALESCE(nombre, '') AS nombre FROM usuarios WHERE id = ? LIMIT 1");
+        if ($stmtUsuario) {
+            $stmtUsuario->bind_param('i', $usuarioId);
+            $stmtUsuario->execute();
+            $usuarioRow = $stmtUsuario->get_result()->fetch_assoc();
+            $stmtUsuario->close();
+            $usuarioFiltroNombre = trim((string)($usuarioRow['nombre'] ?? ''));
         }
     }
 
@@ -7951,6 +8046,18 @@ function reporte_atenciones_detallado($conn) {
         $row['saldo_pendiente'] = round((float)$row['saldo_pendiente'], 2);
         return $row;
     }, $resumenPorRol));
+    uasort($resumenMetodosPago, function($a, $b) {
+        $cmp = abs((float)$b) <=> abs((float)$a);
+        if ($cmp !== 0) return $cmp;
+        return $b <=> $a;
+    });
+    $resumenMetodosPagoRows = [];
+    foreach ($resumenMetodosPago as $metodo => $monto) {
+        $resumenMetodosPagoRows[] = [
+            'metodo' => (string)$metodo,
+            'monto' => round((float)$monto, 2),
+        ];
+    }
 
     respond([
         'success' => true,
@@ -7959,10 +8066,14 @@ function reporte_atenciones_detallado($conn) {
             'fecha_fin' => $fechaFin,
             'rol' => $rol,
             'usuario_id' => $usuarioId,
+            'usuario_nombre' => $usuarioFiltroNombre,
             'estado' => $estado,
             'q' => $q,
+            'filtro_solicitud' => $filtroSolicitudHC,
         ],
         'resumen_por_rol' => $resumenRolRows,
+        'resumen_metodos_pago' => $resumenMetodosPagoRows,
+        'total_pagado_rango' => round($totalPagadoRangoGlobal, 2),
         'detalle' => $detalle,
     ]);
 }
@@ -8208,6 +8319,7 @@ switch ($method) {
         $fechaFinRaw = $_GET['fecha_fin'] ?? '';
         $estado = $_GET['estado'] ?? null;
         $soloRegistroIncompleto = isset($_GET['registro_incompleto']) && (string)$_GET['registro_incompleto'] === '1';
+        $rolFiltro = normalizar_rol_usuario_reporte($_GET['rol'] ?? 'todos');
         $usuarioId = isset($_GET['usuario_id']) ? (int)$_GET['usuario_id'] : null;
         $q = trim((string)($_GET['q'] ?? ''));
         $includeDetalles = isset($_GET['include_detalles']) && (string)$_GET['include_detalles'] === '1';
@@ -8264,6 +8376,11 @@ switch ($method) {
             $where[] = "c.usuario_id = ?";
             $types .= 'i';
             $params[] = $usuarioId;
+        }
+        if ($rolFiltro === 'admin') {
+            $where[] = "LOWER(TRIM(COALESCE(u.rol, ''))) IN ('admin', 'administrador')";
+        } elseif ($rolFiltro === 'recepcion') {
+            $where[] = "LOWER(TRIM(COALESCE(u.rol, ''))) LIKE '%recep%'";
         }
         if ($soloRegistroIncompleto) {
             $where[] = $registroIncompletoExpr;

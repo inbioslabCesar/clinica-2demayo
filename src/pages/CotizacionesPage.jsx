@@ -1548,6 +1548,10 @@ export default function CotizacionesPage() {
       if (filtroSolicitudHC === "solo_incompleto") {
         params.set("registro_incompleto", "1");
       }
+      params.set("rol", rolReporte || "todos");
+      if (rolReporte !== "todos" && String(usuarioReporte || "").trim() !== "") {
+        params.set("usuario_id", String(usuarioReporte));
+      }
 
       const res = await authFetch(`api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`, {
         cache: "no-store",
@@ -1572,7 +1576,7 @@ export default function CotizacionesPage() {
         setLoading(false);
       }
     }
-  }, [cargarEstadosAnticipados, filtroSolicitudHC, filtrosAplicados, limit, page]);
+  }, [cargarEstadosAnticipados, filtroSolicitudHC, filtrosAplicados, limit, page, rolReporte, usuarioReporte]);
 
   const toggleAnticipado = useCallback(async (row) => {
     const cotizacionId = Number(row?.id || 0);
@@ -2029,14 +2033,28 @@ export default function CotizacionesPage() {
     });
   };
 
+  const filtrosPendientesParaAplicar = useMemo(() => {
+    let fechaInicio = String(fechaInicioInput || "").trim();
+    let fechaFin = String(fechaFinInput || "").trim();
+    if (fechaInicio && !fechaFin) fechaFin = fechaInicio;
+    if (fechaFin && !fechaInicio) fechaInicio = fechaFin;
+
+    return (
+      String(qInput || "") !== String(filtrosAplicados.q || "")
+      || String(estadoInput || "") !== String(filtrosAplicados.estado || "")
+      || String(fechaInicio || "") !== String(filtrosAplicados.fechaInicio || "")
+      || String(fechaFin || "") !== String(filtrosAplicados.fechaFin || "")
+    );
+  }, [estadoInput, fechaFinInput, fechaInicioInput, filtrosAplicados.estado, filtrosAplicados.fechaFin, filtrosAplicados.fechaInicio, filtrosAplicados.q, qInput]);
+
   const construirParamsReporte = useCallback(() => {
     const params = new URLSearchParams();
     params.set("accion", "reporte_atenciones_detallado");
 
-    const q = String(qInput || filtrosAplicados.q || "").trim();
-    const estado = String(estadoInput || filtrosAplicados.estado || "").trim();
-    let fechaInicio = String(fechaInicioInput || filtrosAplicados.fechaInicio || "").trim();
-    let fechaFin = String(fechaFinInput || filtrosAplicados.fechaFin || "").trim();
+    const q = String(filtrosAplicados.q || "").trim();
+    const estado = String(filtrosAplicados.estado || "").trim();
+    let fechaInicio = String(filtrosAplicados.fechaInicio || "").trim();
+    let fechaFin = String(filtrosAplicados.fechaFin || "").trim();
 
     if (fechaInicio && !fechaFin) fechaFin = fechaInicio;
     if (fechaFin && !fechaInicio) fechaInicio = fechaFin;
@@ -2051,9 +2069,10 @@ export default function CotizacionesPage() {
     if (rolReporte !== "todos" && String(usuarioReporte || "").trim() !== "") {
       params.set("usuario_id", String(usuarioReporte));
     }
+    params.set("filtro_solicitud", filtroSolicitudHC || "todas");
 
     return params;
-  }, [estadoInput, fechaFinInput, fechaInicioInput, filtrosAplicados.estado, filtrosAplicados.fechaFin, filtrosAplicados.fechaInicio, filtrosAplicados.q, qInput, rolReporte, usuarioReporte]);
+  }, [filtroSolicitudHC, filtrosAplicados.estado, filtrosAplicados.fechaFin, filtrosAplicados.fechaInicio, filtrosAplicados.q, rolReporte, usuarioReporte]);
 
   const obtenerReporteAtenciones = useCallback(async ({ expandirMetodosPago = true } = {}) => {
     const params = construirParamsReporte();
@@ -2069,19 +2088,29 @@ export default function CotizacionesPage() {
   }, [construirParamsReporte]);
 
   const exportarExcelAtenciones = useCallback(async () => {
+    if (filtrosPendientesParaAplicar) {
+      await Swal.fire(
+        "Filtros pendientes",
+        "Tienes cambios sin aplicar. Haz clic en Filtrar antes de exportar para asegurar datos exactos.",
+        "info"
+      );
+      return;
+    }
+
     setExporting(true);
     try {
       const data = await obtenerReporteAtenciones({ expandirMetodosPago: false });
       const detalle = Array.isArray(data?.detalle) ? data.detalle : [];
       const resumen = Array.isArray(data?.resumen_por_rol) ? data.resumen_por_rol : [];
+      const resumenMetodos = Array.isArray(data?.resumen_metodos_pago) ? data.resumen_metodos_pago : [];
       const filtros = data?.filtros || {};
-      const usuarioSeleccionado = usuariosCatalogo.find((u) => String(u.id) === String(filtros.usuario_id || ""));
-      const usuarioNombre = String(usuarioSeleccionado?.nombre || "").trim();
+      const usuarioNombre = String(filtros.usuario_nombre || "").trim();
+      const totalPagadoRango = Number(data?.total_pagado_rango || 0);
 
       if (detalle.length === 0) {
         await Swal.fire(
           "Sin filas para exportar",
-          `No hay atenciones para el filtro seleccionado. Rol: ${filtros.rol || "todos"} | Usuario: ${usuarioNombre || (filtros.usuario_id ? `ID ${filtros.usuario_id}` : "todos")} | Rango: ${filtros.fecha_inicio || "-"} a ${filtros.fecha_fin || "-"}`,
+          `No hay atenciones para el filtro seleccionado. Rol: ${filtros.rol || "todos"} | Usuario: ${usuarioNombre || "todos"} | Rango: ${filtros.fecha_inicio || "-"} a ${filtros.fecha_fin || "-"}`,
           "info"
         );
         return;
@@ -2115,19 +2144,35 @@ export default function CotizacionesPage() {
         "Tipo de pago": formatMetodoPagoLabel(row.tipo_pago),
         "Monto tipo pago": Number(row.monto_tipo_pago || 0),
         "Total cotizacion": Number(row.total_cotizacion || 0),
-        "Total pagado": Number(row.total_pagado || 0),
+        "Total pagado en rango": Number(row.total_pagado || 0),
         "Saldo pendiente": Number(row.saldo_pendiente || 0),
       }), 500);
+
+      const desgloseMetodos = await mapInChunks(resumenMetodos, (row) => ([
+        formatMetodoPagoLabel(row.metodo),
+        Number(row.monto || 0),
+      ]), 300);
+      const desgloseMetodosTexto = resumenMetodos.length
+        ? resumenMetodos.map((row) => `${formatMetodoPagoLabel(row.metodo)}: S/ ${Number(row.monto || 0).toFixed(2)}`).join(" | ")
+        : "Sin pagos en rango";
 
       const wsFiltros = XLSX.utils.aoa_to_sheet([
         ["Filtro", "Valor"],
         ["Fecha inicio", filtros.fecha_inicio || ""],
         ["Fecha fin", filtros.fecha_fin || ""],
         ["Rol", filtros.rol || "todos"],
-        ["Usuario", usuarioNombre || (filtros.usuario_id ? `ID ${filtros.usuario_id}` : "todos")],
+        ["Usuario", usuarioNombre || "todos"],
+        ["Solicitud", filtros.filtro_solicitud || "todas"],
         ["Estado", filtros.estado || "todos"],
         ["Busqueda", filtros.q || ""],
+        ["Total pagado en rango", totalPagadoRango],
+        ["Desglose medios de pago", desgloseMetodosTexto],
       ]);
+      if (desgloseMetodos.length > 0) {
+        const startRow = 11;
+        XLSX.utils.sheet_add_aoa(wsFiltros, [["Medio de pago", "Monto en rango"]], { origin: `A${startRow}` });
+        XLSX.utils.sheet_add_aoa(wsFiltros, desgloseMetodos, { origin: `A${startRow + 1}` });
+      }
       const wsResumen = XLSX.utils.json_to_sheet(resumenRows.length ? resumenRows : [{ Rol: "Sin datos" }]);
       const wsDetalle = XLSX.utils.json_to_sheet(detalleRows.length ? detalleRows : [{ Estado: "Sin datos" }]);
 
@@ -2144,22 +2189,32 @@ export default function CotizacionesPage() {
     } finally {
       setExporting(false);
     }
-  }, [obtenerReporteAtenciones, usuariosCatalogo]);
+  }, [filtrosPendientesParaAplicar, obtenerReporteAtenciones]);
 
   const exportarPdfAtenciones = useCallback(async () => {
+    if (filtrosPendientesParaAplicar) {
+      await Swal.fire(
+        "Filtros pendientes",
+        "Tienes cambios sin aplicar. Haz clic en Filtrar antes de exportar para asegurar datos exactos.",
+        "info"
+      );
+      return;
+    }
+
     setExporting(true);
     try {
       const data = await obtenerReporteAtenciones({ expandirMetodosPago: false });
       const detalle = Array.isArray(data?.detalle) ? data.detalle : [];
       const resumen = Array.isArray(data?.resumen_por_rol) ? data.resumen_por_rol : [];
+      const resumenMetodos = Array.isArray(data?.resumen_metodos_pago) ? data.resumen_metodos_pago : [];
       const filtros = data?.filtros || {};
-      const usuarioSeleccionado = usuariosCatalogo.find((u) => String(u.id) === String(filtros.usuario_id || ""));
-      const usuarioNombre = String(usuarioSeleccionado?.nombre || "").trim();
+      const usuarioNombre = String(filtros.usuario_nombre || "").trim();
+      const totalPagadoRango = Number(data?.total_pagado_rango || 0);
 
       if (detalle.length === 0) {
         await Swal.fire(
           "Sin filas para exportar",
-          `No hay atenciones para el filtro seleccionado. Rol: ${filtros.rol || "todos"} | Usuario: ${usuarioNombre || (filtros.usuario_id ? `ID ${filtros.usuario_id}` : "todos")} | Rango: ${filtros.fecha_inicio || "-"} a ${filtros.fecha_fin || "-"}`,
+          `No hay atenciones para el filtro seleccionado. Rol: ${filtros.rol || "todos"} | Usuario: ${usuarioNombre || "todos"} | Rango: ${filtros.fecha_inicio || "-"} a ${filtros.fecha_fin || "-"}`,
           "info"
         );
         return;
@@ -2169,11 +2224,15 @@ export default function CotizacionesPage() {
       doc.setFontSize(13);
       doc.text("Reporte de Atenciones por Rol", 40, 34);
       doc.setFontSize(9);
-      doc.text(
-        `Rango: ${filtros.fecha_inicio || "-"} a ${filtros.fecha_fin || "-"} | Rol: ${filtros.rol || "todos"} | Usuario: ${usuarioNombre || (filtros.usuario_id ? `ID ${filtros.usuario_id}` : "todos")} | Estado: ${filtros.estado || "todos"}`,
-        40,
-        52
-      );
+      const cabeceraLinea1 = `Rango: ${filtros.fecha_inicio || "-"} a ${filtros.fecha_fin || "-"} | Rol: ${filtros.rol || "todos"} | Usuario: ${usuarioNombre || "todos"} | Solicitud: ${filtros.filtro_solicitud || "todas"} | Estado: ${filtros.estado || "todos"}`;
+      const cabeceraLinea2 = `Búsqueda: ${filtros.q || "-"} | Total pagado en rango: S/ ${totalPagadoRango.toFixed(2)}`;
+      const cabeceraLinea3 = resumenMetodos.length
+        ? `Desglose pagos: ${resumenMetodos.map((row) => `${formatMetodoPagoLabel(row.metodo)} S/ ${Number(row.monto || 0).toFixed(2)}`).join(" · ")}`
+        : "Desglose pagos: Sin pagos en rango";
+      const cabeceraBloque = [cabeceraLinea1, cabeceraLinea2, cabeceraLinea3].join("\n");
+      const cabeceraLineas = doc.splitTextToSize(cabeceraBloque, 760);
+      doc.text(cabeceraLineas, 40, 52);
+      const resumenStartY = 52 + (cabeceraLineas.length * 10) + 8;
 
       const resumenBody = await mapInChunks(
         (resumen.length ? resumen : [{ rol: "Sin datos", cantidad_cotizaciones: 0, total_cotizado: 0, total_pagado: 0, saldo_pendiente: 0 }]),
@@ -2188,7 +2247,7 @@ export default function CotizacionesPage() {
       );
 
       autoTable(doc, {
-        startY: 62,
+        startY: resumenStartY,
         head: [["Rol", "Cotizaciones", "Total cotizado", "Total pagado", "Saldo"]],
         body: resumenBody,
         styles: { fontSize: 8 },
@@ -2208,14 +2267,14 @@ export default function CotizacionesPage() {
           formatMetodoPagoLabel(row.tipo_pago),
           `S/ ${Number(row.monto_tipo_pago || 0).toFixed(2)}`,
           `S/ ${Number(row.total_cotizacion || 0).toFixed(2)}`,
-          `S/ ${Number(row.saldo_pendiente || 0).toFixed(2)}`,
+          `S/ ${Number(row.total_pagado || 0).toFixed(2)}`,
         ]),
         500
       );
 
       autoTable(doc, {
         startY: doc.lastAutoTable.finalY + 12,
-        head: [["Fecha", "Cot", "Paciente", "Rol", "Usuario", "Servicio", "Subtotal", "Pago", "Monto pago", "Total", "Saldo"]],
+        head: [["Fecha", "Cot", "Paciente", "Rol", "Usuario", "Servicio", "Subtotal", "Pago", "Monto pago", "Total", "Pagado rango"]],
         body: detalleBody,
         styles: { fontSize: 7 },
         headStyles: { fillColor: [31, 41, 55] },
@@ -2229,7 +2288,7 @@ export default function CotizacionesPage() {
     } finally {
       setExporting(false);
     }
-  }, [obtenerReporteAtenciones, usuariosCatalogo]);
+  }, [filtrosPendientesParaAplicar, obtenerReporteAtenciones]);
 
   const badgeEstado = (value, pagadoConDescuento = 0, pagadoConDevolucion = 0) => {
     const st = String(value || "").toLowerCase();
