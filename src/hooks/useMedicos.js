@@ -54,16 +54,6 @@ const useMedicos = () => {
     medicosRef.current = Array.isArray(medicos) ? medicos : [];
   }, [medicos]);
 
-  useEffect(() => {
-    fetchMedicos();
-    return () => {
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
-    };
-  }, [fetchMedicos]);
-
   const fetchMedicos = useCallback(async ({ showLoading = true } = {}) => {
     if (retryTimerRef.current) {
       clearTimeout(retryTimerRef.current);
@@ -112,6 +102,16 @@ const useMedicos = () => {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    fetchMedicos();
+    return () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, [fetchMedicos]);
 
   const createMedico = async (medicoData) => {
     setSaving(true);
