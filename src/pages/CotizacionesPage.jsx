@@ -1488,6 +1488,7 @@ export default function CotizacionesPage() {
   const [correlativosImagenDetalleByCotizacionId, setCorrelativosImagenDetalleByCotizacionId] = useState({});
   const [correlativoFechaByConsultaId, setCorrelativoFechaByConsultaId] = useState({});
   const [correlativoFechaImagenByCotizacionId, setCorrelativoFechaImagenByCotizacionId] = useState({});
+  const modoListado = "ingresos";
 
 
   const cargarEstadosAnticipados = useCallback(async (rowsInput, options = {}) => {
@@ -1539,7 +1540,7 @@ export default function CotizacionesPage() {
       params.set("page", String(page));
       params.set("limit", String(limit));
       params.set("include_detalles", "0");
-      params.set("modo_reporte", "ingresos");
+      params.set("modo_reporte", modoListado);
       params.set("debug_filtros", "1");
       if (filtrosAplicados.q.trim()) params.set("q", filtrosAplicados.q.trim());
       if (filtrosAplicados.estado) params.set("estado", filtrosAplicados.estado);
@@ -1564,7 +1565,7 @@ export default function CotizacionesPage() {
         fecha_hasta: filtrosAplicados.fechaFin || "",
         usuario_id: usuarioReporte || "",
         rol: rolReporte || "todos",
-        modo: "ingresos",
+        modo: modoListado,
         estado: filtrosAplicados.estado || "",
         page,
         limit,
@@ -1577,7 +1578,17 @@ export default function CotizacionesPage() {
       if (!data?.success) {
         throw new Error(data?.error || "No se pudo cargar cotizaciones");
       }
-      const rowsData = Array.isArray(data.cotizaciones) ? data.cotizaciones : [];
+      const rowsDataRaw = Array.isArray(data.cotizaciones) ? data.cotizaciones : [];
+      const rowsData = rowsDataRaw.map((row) => {
+        if (modoListado !== "ingresos") return row;
+        const fechaCobro = String(row?.ultimo_pago_at || "").trim();
+        if (!fechaCobro) return row;
+        return {
+          ...row,
+          fecha_original: row?.fecha || "",
+          fecha: fechaCobro,
+        };
+      });
       console.info("[AtencionesDebug][React][listado.response]", {
         total_registros: Number(data.total || 0),
         filas_recibidas: rowsData.length,
@@ -1598,7 +1609,7 @@ export default function CotizacionesPage() {
         setLoading(false);
       }
     }
-  }, [cargarEstadosAnticipados, filtroSolicitudHC, filtrosAplicados, limit, page, rolReporte, usuarioReporte]);
+  }, [cargarEstadosAnticipados, filtroSolicitudHC, filtrosAplicados, limit, modoListado, page, rolReporte, usuarioReporte]);
 
   const toggleAnticipado = useCallback(async (row) => {
     const cotizacionId = Number(row?.id || 0);
@@ -2072,7 +2083,7 @@ export default function CotizacionesPage() {
   const construirParamsReporte = useCallback(() => {
     const params = new URLSearchParams();
     params.set("accion", "reporte_atenciones_detallado");
-    params.set("modo_reporte", "ingresos");
+    params.set("modo_reporte", modoListado);
 
     const q = String(filtrosAplicados.q || "").trim();
     const estado = String(filtrosAplicados.estado || "").trim();
@@ -2095,7 +2106,7 @@ export default function CotizacionesPage() {
     params.set("filtro_solicitud", filtroSolicitudHC || "todas");
 
     return params;
-  }, [filtroSolicitudHC, filtrosAplicados.estado, filtrosAplicados.fechaFin, filtrosAplicados.fechaInicio, filtrosAplicados.q, rolReporte, usuarioReporte]);
+  }, [filtroSolicitudHC, filtrosAplicados.estado, filtrosAplicados.fechaFin, filtrosAplicados.fechaInicio, filtrosAplicados.q, modoListado, rolReporte, usuarioReporte]);
 
   const obtenerReporteAtenciones = useCallback(async ({ expandirMetodosPago = true } = {}) => {
     const params = construirParamsReporte();
@@ -2110,7 +2121,7 @@ export default function CotizacionesPage() {
       fecha_hasta: filtrosAplicados.fechaFin || "",
       usuario_id: usuarioReporte || "",
       rol: rolReporte || "todos",
-      modo: "ingresos",
+      modo: modoListado,
       estado: filtrosAplicados.estado || "",
     });
     const res = await authFetch(url, {
@@ -2127,7 +2138,7 @@ export default function CotizacionesPage() {
       throw new Error(data?.error || "No se pudo generar el reporte");
     }
     return data;
-  }, [construirParamsReporte, filtrosAplicados.estado, filtrosAplicados.fechaFin, filtrosAplicados.fechaInicio, rolReporte, usuarioReporte]);
+  }, [construirParamsReporte, filtrosAplicados.estado, filtrosAplicados.fechaFin, filtrosAplicados.fechaInicio, modoListado, rolReporte, usuarioReporte]);
 
   const exportarExcelAtenciones = useCallback(async () => {
     if (filtrosPendientesParaAplicar) {
