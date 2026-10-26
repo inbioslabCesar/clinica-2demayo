@@ -1539,6 +1539,8 @@ export default function CotizacionesPage() {
       params.set("page", String(page));
       params.set("limit", String(limit));
       params.set("include_detalles", "0");
+      params.set("modo_reporte", "ingresos");
+      params.set("debug_filtros", "1");
       if (filtrosAplicados.q.trim()) params.set("q", filtrosAplicados.q.trim());
       if (filtrosAplicados.estado) params.set("estado", filtrosAplicados.estado);
       if (filtrosAplicados.fechaInicio && filtrosAplicados.fechaFin) {
@@ -1553,7 +1555,21 @@ export default function CotizacionesPage() {
         params.set("usuario_id", String(usuarioReporte));
       }
 
-      const res = await authFetch(`api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`, {
+      const url = `api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`;
+      console.info("[AtencionesDebug][React][listado.request]", {
+        endpoint: "api_cotizaciones.php",
+        method: "GET",
+        url,
+        fecha_desde: filtrosAplicados.fechaInicio || "",
+        fecha_hasta: filtrosAplicados.fechaFin || "",
+        usuario_id: usuarioReporte || "",
+        rol: rolReporte || "todos",
+        modo: "ingresos",
+        estado: filtrosAplicados.estado || "",
+        page,
+        limit,
+      });
+      const res = await authFetch(url, {
         cache: "no-store",
         signal: controller.signal,
       });
@@ -1562,6 +1578,12 @@ export default function CotizacionesPage() {
         throw new Error(data?.error || "No se pudo cargar cotizaciones");
       }
       const rowsData = Array.isArray(data.cotizaciones) ? data.cotizaciones : [];
+      console.info("[AtencionesDebug][React][listado.response]", {
+        total_registros: Number(data.total || 0),
+        filas_recibidas: rowsData.length,
+        page,
+        limit,
+      });
       setRows(rowsData);
       setTotal(Number(data.total || 0));
       void cargarEstadosAnticipados(rowsData);
@@ -2078,15 +2100,34 @@ export default function CotizacionesPage() {
   const obtenerReporteAtenciones = useCallback(async ({ expandirMetodosPago = true } = {}) => {
     const params = construirParamsReporte();
     params.set("expandir_metodos_pago", expandirMetodosPago ? "1" : "0");
-    const res = await authFetch(`api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`, {
+    params.set("debug_filtros", "1");
+    const url = `api_cotizaciones.php?${params.toString()}&_t=${Date.now()}`;
+    console.info("[AtencionesDebug][React][reporte.request]", {
+      endpoint: "api_cotizaciones.php",
+      method: "GET",
+      url,
+      fecha_desde: filtrosAplicados.fechaInicio || "",
+      fecha_hasta: filtrosAplicados.fechaFin || "",
+      usuario_id: usuarioReporte || "",
+      rol: rolReporte || "todos",
+      modo: "ingresos",
+      estado: filtrosAplicados.estado || "",
+    });
+    const res = await authFetch(url, {
       cache: "no-store",
     });
     const data = await res.json();
+    const detalleRows = Array.isArray(data?.detalle) ? data.detalle.length : 0;
+    console.info("[AtencionesDebug][React][reporte.response]", {
+      total_registros: detalleRows,
+      filas_recibidas: detalleRows,
+      total_pagado_rango: Number(data?.total_pagado_rango || 0),
+    });
     if (!data?.success) {
       throw new Error(data?.error || "No se pudo generar el reporte");
     }
     return data;
-  }, [construirParamsReporte]);
+  }, [construirParamsReporte, filtrosAplicados.estado, filtrosAplicados.fechaFin, filtrosAplicados.fechaInicio, rolReporte, usuarioReporte]);
 
   const exportarExcelAtenciones = useCallback(async () => {
     if (filtrosPendientesParaAplicar) {
