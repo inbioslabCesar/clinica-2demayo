@@ -2050,6 +2050,7 @@ export default function CotizacionesPage() {
   const construirParamsReporte = useCallback(() => {
     const params = new URLSearchParams();
     params.set("accion", "reporte_atenciones_detallado");
+    params.set("modo_reporte", "ingresos");
 
     const q = String(filtrosAplicados.q || "").trim();
     const estado = String(filtrosAplicados.estado || "").trim();
@@ -2158,6 +2159,7 @@ export default function CotizacionesPage() {
 
       const wsFiltros = XLSX.utils.aoa_to_sheet([
         ["Filtro", "Valor"],
+        ["Modo reporte", filtros.modo_reporte || "ingresos"],
         ["Fecha inicio", filtros.fecha_inicio || ""],
         ["Fecha fin", filtros.fecha_fin || ""],
         ["Rol", filtros.rol || "todos"],
@@ -2224,7 +2226,7 @@ export default function CotizacionesPage() {
       doc.setFontSize(13);
       doc.text("Reporte de Atenciones por Rol", 40, 34);
       doc.setFontSize(9);
-      const cabeceraLinea1 = `Rango: ${filtros.fecha_inicio || "-"} a ${filtros.fecha_fin || "-"} | Rol: ${filtros.rol || "todos"} | Usuario: ${usuarioNombre || "todos"} | Solicitud: ${filtros.filtro_solicitud || "todas"} | Estado: ${filtros.estado || "todos"}`;
+      const cabeceraLinea1 = `Modo: ${filtros.modo_reporte || "ingresos"} | Rango: ${filtros.fecha_inicio || "-"} a ${filtros.fecha_fin || "-"} | Rol: ${filtros.rol || "todos"} | Usuario: ${usuarioNombre || "todos"} | Solicitud: ${filtros.filtro_solicitud || "todas"} | Estado: ${filtros.estado || "todos"}`;
       const cabeceraLinea2 = `Búsqueda: ${filtros.q || "-"} | Total pagado en rango: S/ ${totalPagadoRango.toFixed(2)}`;
       const cabeceraLinea3 = resumenMetodos.length
         ? `Desglose pagos: ${resumenMetodos.map((row) => `${formatMetodoPagoLabel(row.metodo)} S/ ${Number(row.monto || 0).toFixed(2)}`).join(" · ")}`

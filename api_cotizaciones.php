@@ -7661,6 +7661,10 @@ function reporte_atenciones_detallado($conn) {
     $q = trim((string)($_GET['q'] ?? ''));
     $rol = normalizar_rol_usuario_reporte($_GET['rol'] ?? 'todos');
     $usuarioId = isset($_GET['usuario_id']) ? (int)$_GET['usuario_id'] : 0;
+    $modoReporte = strtolower(trim((string)($_GET['modo_reporte'] ?? 'ingresos')));
+    if (!in_array($modoReporte, ['ingresos', 'atenciones'], true)) {
+        $modoReporte = 'ingresos';
+    }
     $filtroSolicitudHC = strtolower(trim((string)($_GET['filtro_solicitud'] ?? 'todas')));
     if (!in_array($filtroSolicitudHC, ['todas', 'solo_hc', 'solo_incompleto'], true)) {
         $filtroSolicitudHC = 'todas';
@@ -7675,6 +7679,9 @@ function reporte_atenciones_detallado($conn) {
     $fechaFin = $rango['fecha_fin'];
 
     $hasCotizacionMovimientosCreatedAt = table_exists($conn, 'cotizacion_movimientos') && column_exists($conn, 'cotizacion_movimientos', 'created_at');
+    $hasCobros = table_exists($conn, 'cobros');
+    $hasCobroEstado = $hasCobros && column_exists($conn, 'cobros', 'estado');
+    $hasCobroUsuario = $hasCobros && column_exists($conn, 'cobros', 'usuario_id');
     $hasReferenciaOrigen = column_exists($conn, 'cotizaciones', 'referencia_origen');
     $hasNumeroComprobante = column_exists($conn, 'cotizaciones', 'numero_comprobante');
     $registroIncompletoExpr = "(p.id IS NOT NULL"
@@ -7684,9 +7691,29 @@ function reporte_atenciones_detallado($conn) {
     $subqueryUltimoPagoAt = "(SELECT MAX(cm.created_at) FROM cotizacion_movimientos cm WHERE cm.cotizacion_id = c.id AND LOWER(TRIM(COALESCE(cm.tipo_movimiento, ''))) = 'abono' AND COALESCE(cm.monto, 0) > 0)";
 
     $fechaFinExclusiva = (new DateTime($fechaFin))->modify('+1 day')->format('Y-m-d');
-    $where = ["c.fecha >= ? AND c.fecha < ?"];
+    $where = [];
     $types = 'ss';
     $params = [$fechaInicio, $fechaFinExclusiva];
+
+    // Modo ingresos: filtrar por cobros reales (abonos) en rango y estado pagado.
+    // Modo atenciones: filtrar por fecha de la atención/cotización.
+    if ($modoReporte === 'ingresos' && $hasCotizacionMovimientosCreatedAt) {
+        $whereIngreso = 'EXISTS ('
+            . 'SELECT 1 FROM cotizacion_movimientos cmf '
+            . ($hasCobros ? 'LEFT JOIN cobros cbf ON cbf.id = cmf.cobro_id ' : '')
+            . 'WHERE cmf.cotizacion_id = c.id '
+            . '  AND LOWER(TRIM(COALESCE(cmf.tipo_movimiento, ""))) = "abono" '
+            . '  AND COALESCE(cmf.monto, 0) > 0 '
+            . '  AND cmf.created_at >= ? '
+            . '  AND cmf.created_at < ? ';
+        if ($hasCobroEstado) {
+            $whereIngreso .= ' AND LOWER(TRIM(COALESCE(cbf.estado, ""))) = "pagado" ';
+        }
+        $whereIngreso .= ')';
+        $where[] = $whereIngreso;
+    } else {
+        $where[] = "c.fecha >= ? AND c.fecha < ?";
+    }
 
     if ($estado !== '') {
         if (strtolower($estado) === 'informativo') {
@@ -7709,9 +7736,27 @@ function reporte_atenciones_detallado($conn) {
     }
 
     if ($usuarioId > 0) {
-        $where[] = "c.usuario_id = ?";
-        $types .= 'i';
-        $params[] = $usuarioId;
+        if ($modoReporte === 'ingresos' && $hasCobroUsuario) {
+            $where[] = 'EXISTS ('
+                . 'SELECT 1 FROM cotizacion_movimientos cmu '
+                . 'INNER JOIN cobros cbu ON cbu.id = cmu.cobro_id '
+                . 'WHERE cmu.cotizacion_id = c.id '
+                . '  AND LOWER(TRIM(COALESCE(cmu.tipo_movimiento, ""))) = "abono" '
+                . '  AND COALESCE(cmu.monto, 0) > 0 '
+                . '  AND cmu.created_at >= ? '
+                . '  AND cmu.created_at < ? '
+                . '  AND cbu.usuario_id = ? '
+                . ($hasCobroEstado ? '  AND LOWER(TRIM(COALESCE(cbu.estado, ""))) = "pagado" ' : '')
+                . ')';
+            $types .= 'ssi';
+            $params[] = $fechaInicio;
+            $params[] = $fechaFinExclusiva;
+            $params[] = $usuarioId;
+        } else {
+            $where[] = "c.usuario_id = ?";
+            $types .= 'i';
+            $params[] = $usuarioId;
+        }
     }
 
     if ($q !== '') {
@@ -7793,6 +7838,7 @@ function reporte_atenciones_detallado($conn) {
                 'rol' => $rol,
                 'usuario_id' => $usuarioId,
                 'usuario_nombre' => '',
+                'modo_reporte' => $modoReporte,
                 'estado' => $estado,
                 'q' => $q,
                 'filtro_solicitud' => $filtroSolicitudHC,
@@ -8067,6 +8113,7 @@ function reporte_atenciones_detallado($conn) {
             'rol' => $rol,
             'usuario_id' => $usuarioId,
             'usuario_nombre' => $usuarioFiltroNombre,
+            'modo_reporte' => $modoReporte,
             'estado' => $estado,
             'q' => $q,
             'filtro_solicitud' => $filtroSolicitudHC,
