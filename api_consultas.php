@@ -88,6 +88,31 @@ function consultas_rol_normalizado($rol) {
     return strtolower(trim((string)$rol));
 }
 
+function consultas_operativa_hoy_ymd() {
+    return (new DateTime('now', new DateTimeZone('America/Lima')))->format('Y-m-d');
+}
+
+function consultas_operativa_add_days_ymd($baseYmd, $days) {
+    $base = trim((string)$baseYmd);
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $base)) {
+        $base = consultas_operativa_hoy_ymd();
+    }
+    $dt = DateTime::createFromFormat('Y-m-d', $base, new DateTimeZone('America/Lima'));
+    if (!$dt) {
+        $dt = new DateTime('now', new DateTimeZone('America/Lima'));
+    }
+    $offset = (int)$days;
+    if ($offset !== 0) {
+        $interval = new DateInterval('P' . abs($offset) . 'D');
+        if ($offset > 0) {
+            $dt->add($interval);
+        } else {
+            $dt->sub($interval);
+        }
+    }
+    return $dt->format('Y-m-d');
+}
+
 function consultas_es_rol_autorizador_anticipado($rol) {
     $rolNorm = consultas_rol_normalizado($rol);
     if ($rolNorm === '') {
@@ -2546,10 +2571,35 @@ switch ($method) {
             if ($per_page > 100) {
                 $per_page = 100;
             }
+            $filtroProgramacion = strtolower(trim((string)($_GET['filtro_programacion'] ?? 'hoy')));
+            $estadoTriajeFiltro = strtolower(trim((string)($_GET['estado_triaje'] ?? 'pendiente')));
+            $hoyOperativo = consultas_operativa_hoy_ymd();
+            $mananaOperativo = consultas_operativa_add_days_ymd($hoyOperativo, 1);
+            $hasta7Operativo = consultas_operativa_add_days_ymd($hoyOperativo, 6);
+
             $hasTriajeRealizadoCol = consultas_column_exists($conn, 'consultas', 'triaje_realizado');
             $triajeRealizadoExpr = $hasTriajeRealizadoCol
                 ? 'COALESCE(consultas.triaje_realizado, 0)'
                 : 'CASE WHEN EXISTS (SELECT 1 FROM triaje t WHERE t.consulta_id = consultas.id) THEN 1 ELSE 0 END';
+            $hasEsReprogramadaCol = consultas_column_exists($conn, 'consultas', 'es_reprogramada');
+            $hasReprogramadaEnCol = consultas_column_exists($conn, 'consultas', 'reprogramada_en');
+            $hasCreatedAtCol = consultas_column_exists($conn, 'consultas', 'created_at');
+            $fechaOperativaExpr = 'CASE '
+                . 'WHEN consultas.fecha IS NOT NULL AND TRIM(CAST(consultas.fecha AS CHAR)) <> "" THEN DATE(consultas.fecha) ';
+            if ($hasCreatedAtCol) {
+                $fechaOperativaExpr .= 'WHEN consultas.created_at IS NOT NULL THEN DATE(consultas.created_at) ';
+            }
+            $fechaOperativaExpr .= 'ELSE NULL END';
+            $origenFechaOperativaExpr = 'CASE '
+                . 'WHEN consultas.fecha IS NOT NULL AND TRIM(CAST(consultas.fecha AS CHAR)) <> "" THEN "consulta" ';
+            if ($hasCreatedAtCol) {
+                $origenFechaOperativaExpr .= 'WHEN consultas.created_at IS NOT NULL THEN "fallback_historico" ';
+            }
+            $origenFechaOperativaExpr .= 'ELSE "sin_fecha" END';
+            $fallbackHistoricoExpr = 'CASE WHEN (' . $origenFechaOperativaExpr . ') = "fallback_historico" THEN 1 ELSE 0 END';
+            $esReprogramadaExpr = $hasEsReprogramadaCol ? 'COALESCE(consultas.es_reprogramada, 0)' : '0';
+            $reprogramadaEnExpr = $hasReprogramadaEnCol ? 'consultas.reprogramada_en' : 'NULL';
+            $estadoCanceladoExpr = "LOWER(TRIM(COALESCE(consultas.estado, ''))) IN ('cancelada', 'cancelado', 'anulada', 'anulado')";
 
             $whereTri = [];
             $paramsTri = [];
@@ -2571,24 +2621,71 @@ switch ($method) {
                 $typesTri .= 'i';
             }
 
-            if ($solo_activas) {
+            if ($solo_activas && $estadoTriajeFiltro === 'todos') {
                 if ($incluir_completadas_sin_triaje) {
-                    $whereTri[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) NOT IN ('cancelada', 'cancelado', 'anulada', 'anulado')";
+                    $whereTri[] = 'NOT (' . $estadoCanceladoExpr . ')';
                 } else {
-                    $whereTri[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) NOT IN ('cancelada', 'cancelado', 'anulada', 'anulado', 'completada', 'completado')";
+                    $whereTri[] = 'NOT (' . $estadoCanceladoExpr . ')';
+                    $whereTri[] = "LOWER(TRIM(COALESCE(consultas.estado, ''))) NOT IN ('completada', 'completado')";
                 }
             }
 
-            if ($fecha_desde !== '') {
-                $whereTri[] = 'consultas.fecha >= ?';
-                $paramsTri[] = $fecha_desde;
+            if ($filtroProgramacion === '') {
+                $filtroProgramacion = 'hoy';
+            }
+            if ($filtroProgramacion === 'rango') {
+                if ($fecha_desde !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fecha_desde)) {
+                    $whereTri[] = $fechaOperativaExpr . ' >= ?';
+                    $paramsTri[] = $fecha_desde;
+                    $typesTri .= 's';
+                }
+                if ($fecha_hasta !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fecha_hasta)) {
+                    $whereTri[] = $fechaOperativaExpr . ' <= ?';
+                    $paramsTri[] = $fecha_hasta;
+                    $typesTri .= 's';
+                }
+            } elseif ($filtroProgramacion === 'manana') {
+                $whereTri[] = $fechaOperativaExpr . ' = ?';
+                $paramsTri[] = $mananaOperativo;
+                $typesTri .= 's';
+            } elseif ($filtroProgramacion === 'atrasadas') {
+                $whereTri[] = $fechaOperativaExpr . ' < ?';
+                $paramsTri[] = $hoyOperativo;
+                $typesTri .= 's';
+            } elseif ($filtroProgramacion === 'proximos_7') {
+                $whereTri[] = $fechaOperativaExpr . ' BETWEEN ? AND ?';
+                $paramsTri[] = $hoyOperativo;
+                $paramsTri[] = $hasta7Operativo;
+                $typesTri .= 'ss';
+            } elseif ($filtroProgramacion !== 'todas') {
+                $filtroProgramacion = 'hoy';
+                $whereTri[] = $fechaOperativaExpr . ' = ?';
+                $paramsTri[] = $hoyOperativo;
                 $typesTri .= 's';
             }
 
-            if ($fecha_hasta !== '') {
-                $whereTri[] = 'consultas.fecha <= ?';
-                $paramsTri[] = $fecha_hasta;
-                $typesTri .= 's';
+            switch ($estadoTriajeFiltro) {
+                case 'realizado':
+                case 'completado':
+                    $whereTri[] = $triajeRealizadoExpr . ' = 1';
+                    $whereTri[] = 'NOT (' . $estadoCanceladoExpr . ')';
+                    $estadoTriajeFiltro = 'realizado';
+                    break;
+                case 'cancelado':
+                    $whereTri[] = $estadoCanceladoExpr;
+                    break;
+                case 'reprogramado':
+                    $whereTri[] = $esReprogramadaExpr . ' = 1';
+                    $whereTri[] = 'NOT (' . $estadoCanceladoExpr . ')';
+                    break;
+                case 'todos':
+                    break;
+                case 'pendiente':
+                default:
+                    $whereTri[] = $triajeRealizadoExpr . ' = 0';
+                    $whereTri[] = 'NOT (' . $estadoCanceladoExpr . ')';
+                    $estadoTriajeFiltro = 'pendiente';
+                    break;
             }
 
             if ($searchNorm !== '') {
@@ -2622,7 +2719,13 @@ switch ($method) {
             $whereSqlTri = count($whereTri) ? (' WHERE ' . implode(' AND ', $whereTri)) : '';
 
             $statsSqlTri = 'SELECT COUNT(*) AS total, '
-                . 'SUM(CASE WHEN ' . $triajeRealizadoExpr . ' = 1 THEN 1 ELSE 0 END) AS completados '
+                . 'SUM(CASE WHEN ' . $triajeRealizadoExpr . ' = 0 AND NOT (' . $estadoCanceladoExpr . ') THEN 1 ELSE 0 END) AS pendientes, '
+                . 'SUM(CASE WHEN ' . $triajeRealizadoExpr . ' = 1 AND NOT (' . $estadoCanceladoExpr . ') THEN 1 ELSE 0 END) AS completados, '
+                . 'SUM(CASE WHEN ' . $estadoCanceladoExpr . ' THEN 1 ELSE 0 END) AS cancelados, '
+                . 'SUM(CASE WHEN ' . $esReprogramadaExpr . ' = 1 THEN 1 ELSE 0 END) AS reprogramados, '
+                . 'SUM(CASE WHEN ' . $fechaOperativaExpr . ' < ? THEN 1 ELSE 0 END) AS atrasados, '
+                . 'SUM(CASE WHEN ' . $fechaOperativaExpr . ' > ? THEN 1 ELSE 0 END) AS futuros, '
+                . 'SUM(CASE WHEN ' . $fechaOperativaExpr . ' = ? THEN 1 ELSE 0 END) AS hoy '
                 . $fromTri
                 . $whereSqlTri;
 
@@ -2632,27 +2735,41 @@ switch ($method) {
                 echo json_encode(['success' => false, 'error' => 'Error al preparar estadísticas de triaje']);
                 exit;
             }
-            if ($typesTri !== '') {
-                $stmtStatsTri->bind_param($typesTri, ...$paramsTri);
-            }
+            $typesStatsTri = $typesTri . 'sss';
+            $paramsStatsTri = $paramsTri;
+            $paramsStatsTri[] = $hoyOperativo;
+            $paramsStatsTri[] = $hoyOperativo;
+            $paramsStatsTri[] = $hoyOperativo;
+            $stmtStatsTri->bind_param($typesStatsTri, ...$paramsStatsTri);
             $stmtStatsTri->execute();
-            $statsTri = $stmtStatsTri->get_result()->fetch_assoc() ?: ['total' => 0, 'completados' => 0];
+            $statsTri = $stmtStatsTri->get_result()->fetch_assoc() ?: ['total' => 0, 'pendientes' => 0, 'completados' => 0, 'cancelados' => 0, 'reprogramados' => 0, 'atrasados' => 0, 'futuros' => 0, 'hoy' => 0];
             $stmtStatsTri->close();
 
             $totalTri = (int)($statsTri['total'] ?? 0);
+            $pendientesTri = (int)($statsTri['pendientes'] ?? 0);
             $completadosTri = (int)($statsTri['completados'] ?? 0);
-            $pendientesTri = max(0, $totalTri - $completadosTri);
+            $canceladosTri = (int)($statsTri['cancelados'] ?? 0);
+            $reprogramadosTri = (int)($statsTri['reprogramados'] ?? 0);
+            $atrasadosTri = (int)($statsTri['atrasados'] ?? 0);
+            $futurosTri = (int)($statsTri['futuros'] ?? 0);
+            $hoyTri = (int)($statsTri['hoy'] ?? 0);
             $totalPagesTri = max(1, (int)ceil($totalTri / $per_page));
             $offsetTri = ($page - 1) * $per_page;
 
             $sqlTri = 'SELECT '
                 . 'consultas.id, consultas.paciente_id, consultas.medico_id, consultas.fecha, consultas.hora, consultas.estado, '
                 . $triajeRealizadoExpr . ' AS triaje_realizado, '
+                . $fechaOperativaExpr . ' AS fecha_programada_operativa, '
+                . 'NULLIF(TRIM(COALESCE(consultas.hora, "")), "") AS hora_programada_operativa, '
+                . $origenFechaOperativaExpr . ' AS origen_fecha_programada, '
+                . $fallbackHistoricoExpr . ' AS fecha_operativa_fallback_historico, '
+                . $esReprogramadaExpr . ' AS es_reprogramada, '
+                . $reprogramadaEnExpr . ' AS reprogramada_en, '
                 . 'pacientes.nombre AS paciente_nombre, pacientes.apellido AS paciente_apellido, pacientes.historia_clinica, pacientes.dni AS paciente_dni, '
                 . 'medicos.nombre AS medico_nombre, medicos.apellido AS medico_apellido, medicos.especialidad AS medico_especialidad '
                 . $fromTri
                 . $whereSqlTri
-                . ' ORDER BY consultas.fecha DESC, consultas.hora DESC, consultas.id DESC '
+                . ' ORDER BY ' . $fechaOperativaExpr . ' ASC, consultas.hora ASC, consultas.id ASC '
                 . 'LIMIT ? OFFSET ?';
 
             $stmtTri = $conn->prepare($sqlTri);
@@ -2686,6 +2803,12 @@ switch ($method) {
                     'medico_nombre' => (string)($rowTri['medico_nombre'] ?? ''),
                     'medico_apellido' => (string)($rowTri['medico_apellido'] ?? ''),
                     'medico_especialidad' => (string)($rowTri['medico_especialidad'] ?? ''),
+                    'fecha_programada_operativa' => (string)($rowTri['fecha_programada_operativa'] ?? ''),
+                    'hora_programada_operativa' => (string)($rowTri['hora_programada_operativa'] ?? ''),
+                    'origen_fecha_programada' => (string)($rowTri['origen_fecha_programada'] ?? ''),
+                    'fecha_operativa_fallback_historico' => (int)($rowTri['fecha_operativa_fallback_historico'] ?? 0),
+                    'es_reprogramada' => (int)($rowTri['es_reprogramada'] ?? 0),
+                    'reprogramada_en' => (string)($rowTri['reprogramada_en'] ?? ''),
                 ];
             }
             $stmtTri->close();
@@ -2697,12 +2820,24 @@ switch ($method) {
                     'total' => $totalTri,
                     'pendientes' => $pendientesTri,
                     'completados' => $completadosTri,
+                    'cancelados' => $canceladosTri,
+                    'reprogramados' => $reprogramadosTri,
+                    'atrasados' => $atrasadosTri,
+                    'futuros' => $futurosTri,
+                    'hoy' => $hoyTri,
                 ],
                 'pagination' => [
                     'page' => $page,
                     'per_page' => $per_page,
                     'total' => $totalTri,
                     'total_pages' => $totalPagesTri,
+                ],
+                'filtros' => [
+                    'filtro_programacion' => $filtroProgramacion,
+                    'estado_triaje' => $estadoTriajeFiltro,
+                    'fecha_desde' => $fecha_desde,
+                    'fecha_hasta' => $fecha_hasta,
+                    'fecha_hoy_operativa' => $hoyOperativo,
                 ],
             ]);
             exit;

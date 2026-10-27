@@ -59,6 +59,49 @@ function rc_table_exists($conn, $table) {
         return false;
     }
 
+    if (!function_exists('rc_ensure_agenda_reprogramacion_auditoria_schema')) {
+        function rc_ensure_agenda_reprogramacion_auditoria_schema($conn) {
+            static $ready = false;
+            if ($ready) {
+                return true;
+            }
+            $sql = "CREATE TABLE IF NOT EXISTS agenda_reprogramaciones_auditoria (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                evento_grupo VARCHAR(64) NOT NULL,
+                cotizacion_id INT NOT NULL,
+                cotizacion_detalle_id INT NULL,
+                agenda_id BIGINT UNSIGNED NULL,
+                consulta_id INT NULL,
+                servicio_tipo VARCHAR(30) NOT NULL,
+                servicio_id INT NULL,
+                fecha_anterior DATE NULL,
+                fecha_nueva DATE NOT NULL,
+                hora_anterior TIME NULL,
+                hora_nueva TIME NULL,
+                usuario_id INT NULL,
+                motivo VARCHAR(255) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_reprog_cot_serv (cotizacion_id, servicio_tipo, servicio_id, created_at),
+                INDEX idx_reprog_evento (evento_grupo),
+                INDEX idx_reprog_agenda (agenda_id),
+                INDEX idx_reprog_consulta (consulta_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+            $ok = $conn->query($sql);
+            if (!$ok) {
+                return false;
+            }
+            $ready = true;
+            return true;
+        }
+    }
+
+    if (!function_exists('rc_evento_grupo_reprogramacion')) {
+        function rc_evento_grupo_reprogramacion() {
+            $seed = bin2hex(random_bytes(8));
+            return date('YmdHis') . '-' . $seed;
+        }
+    }
+
     if (array_key_exists($tableKey, $cache)) {
         return (bool)$cache[$tableKey];
     }
@@ -773,21 +816,32 @@ function rc_listar_horas_ocupadas_medico_fecha($conn, $medicoId, $fechaYmd, $cot
     }
 
     if (rc_table_exists($conn, 'agenda_servicios_cotizacion')) {
-        $stmtAgenda = $conn->prepare(
-            'SELECT a.hora_programada, a.titulo_evento, TRIM(CONCAT(COALESCE(p.nombre, ""), " ", COALESCE(p.apellido, ""))) AS paciente
+        $sqlAgenda = 'SELECT a.hora_programada, a.titulo_evento, TRIM(CONCAT(COALESCE(p.nombre, ""), " ", COALESCE(p.apellido, ""))) AS paciente
              FROM agenda_servicios_cotizacion a
              LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id
              LEFT JOIN tarifas t ON t.id = COALESCE(cd.servicio_id, a.servicio_id)
              LEFT JOIN pacientes p ON p.id = a.paciente_id
              WHERE COALESCE(a.medico_id, cd.medico_id, t.medico_id, 0) = ?
                AND a.fecha_programada = ?
-               AND a.cotizacion_id <> ?
                AND ' . agenda_sql_evento_ocupa_medico('a') . '
-               AND ' . agenda_sql_servicio_ocupa_medico('a') . '
-             ORDER BY a.hora_programada ASC, a.id ASC'
-        );
+               AND ' . agenda_sql_servicio_ocupa_medico('a');
+        $typesAgenda = 'is';
+        $paramsAgenda = [$medicoId, $fechaYmd];
+
+        if ($cotizacionIdExcluir > 0 && rc_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id')) {
+            $cotizacionesExcluir = rc_cadena_cotizaciones_exclusion($conn, $cotizacionIdExcluir);
+            if (!empty($cotizacionesExcluir)) {
+                $ph = implode(',', array_fill(0, count($cotizacionesExcluir), '?'));
+                $sqlAgenda .= ' AND COALESCE(a.cotizacion_id, 0) NOT IN (' . $ph . ')';
+                $typesAgenda .= str_repeat('i', count($cotizacionesExcluir));
+                $paramsAgenda = array_merge($paramsAgenda, $cotizacionesExcluir);
+            }
+        }
+
+        $sqlAgenda .= ' ORDER BY a.hora_programada ASC, a.id ASC';
+        $stmtAgenda = $conn->prepare($sqlAgenda);
         if ($stmtAgenda) {
-            $stmtAgenda->bind_param('isi', $medicoId, $fechaYmd, $cotizacionIdExcluir);
+            $stmtAgenda->bind_param($typesAgenda, ...$paramsAgenda);
             $stmtAgenda->execute();
             $resAgenda = $stmtAgenda->get_result();
             while ($row = $resAgenda->fetch_assoc()) {
@@ -1093,6 +1147,8 @@ function rc_obtener_items_reprogramacion_cotizacion($conn, $cotizacionId) {
         'SELECT a.id,
                 a.paciente_id,
                 a.cotizacion_id,
+                a.cotizacion_detalle_id,
+                COALESCE(cd.servicio_id, a.servicio_id, 0) AS servicio_id,
                 COALESCE(a.medico_id, cd.medico_id, t.medico_id, 0) AS medico_id,
                 a.fecha_programada,
                 a.hora_programada,
@@ -1117,6 +1173,8 @@ function rc_obtener_items_reprogramacion_cotizacion($conn, $cotizacionId) {
                 'id' => (int)($row['id'] ?? 0),
                 'paciente_id' => (int)($row['paciente_id'] ?? 0),
                 'cotizacion_id' => (int)($row['cotizacion_id'] ?? 0),
+                'cotizacion_detalle_id' => (int)($row['cotizacion_detalle_id'] ?? 0),
+                'servicio_id' => (int)($row['servicio_id'] ?? 0),
                 'medico_id' => (int)($row['medico_id'] ?? 0),
                 'fecha_programada' => (string)($row['fecha_programada'] ?? ''),
                 'hora_programada' => (string)($row['hora_programada'] ?? ''),
@@ -1161,6 +1219,8 @@ function rc_obtener_items_reprogramacion_cotizacion($conn, $cotizacionId) {
                     'id' => $consultaId,
                     'paciente_id' => (int)($row['paciente_id'] ?? 0),
                     'cotizacion_id' => (int)($row['cotizacion_id'] ?? 0),
+                    'cotizacion_detalle_id' => 0,
+                    'servicio_id' => 0,
                     'medico_id' => (int)($row['medico_id'] ?? 0),
                     'fecha_programada' => (string)($row['fecha_programada'] ?? ''),
                     'hora_programada' => (string)($row['hora_programada'] ?? ''),
@@ -1187,6 +1247,45 @@ function rc_obtener_items_reprogramacion_cotizacion($conn, $cotizacionId) {
     });
 
     return rc_heredar_medico_items_paquete($agendaItems);
+}
+
+function rc_item_ocupa_medico(array $item): bool {
+    $tipoItem = strtolower(trim((string)($item['tipo_item'] ?? 'agenda')));
+    if ($tipoItem === 'consulta') {
+        return true;
+    }
+    $tipoServicio = strtolower(trim((string)($item['servicio_tipo'] ?? '')));
+    if ($tipoServicio === '') {
+        return false;
+    }
+    return in_array($tipoServicio, agenda_tipos_servicio_ocupan_medico(), true);
+}
+
+function rc_items_que_ocupan_medico(array $items): array {
+    $out = [];
+    foreach ($items as $it) {
+        if (!is_array($it)) continue;
+        if (rc_item_ocupa_medico($it)) {
+            $out[] = $it;
+        }
+    }
+    return $out;
+}
+
+function rc_cadena_cotizaciones_exclusion($conn, $cotizacionId): array {
+    $cotizacionId = (int)$cotizacionId;
+    if ($cotizacionId <= 0) {
+        return [];
+    }
+    $ids = function_exists('episodio_cotizaciones_cadena_ids')
+        ? episodio_cotizaciones_cadena_ids($conn, $cotizacionId)
+        : rc_resolver_cotizaciones_del_grupo($conn, $cotizacionId);
+    if (empty($ids)) {
+        $ids = [$cotizacionId];
+    }
+    return array_values(array_unique(array_filter(array_map('intval', (array)$ids), static function ($id) {
+        return $id > 0;
+    })));
 }
 
 function rc_sort_citas_por_hora(&$rows) {
@@ -1445,6 +1544,12 @@ function rc_calcular_siguiente_turno_vigente_agenda($conn, $medicoId, $fechaYmd,
         $exprAgendaTurno = 'COALESCE(NULLIF(ras.turno_original, 0), 0)';
     }
 
+    $cotizacionesExcluir = rc_cadena_cotizaciones_exclusion($conn, $cotizacionIdExcluir);
+    $excludeAgendaSql = '';
+    if (!empty($cotizacionesExcluir)) {
+        $excludeAgendaSql = '   AND a.cotizacion_id NOT IN (' . implode(',', array_map('intval', $cotizacionesExcluir)) . ')';
+    }
+
     $sql = 'SELECT GREATEST('
         . 'COALESCE((SELECT MAX(' . $exprConsultaTurno . ')'
         . ' FROM consultas c'
@@ -1457,7 +1562,7 @@ function rc_calcular_siguiente_turno_vigente_agenda($conn, $medicoId, $fechaYmd,
         . ' LEFT JOIN recordatorios_agenda_servicios ras ON ras.cotizacion_id = a.cotizacion_id'
         . ' WHERE COALESCE(a.medico_id, cd.medico_id, t.medico_id, 0) = ?'
         . '   AND a.fecha_programada = ?'
-        . '   AND a.cotizacion_id <> ?'
+        . $excludeAgendaSql
         . '   AND a.estado_evento IN ("pendiente", "confirmado")), 0)'
         . ') AS max_turno';
 
@@ -1465,7 +1570,7 @@ function rc_calcular_siguiente_turno_vigente_agenda($conn, $medicoId, $fechaYmd,
     if (!$stmt) {
         return 0;
     }
-    $stmt->bind_param('isssi', $medicoId, $fechaYmd, $medicoId, $fechaYmd, $cotizacionIdExcluir);
+    $stmt->bind_param('isss', $medicoId, $fechaYmd, $medicoId, $fechaYmd);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
@@ -1574,25 +1679,32 @@ if ($method === 'GET') {
 
         $duracionTurnoMin = rc_obtener_duracion_turno_min($conn);
         $turnosRequeridos = 1;
+        $itemsConMedico = rc_items_que_ocupan_medico($agendaItems);
         $excludeConsultaIds = [];
-        foreach ($agendaItems as $it) {
+        foreach ($itemsConMedico as $it) {
             if (trim((string)($it['tipo_item'] ?? '')) !== 'consulta') continue;
             $cid = (int)($it['registro_id'] ?? 0);
             if ($cid > 0) $excludeConsultaIds[$cid] = $cid;
         }
         $excludeConsultaIds = array_values($excludeConsultaIds);
-        $medicoPrincipal = (int)($agendaItems[0]['medico_id'] ?? 0);
-        $turnosLibresMedico = rc_obtener_turnos_libres_medico_fecha(
-            $conn,
-            $medicoPrincipal,
-            $fecha,
-            $duracionTurnoMin,
-            $cotizacionId,
-            $excludeConsultaIds
-        );
-        $turnosLibresInicio = rc_sugerir_inicios_reprogramacion($conn, $agendaItems, $fecha, $duracionTurnoMin, $cotizacionId, 48);
-        $sugerenciasDias = rc_sugerir_dias_reprogramacion($conn, $agendaItems, $fecha, $duracionTurnoMin, $cotizacionId, 14, 5);
-        $horasOcupadas = rc_listar_horas_ocupadas_medico_fecha($conn, $medicoPrincipal, $fecha, $cotizacionId, $excludeConsultaIds);
+        $medicoPrincipal = !empty($itemsConMedico) ? (int)($itemsConMedico[0]['medico_id'] ?? 0) : 0;
+        $turnosLibresMedico = [];
+        $turnosLibresInicio = [];
+        $sugerenciasDias = [];
+        $horasOcupadas = [];
+        if (!empty($itemsConMedico) && $medicoPrincipal > 0) {
+            $turnosLibresMedico = rc_obtener_turnos_libres_medico_fecha(
+                $conn,
+                $medicoPrincipal,
+                $fecha,
+                $duracionTurnoMin,
+                $cotizacionId,
+                $excludeConsultaIds
+            );
+            $turnosLibresInicio = rc_sugerir_inicios_reprogramacion($conn, $itemsConMedico, $fecha, $duracionTurnoMin, $cotizacionId, 48);
+            $sugerenciasDias = rc_sugerir_dias_reprogramacion($conn, $itemsConMedico, $fecha, $duracionTurnoMin, $cotizacionId, 14, 5);
+            $horasOcupadas = rc_listar_horas_ocupadas_medico_fecha($conn, $medicoPrincipal, $fecha, $cotizacionId, $excludeConsultaIds);
+        }
 
         echo json_encode([
             'success' => true,
@@ -1602,9 +1714,10 @@ if ($method === 'GET') {
             'turnos_requeridos' => $turnosRequeridos,
             'turnos_libres_medico' => $turnosLibresMedico,
             'turnos_libres_inicio' => $turnosLibresInicio,
-            'medico_tiene_horario_regular' => !empty(rc_obtener_rangos_regulares_medico($conn, $medicoPrincipal, $fecha)),
+            'medico_tiene_horario_regular' => $medicoPrincipal > 0 ? !empty(rc_obtener_rangos_regulares_medico($conn, $medicoPrincipal, $fecha)) : false,
             'horas_ocupadas' => $horasOcupadas,
             'sugerencias_otras_fechas' => $sugerenciasDias,
+            'incluye_servicios_solo_fecha' => empty($itemsConMedico),
         ]);
         exit;
     }
@@ -3058,10 +3171,11 @@ if ($method === 'POST' || $method === 'PUT') {
         $nuevaFecha = trim((string)($payload['nueva_fecha'] ?? ''));
         $nuevaHora = trim((string)($payload['nueva_hora'] ?? ''));
         $forzarAdicional = (int)($payload['forzar_adicional'] ?? 0) === 1;
+        $motivoReprogramacion = trim((string)($payload['motivo_reprogramacion'] ?? ''));
 
-        if ($cotizacionId <= 0 || $nuevaFecha === '' || $nuevaHora === '') {
+        if ($cotizacionId <= 0 || $nuevaFecha === '') {
             http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'cotizacion_id, nueva_fecha y nueva_hora son requeridos']);
+            echo json_encode(['success' => false, 'error' => 'cotizacion_id y nueva_fecha son requeridos']);
             exit;
         }
 
@@ -3079,17 +3193,25 @@ if ($method === 'POST' || $method === 'PUT') {
             exit;
         }
 
-        // Normalizar hora: si es "HH:MM", agregar ":00"
-        if (strlen($nuevaHora) === 5 && substr_count($nuevaHora, ':') === 1) {
-            $nuevaHora = $nuevaHora . ':00';
-        }
+        if ($nuevaHora !== '') {
+            // Normalizar hora: si es "HH:MM", agregar ":00"
+            if (strlen($nuevaHora) === 5 && substr_count($nuevaHora, ':') === 1) {
+                $nuevaHora = $nuevaHora . ':00';
+            }
 
-        // Validar formato de hora
-        $timeCheck = \DateTime::createFromFormat('H:i:s', $nuevaHora);
-        if (!$timeCheck || $timeCheck->format('H:i:s') !== $nuevaHora) {
-            http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'Formato de hora inválido (esperado: HH:MM:SS)']);
-            exit;
+            if (!rc_ensure_agenda_reprogramacion_auditoria_schema($conn)) {
+                http_response_code(500);
+                echo json_encode(['success' => false, 'error' => 'No se pudo preparar la auditoría de reprogramación']);
+                exit;
+            }
+
+            // Validar formato de hora
+            $timeCheck = \DateTime::createFromFormat('H:i:s', $nuevaHora);
+            if (!$timeCheck || $timeCheck->format('H:i:s') !== $nuevaHora) {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => 'Formato de hora inválido (esperado: HH:MM:SS)']);
+                exit;
+            }
         }
 
         $agendaItems = rc_obtener_items_reprogramacion_cotizacion($conn, $cotizacionId);
@@ -3100,82 +3222,93 @@ if ($method === 'POST' || $method === 'PUT') {
             exit;
         }
 
-        foreach ($agendaItems as $it) {
+        $itemsConMedico = rc_items_que_ocupan_medico($agendaItems);
+        foreach ($itemsConMedico as $it) {
             if ((int)($it['medico_id'] ?? 0) <= 0) {
                 echo json_encode([
                     'success' => false,
-                    'error' => 'Hay un servicio sin médico asignado. Corrige el médico del servicio antes de reprogramar.',
+                    'error' => 'Hay un servicio agendable sin médico asignado. Corrige el médico del servicio antes de reprogramar.',
                 ]);
                 exit;
             }
+        }
+        if (!empty($itemsConMedico) && $nuevaHora === '') {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'nueva_hora es requerida cuando la cotización contiene servicios que ocupan horario médico']);
+            exit;
         }
 
         $duracionTurnoMin = rc_obtener_duracion_turno_min($conn);
         $turnosRequeridos = 1;
         $excludeConsultaIds = [];
-        foreach ($agendaItems as $it) {
+        foreach ($itemsConMedico as $it) {
             if (trim((string)($it['tipo_item'] ?? '')) !== 'consulta') continue;
             $cid = (int)($it['registro_id'] ?? 0);
             if ($cid > 0) $excludeConsultaIds[$cid] = $cid;
         }
         $excludeConsultaIds = array_values($excludeConsultaIds);
-        $medicoPrincipal = (int)($agendaItems[0]['medico_id'] ?? 0);
-        $turnosLibresMedico = rc_obtener_turnos_libres_medico_fecha(
-            $conn,
-            $medicoPrincipal,
-            $nuevaFecha,
-            $duracionTurnoMin,
-            $cotizacionId,
-            $excludeConsultaIds
-        );
-        $horaSolicitudHm = substr($nuevaHora, 0, 5);
-        if ($forzarAdicional) {
-            $horaAdicionalSugerida = rc_sugerir_inicio_adicional_reprogramacion(
+        $medicoPrincipal = !empty($itemsConMedico) ? (int)($itemsConMedico[0]['medico_id'] ?? 0) : 0;
+        $turnosLibresMedico = [];
+        $planTurnos = [];
+        $evalPlan = ['ok' => true, 'errores' => [], 'turnos_ok_consecutivos' => 0];
+        $horaSolicitudHm = $nuevaHora !== '' ? substr($nuevaHora, 0, 5) : '';
+        if (!empty($itemsConMedico)) {
+            $turnosLibresMedico = rc_obtener_turnos_libres_medico_fecha(
                 $conn,
-                $agendaItems,
+                $medicoPrincipal,
                 $nuevaFecha,
                 $duracionTurnoMin,
                 $cotizacionId,
-                $excludeConsultaIds,
-                160
+                $excludeConsultaIds
             );
-            // En modo adicional se respeta la hora solicitada por recepción (ej. 15:00).
-            // Solo se usa la sugerida para diagnóstico/fallback cuando no hay disponibilidad.
-            if ($horaAdicionalSugerida === '' && $horaSolicitudHm === '') {
-                echo json_encode([
-                    'success' => false,
-                    'error' => 'No existe horario adicional libre para esta fecha. Elige otra fecha.',
-                    'diagnostico' => [
-                        'duracion_turno_min' => $duracionTurnoMin,
-                        'turnos_requeridos' => $turnosRequeridos,
-                        'permite_forzar_adicional' => false,
-                    ],
-                ]);
+            if ($forzarAdicional) {
+                $horaAdicionalSugerida = rc_sugerir_inicio_adicional_reprogramacion(
+                    $conn,
+                    $itemsConMedico,
+                    $nuevaFecha,
+                    $duracionTurnoMin,
+                    $cotizacionId,
+                    $excludeConsultaIds,
+                    160
+                );
+                // En modo adicional se respeta la hora solicitada por recepción (ej. 15:00).
+                // Solo se usa la sugerida para diagnóstico/fallback cuando no hay disponibilidad.
+                if ($horaAdicionalSugerida === '' && $horaSolicitudHm === '') {
+                    echo json_encode([
+                        'success' => false,
+                        'error' => 'No existe horario adicional libre para esta fecha. Elige otra fecha.',
+                        'diagnostico' => [
+                            'duracion_turno_min' => $duracionTurnoMin,
+                            'turnos_requeridos' => $turnosRequeridos,
+                            'permite_forzar_adicional' => false,
+                        ],
+                    ]);
+                    exit;
+                }
+            }
+            $planTurnos = rc_construir_plan_turnos_reprogramacion($itemsConMedico, $nuevaHora, $duracionTurnoMin);
+            if (empty($planTurnos)) {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => 'No se pudo construir el bloque de turnos para reprogramar']);
                 exit;
             }
-        }
-        $planTurnos = rc_construir_plan_turnos_reprogramacion($agendaItems, $nuevaHora, $duracionTurnoMin);
-        if (empty($planTurnos)) {
-            http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'No se pudo construir el bloque de turnos para reprogramar']);
-            exit;
+
+            $evalPlan = rc_evaluar_plan_reprogramacion(
+                $conn,
+                $itemsConMedico,
+                $planTurnos,
+                $nuevaFecha,
+                $cotizacionId,
+                $duracionTurnoMin,
+                $forzarAdicional
+            );
         }
 
-        $evalPlan = rc_evaluar_plan_reprogramacion(
-            $conn,
-            $agendaItems,
-            $planTurnos,
-            $nuevaFecha,
-            $cotizacionId,
-            $duracionTurnoMin,
-            $forzarAdicional
-        );
-
-        if (!($evalPlan['ok'] ?? false)) {
+        if (!empty($itemsConMedico) && !($evalPlan['ok'] ?? false)) {
             $turnosDisponibles = (int)($evalPlan['turnos_ok_consecutivos'] ?? 0);
             $sugerenciasHoy = rc_sugerir_inicios_reprogramacion(
                 $conn,
-                $agendaItems,
+                $itemsConMedico,
                 $nuevaFecha,
                 $duracionTurnoMin,
                 $cotizacionId,
@@ -3183,7 +3316,7 @@ if ($method === 'POST' || $method === 'PUT') {
             );
             $sugerenciasDias = rc_sugerir_dias_reprogramacion(
                 $conn,
-                $agendaItems,
+                $itemsConMedico,
                 $nuevaFecha,
                 $duracionTurnoMin,
                 $cotizacionId,
@@ -3192,7 +3325,7 @@ if ($method === 'POST' || $method === 'PUT') {
             );
             $sugerenciaAdicionalHora = rc_sugerir_inicio_adicional_reprogramacion(
                 $conn,
-                $agendaItems,
+                $itemsConMedico,
                 $nuevaFecha,
                 $duracionTurnoMin,
                 $cotizacionId,
@@ -3288,90 +3421,248 @@ if ($method === 'POST' || $method === 'PUT') {
             }
         }
 
-        $medicoPrincipal = (int)($agendaItems[0]['medico_id'] ?? 0);
-        $turnoVigenteNuevo = rc_calcular_siguiente_turno_vigente_agenda(
-            $conn,
-            $medicoPrincipal,
-            $nuevaFecha,
-            $cotizacionId,
-            $hasRasTurnoOriginal,
-            $hasRasTurnoVigente
-        );
-        if ($turnoVigenteNuevo <= 0) {
-            $turnoVigenteNuevo = max(1, (int)$turnoAntes);
+        $turnoVigenteNuevo = max(1, (int)$turnoAntes);
+        if (!empty($itemsConMedico) && $medicoPrincipal > 0) {
+            $turnoVigenteNuevo = rc_calcular_siguiente_turno_vigente_agenda(
+                $conn,
+                $medicoPrincipal,
+                $nuevaFecha,
+                $cotizacionId,
+                $hasRasTurnoOriginal,
+                $hasRasTurnoVigente
+            );
+            if ($turnoVigenteNuevo <= 0) {
+                $turnoVigenteNuevo = max(1, (int)$turnoAntes);
+            }
+        }
+
+        $mapHoraPlan = [];
+        foreach ($planTurnos as $turnoPlan) {
+            $itemId = (int)($turnoPlan['item_id'] ?? 0);
+            $itemTipo = trim((string)($turnoPlan['item_tipo'] ?? 'agenda'));
+            $horaPlan = rc_normalizar_hora_hms($turnoPlan['hora_hms'] ?? '');
+            if ($itemId > 0 && $horaPlan !== '') {
+                $mapHoraPlan[$itemTipo . ':' . $itemId] = $horaPlan;
+            }
         }
 
         $conn->begin_transaction();
-        $stmtUpdateAgenda = $conn->prepare(
+        $stmtUpdateAgendaConHora = $conn->prepare(
             'UPDATE agenda_servicios_cotizacion
              SET fecha_programada = ?, hora_programada = ?, estado_evento = "pendiente", updated_by = ?
              WHERE id = ? AND cotizacion_id = ? AND estado_evento IN ("pendiente", "confirmado")'
         );
-        $stmtUpdateConsulta = $conn->prepare(
+        $stmtUpdateAgendaSoloFecha = $conn->prepare(
+            'UPDATE agenda_servicios_cotizacion
+             SET fecha_programada = ?, estado_evento = "pendiente", updated_by = ?
+             WHERE id = ? AND cotizacion_id = ? AND estado_evento IN ("pendiente", "confirmado")'
+        );
+        $stmtUpdateConsultaConHora = $conn->prepare(
             'UPDATE consultas
              SET fecha = ?, hora = ?, es_reprogramada = 1, reprogramada_en = NOW()
              WHERE id = ?'
         );
-        if (!$stmtUpdateAgenda || !$stmtUpdateConsulta) {
-            if ($stmtUpdateAgenda) $stmtUpdateAgenda->close();
-            if ($stmtUpdateConsulta) $stmtUpdateConsulta->close();
+        $stmtUpdateConsultaSoloFecha = $conn->prepare(
+            'UPDATE consultas
+             SET fecha = ?, es_reprogramada = 1, reprogramada_en = NOW()
+             WHERE id = ?'
+        );
+        $stmtInsertAuditoriaReprog = $conn->prepare(
+            'INSERT INTO agenda_reprogramaciones_auditoria (
+                evento_grupo, cotizacion_id, cotizacion_detalle_id, agenda_id, consulta_id,
+                servicio_tipo, servicio_id, fecha_anterior, fecha_nueva, hora_anterior, hora_nueva,
+                usuario_id, motivo
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        if (!$stmtUpdateAgendaConHora || !$stmtUpdateAgendaSoloFecha || !$stmtUpdateConsultaConHora || !$stmtUpdateConsultaSoloFecha || !$stmtInsertAuditoriaReprog) {
+            if ($stmtUpdateAgendaConHora) $stmtUpdateAgendaConHora->close();
+            if ($stmtUpdateAgendaSoloFecha) $stmtUpdateAgendaSoloFecha->close();
+            if ($stmtUpdateConsultaConHora) $stmtUpdateConsultaConHora->close();
+            if ($stmtUpdateConsultaSoloFecha) $stmtUpdateConsultaSoloFecha->close();
+            if ($stmtInsertAuditoriaReprog) $stmtInsertAuditoriaReprog->close();
             $conn->rollback();
             http_response_code(500);
-            echo json_encode(['success' => false, 'error' => 'No se pudo preparar actualización de programación']);
+            echo json_encode(['success' => false, 'error' => 'No se pudo preparar actualización de programación', 'rollback' => ['ejecutado' => true]]);
             exit;
         }
+
         $totalActualizados = 0;
+        $actualizadosConsultas = 0;
+        $actualizadosAgendas = 0;
+        $actualizadosSoloFecha = 0;
+        $actualizadosLaboratorio = 0;
+        $serviciosComercialesOmitidos = 0;
+        $conflictos = [];
+        $advertencias = [];
+        $eventoGrupoReprogramacion = rc_evento_grupo_reprogramacion();
         $horaInicioBloque = '';
         $horaFinBloque = '';
-        foreach ($planTurnos as $turnoPlan) {
-            $itemTipo = trim((string)($turnoPlan['item_tipo'] ?? 'agenda'));
-            $itemId = (int)($turnoPlan['item_id'] ?? 0);
-            $horaPlan = rc_normalizar_hora_hms($turnoPlan['hora_hms'] ?? '');
-            if ($itemId <= 0 || $horaPlan === '') {
-                $stmtUpdateAgenda->close();
-                $stmtUpdateConsulta->close();
-                $conn->rollback();
-                http_response_code(500);
-                echo json_encode(['success' => false, 'error' => 'Plan de reprogramación inválido al actualizar']);
-                exit;
+        foreach ($agendaItems as $it) {
+            $itemTipo = trim((string)($it['tipo_item'] ?? 'agenda'));
+            $itemId = (int)($it['registro_id'] ?? 0);
+            if ($itemId <= 0) {
+                continue;
             }
-            if ($horaInicioBloque === '') {
-                $horaInicioBloque = $horaPlan;
+            $clavePlan = $itemTipo . ':' . $itemId;
+            $horaPlan = $mapHoraPlan[$clavePlan] ?? '';
+            if ($horaPlan === '' && $nuevaHora !== '') {
+                $horaPlan = rc_normalizar_hora_hms($nuevaHora);
             }
-            $horaFinBloque = $horaPlan;
+            if ($horaPlan !== '') {
+                if ($horaInicioBloque === '' || strcmp($horaPlan, $horaInicioBloque) < 0) {
+                    $horaInicioBloque = $horaPlan;
+                }
+                if ($horaFinBloque === '' || strcmp($horaPlan, $horaFinBloque) > 0) {
+                    $horaFinBloque = $horaPlan;
+                }
+            }
 
             $okUpd = false;
             if ($itemTipo === 'consulta') {
-                $stmtUpdateConsulta->bind_param('ssi', $nuevaFecha, $horaPlan, $itemId);
-                $okUpd = $stmtUpdateConsulta->execute();
-                $totalActualizados += (int)$stmtUpdateConsulta->affected_rows;
+                if ($horaPlan !== '') {
+                    $stmtUpdateConsultaConHora->bind_param('ssi', $nuevaFecha, $horaPlan, $itemId);
+                    $okUpd = $stmtUpdateConsultaConHora->execute();
+                    $affected = (int)$stmtUpdateConsultaConHora->affected_rows;
+                } else {
+                    $stmtUpdateConsultaSoloFecha->bind_param('si', $nuevaFecha, $itemId);
+                    $okUpd = $stmtUpdateConsultaSoloFecha->execute();
+                    $affected = (int)$stmtUpdateConsultaSoloFecha->affected_rows;
+                    $actualizadosSoloFecha += $affected;
+                }
+                $actualizadosConsultas += $affected;
             } else {
-                // Los servicios de adendas pertenecen a otra cotizacion de la misma cadena.
-                $cotizacionItem = (int)($turnoPlan['cotizacion_id'] ?? 0);
+                $cotizacionItem = (int)($it['cotizacion_id'] ?? 0);
                 if ($cotizacionItem <= 0) $cotizacionItem = $cotizacionId;
-                $stmtUpdateAgenda->bind_param('ssiii', $nuevaFecha, $horaPlan, $usuarioId, $itemId, $cotizacionItem);
-                $okUpd = $stmtUpdateAgenda->execute();
-                $totalActualizados += (int)$stmtUpdateAgenda->affected_rows;
+                if ($horaPlan !== '') {
+                    $stmtUpdateAgendaConHora->bind_param('ssiii', $nuevaFecha, $horaPlan, $usuarioId, $itemId, $cotizacionItem);
+                    $okUpd = $stmtUpdateAgendaConHora->execute();
+                    $affected = (int)$stmtUpdateAgendaConHora->affected_rows;
+                } else {
+                    $stmtUpdateAgendaSoloFecha->bind_param('siii', $nuevaFecha, $usuarioId, $itemId, $cotizacionItem);
+                    $okUpd = $stmtUpdateAgendaSoloFecha->execute();
+                    $affected = (int)$stmtUpdateAgendaSoloFecha->affected_rows;
+                    $actualizadosSoloFecha += $affected;
+                }
+                $actualizadosAgendas += $affected;
+                if (strtolower(trim((string)($it['servicio_tipo'] ?? ''))) === 'laboratorio') {
+                    $actualizadosLaboratorio += $affected;
+                }
             }
+
             if (!$okUpd) {
-                $stmtUpdateAgenda->close();
-                $stmtUpdateConsulta->close();
+                $stmtUpdateAgendaConHora->close();
+                $stmtUpdateAgendaSoloFecha->close();
+                $stmtUpdateConsultaConHora->close();
+                $stmtUpdateConsultaSoloFecha->close();
+                $stmtInsertAuditoriaReprog->close();
                 $conn->rollback();
                 http_response_code(500);
-                echo json_encode(['success' => false, 'error' => 'No se pudo actualizar la programación']);
+                echo json_encode(['success' => false, 'error' => 'No se pudo actualizar la programación', 'rollback' => ['ejecutado' => true]]);
                 exit;
             }
+
+            if ($affected > 0) {
+                $fechaAnterior = trim((string)($it['fecha_programada'] ?? ''));
+                $fechaAnterior = $fechaAnterior !== '' ? $fechaAnterior : null;
+                $horaAnteriorRaw = rc_normalizar_hora_hms((string)($it['hora_programada'] ?? ''));
+                $horaAnterior = $horaAnteriorRaw !== '' ? $horaAnteriorRaw : null;
+                $horaNueva = $horaPlan !== '' ? $horaPlan : null;
+                $huboCambioFecha = $fechaAnterior !== '' && $fechaAnterior !== $nuevaFecha;
+                $huboCambioHora = (string)$horaAnterior !== (string)$horaNueva;
+                if ($huboCambioFecha || $huboCambioHora) {
+                    $tipoItem = trim((string)($it['tipo_item'] ?? 'agenda'));
+                    $agendaIdAudit = $tipoItem === 'agenda' ? (int)$itemId : null;
+                    $consultaIdAudit = $tipoItem === 'consulta' ? (int)$itemId : null;
+                    $cotizacionItemAudit = (int)($it['cotizacion_id'] ?? $cotizacionId);
+                    if ($cotizacionItemAudit <= 0) {
+                        $cotizacionItemAudit = $cotizacionId;
+                    }
+                    $cotDetalleAudit = (int)($it['cotizacion_detalle_id'] ?? 0);
+                    $servicioTipoAudit = trim((string)($it['servicio_tipo'] ?? ($tipoItem === 'consulta' ? 'consulta' : '')));
+                    if ($servicioTipoAudit === '') {
+                        $servicioTipoAudit = 'laboratorio';
+                    }
+                    $servicioIdAudit = (int)($it['servicio_id'] ?? 0);
+                    $motivoAudit = $motivoReprogramacion !== '' ? $motivoReprogramacion : null;
+                    $usuarioAudit = $usuarioId > 0 ? $usuarioId : null;
+                    $stmtInsertAuditoriaReprog->bind_param(
+                        'siiiisissssis',
+                        $eventoGrupoReprogramacion,
+                        $cotizacionItemAudit,
+                        $cotDetalleAudit,
+                        $agendaIdAudit,
+                        $consultaIdAudit,
+                        $servicioTipoAudit,
+                        $servicioIdAudit,
+                        $fechaAnterior,
+                        $nuevaFecha,
+                        $horaAnterior,
+                        $horaNueva,
+                        $usuarioAudit,
+                        $motivoAudit
+                    );
+                    $okAudit = $stmtInsertAuditoriaReprog->execute();
+                    if (!$okAudit) {
+                        $stmtUpdateAgendaConHora->close();
+                        $stmtUpdateAgendaSoloFecha->close();
+                        $stmtUpdateConsultaConHora->close();
+                        $stmtUpdateConsultaSoloFecha->close();
+                        $stmtInsertAuditoriaReprog->close();
+                        $conn->rollback();
+                        http_response_code(500);
+                        echo json_encode(['success' => false, 'error' => 'No se pudo registrar auditoría de reprogramación', 'rollback' => ['ejecutado' => true]]);
+                        exit;
+                    }
+                }
+            }
+            $totalActualizados += (int)$affected;
         }
-        $stmtUpdateAgenda->close();
-        $stmtUpdateConsulta->close();
+        $stmtUpdateAgendaConHora->close();
+        $stmtUpdateAgendaSoloFecha->close();
+        $stmtUpdateConsultaConHora->close();
+        $stmtUpdateConsultaSoloFecha->close();
+        $stmtInsertAuditoriaReprog->close();
+
+        $cotizacionesGrupo = rc_resolver_cotizaciones_del_grupo($conn, $cotizacionId);
+        $cotizacionesGrupo = array_values(array_unique(array_filter(array_map('intval', (array)$cotizacionesGrupo))));
+        if (empty($cotizacionesGrupo)) {
+            $cotizacionesGrupo = [$cotizacionId];
+        }
+        $phGrupo = implode(',', array_fill(0, count($cotizacionesGrupo), '?'));
+        $stmtOmitidos = $conn->prepare(
+            'SELECT COUNT(*) AS total
+             FROM cotizaciones_detalle
+             WHERE cotizacion_id IN (' . $phGrupo . ')
+               AND LOWER(TRIM(COALESCE(servicio_tipo, ""))) IN ("paquete", "perfil")
+               AND LOWER(TRIM(COALESCE(estado_item, "activo"))) <> "eliminado"'
+        );
+        if ($stmtOmitidos) {
+            $stmtOmitidos->bind_param(str_repeat('i', count($cotizacionesGrupo)), ...$cotizacionesGrupo);
+            $stmtOmitidos->execute();
+            $rowOmitidos = $stmtOmitidos->get_result()->fetch_assoc();
+            $stmtOmitidos->close();
+            $serviciosComercialesOmitidos = (int)($rowOmitidos['total'] ?? 0);
+        }
+        if (empty($itemsConMedico)) {
+            $advertencias[] = 'Se reprogamaron servicios que solo requieren fecha; no se validó bloque horario médico.';
+        }
+        if ($nuevaHora === '') {
+            $advertencias[] = 'No se recibió nueva_hora; se preservó la hora existente cuando aplicaba.';
+        }
+        if ($horaInicioBloque === '') {
+            $horaInicioBloque = rc_normalizar_hora_hms($nuevaHora);
+        }
+        if ($horaFinBloque === '') {
+            $horaFinBloque = $horaInicioBloque;
+        }
 
         // UPSERT en recordatorios_agenda_servicios con trazabilidad de turno
         $observacionReprog = sprintf(
             'Cita reprogramada para %s. Bloque único: %s (%d min, %d servicio(s) en el mismo horario). Turno: Antes N°%d -> Ahora N°%d.',
             $nuevaFecha,
-            substr($horaInicioBloque, 0, 5),
+            $horaInicioBloque !== '' ? substr($horaInicioBloque, 0, 5) : 'sin hora',
             $duracionTurnoMin,
-            count($planTurnos),
+            count($agendaItems),
             max(1, (int)$turnoAntes),
             max(1, (int)$turnoVigenteNuevo)
         );
@@ -3444,26 +3735,28 @@ if ($method === 'POST' || $method === 'PUT') {
         $conn->commit();
 
         $turnosProgramados = [];
-        foreach ($planTurnos as $turnoPlan) {
-            $itemTipo = trim((string)($turnoPlan['item_tipo'] ?? 'agenda'));
-            $itemId = (int)($turnoPlan['item_id'] ?? 0);
+        foreach ($agendaItems as $it) {
+            $itemTipo = trim((string)($it['tipo_item'] ?? 'agenda'));
+            $itemId = (int)($it['registro_id'] ?? 0);
+            $horaItem = $mapHoraPlan[$itemTipo . ':' . $itemId] ?? ($nuevaHora !== '' ? rc_normalizar_hora_hms($nuevaHora) : '');
             $turnosProgramados[] = [
-                'turno' => (int)($turnoPlan['turno_numero'] ?? 0),
-                'hora' => substr((string)($turnoPlan['hora_hms'] ?? ''), 0, 5),
+                'turno' => 1,
+                'hora' => $horaItem !== '' ? substr((string)$horaItem, 0, 5) : null,
                 'item_tipo' => $itemTipo,
                 'item_id' => $itemId,
                 'agenda_id' => $itemTipo === 'agenda' ? $itemId : 0,
                 'consulta_id' => $itemTipo === 'consulta' ? $itemId : 0,
-                'medico_id' => (int)($turnoPlan['medico_id'] ?? 0),
-                'servicio' => (string)($turnoPlan['servicio_label'] ?? 'Servicio'),
+                'medico_id' => (int)($it['medico_id'] ?? 0),
+                'servicio' => (string)($it['servicio_label'] ?? 'Servicio'),
+                'ocupa_medico' => rc_item_ocupa_medico($it),
             ];
         }
 
         echo json_encode([
             'success' => true,
             'reprogramada_fecha' => $nuevaFecha,
-            'reprogramada_hora' => substr($horaInicioBloque, 0, 5),
-            'reprogramada_hora_fin' => substr($horaFinBloque, 0, 5),
+            'reprogramada_hora' => $horaInicioBloque !== '' ? substr($horaInicioBloque, 0, 5) : null,
+            'reprogramada_hora_fin' => $horaFinBloque !== '' ? substr($horaFinBloque, 0, 5) : null,
             'observacion' => $observacionReprog,
             'turno_antes' => max(1, (int)$turnoAntes),
             'turno_ahora' => max(1, (int)$turnoVigenteNuevo),
@@ -3471,6 +3764,15 @@ if ($method === 'POST' || $method === 'PUT') {
             'turnos_requeridos' => $turnosRequeridos,
             'turnos_programados' => $turnosProgramados,
             'actualizados' => $totalActualizados,
+            'cotizaciones_procesadas' => $cotizacionesGrupo,
+            'consultas_actualizadas' => $actualizadosConsultas,
+            'agendas_actualizadas' => $actualizadosAgendas,
+            'detalles_solo_fecha_actualizados' => $actualizadosSoloFecha,
+            'laboratorios_actualizados' => $actualizadosLaboratorio,
+            'servicios_comerciales_omitidos' => $serviciosComercialesOmitidos,
+            'conflictos' => $conflictos,
+            'advertencias' => $advertencias,
+            'rollback' => ['ejecutado' => false],
         ]);
         exit;
     }

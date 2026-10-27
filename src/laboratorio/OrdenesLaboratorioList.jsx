@@ -10,6 +10,8 @@ const STORAGE_FECHA_FIN_KEY = "lab_ordenes_fecha_fin";
 const STORAGE_BUSQUEDA_KEY = "lab_ordenes_busqueda";
 const STORAGE_ESTADO_KEY = "lab_ordenes_estado";
 const STORAGE_ALERTA_KEY = "lab_ordenes_alerta";
+const STORAGE_PROGRAMACION_KEY = "lab_ordenes_programacion";
+const STORAGE_ESTADO_PROGRAMACION_KEY = "lab_ordenes_estado_programacion";
 
 function OrdenesLaboratorioList({ onSeleccionarOrden }) {
   const navigate = useNavigate();
@@ -34,9 +36,13 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
   const [fechaFin, setFechaFin] = useState(() => sessionStorage.getItem(STORAGE_FECHA_FIN_KEY) || "");
   const [busqueda, setBusqueda] = useState(() => sessionStorage.getItem(STORAGE_BUSQUEDA_KEY) || "");
   const [busquedaDebounced, setBusquedaDebounced] = useState("");
-  const [estadoFiltro, setEstadoFiltro] = useState(() => sessionStorage.getItem(STORAGE_ESTADO_KEY) || "");
+    const [estadoFiltro, setEstadoFiltro] = useState(() => sessionStorage.getItem(STORAGE_ESTADO_KEY) || "pendiente");
   const [filtroAlertaEstado, setFiltroAlertaEstado] = useState(() => sessionStorage.getItem(STORAGE_ALERTA_KEY) || "");
-  const [resumenAlertas, setResumenAlertas] = useState({ vencido: 0, por_vencer: 0, en_tiempo: 0 });
+    const [filtroProgramacion, setFiltroProgramacion] = useState(() => sessionStorage.getItem(STORAGE_PROGRAMACION_KEY) || "hoy");
+    const [filtroEstadoProgramacion, setFiltroEstadoProgramacion] = useState(() => sessionStorage.getItem(STORAGE_ESTADO_PROGRAMACION_KEY) || "todas");
+    const [resumenAlertas, setResumenAlertas] = useState({ vencido: 0, por_vencer: 0, en_tiempo: 0 });
+    const [resumenPanel, setResumenPanel] = useState({ total: 0, pendientes: 0, completadas: 0, hoy: 0 });
+    const [fechaOperativaHoy, setFechaOperativaHoy] = useState("");
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -70,6 +76,14 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
   }, [filtroAlertaEstado]);
 
   useEffect(() => {
+    sessionStorage.setItem(STORAGE_PROGRAMACION_KEY, filtroProgramacion);
+  }, [filtroProgramacion]);
+
+  useEffect(() => {
+    sessionStorage.setItem(STORAGE_ESTADO_PROGRAMACION_KEY, filtroEstadoProgramacion);
+  }, [filtroEstadoProgramacion]);
+
+  useEffect(() => {
     setLoading(true);
     setError("");
 
@@ -84,6 +98,8 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     params.set('limit', String(rowsPerPage));
     if (fechaInicio) params.set('filtro_fecha_desde', fechaInicio);
     if (fechaFin) params.set('filtro_fecha_hasta', fechaFin);
+    if (filtroProgramacion) params.set('filtro_programacion', filtroProgramacion);
+    if (filtroEstadoProgramacion) params.set('filtro_estado_programacion', filtroEstadoProgramacion);
     if (busquedaDebounced.trim()) params.set('filtro_busqueda', busquedaDebounced.trim());
     if (estadoFiltro) params.set('estado', estadoFiltro);
     if (filtroAlertaEstado) params.set('filtro_alerta', filtroAlertaEstado);
@@ -96,10 +112,19 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
         if (data.success) {
           setOrdenes(data.ordenes || []);
           setTotalOrdenes(Number(data.total || 0));
+          setResumenPanel({
+            total: Number(data.contadores?.total || data.total || 0),
+            pendientes: Number(data.contadores?.pendientes || 0),
+            completadas: Number(data.contadores?.completadas || 0),
+            hoy: Number(data.contadores?.hoy || 0),
+          });
+          setFechaOperativaHoy(String(data.fecha_operativa_hoy || ""));
         } else {
           setError(data.error || "Error al cargar órdenes");
           setOrdenes([]);
           setTotalOrdenes(0);
+          setResumenPanel({ total: 0, pendientes: 0, completadas: 0, hoy: 0 });
+          setFechaOperativaHoy("");
         }
         setLoading(false);
         setInitialLoaded(true);
@@ -109,6 +134,8 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
         setError("Error de conexión con el servidor");
         setOrdenes([]);
         setTotalOrdenes(0);
+        setResumenPanel({ total: 0, pendientes: 0, completadas: 0, hoy: 0 });
+        setFechaOperativaHoy("");
         setLoading(false);
         setInitialLoaded(true);
         console.error('Error al cargar órdenes:', err);
@@ -118,7 +145,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
       clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [fechaInicio, fechaFin, busquedaDebounced, estadoFiltro, filtroAlertaEstado, page, rowsPerPage]);
+  }, [fechaInicio, fechaFin, filtroProgramacion, filtroEstadoProgramacion, busquedaDebounced, estadoFiltro, filtroAlertaEstado, page, rowsPerPage]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -129,6 +156,8 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     params.set('resumen_alertas', '1');
     if (fechaInicio) params.set('filtro_fecha_desde', fechaInicio);
     if (fechaFin) params.set('filtro_fecha_hasta', fechaFin);
+    if (filtroProgramacion) params.set('filtro_programacion', filtroProgramacion);
+    if (filtroEstadoProgramacion) params.set('filtro_estado_programacion', filtroEstadoProgramacion);
     if (busquedaDebounced.trim()) params.set('filtro_busqueda', busquedaDebounced.trim());
     if (estadoFiltro) params.set('estado', estadoFiltro);
 
@@ -151,7 +180,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
       clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [fechaInicio, fechaFin, busquedaDebounced, estadoFiltro]);
+  }, [fechaInicio, fechaFin, filtroProgramacion, filtroEstadoProgramacion, busquedaDebounced, estadoFiltro]);
 
   // Ya viene paginado y ordenado desde el backend.
   const ordenesFiltradas = ordenes;
@@ -210,13 +239,106 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
 
   const formatFecha = (fecha) => {
     if (!fecha) return "N/A";
-    return new Date(fecha).toLocaleDateString('es-ES', {
+
+    const raw = String(fecha).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      const [y, m, d] = raw.split('-').map(Number);
+      const localDate = new Date(y, (m || 1) - 1, d || 1);
+      return localDate.toLocaleDateString('es-ES', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+    }
+
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (m) {
+      const localDateTime = new Date(
+        Number(m[1]),
+        Number(m[2]) - 1,
+        Number(m[3]),
+        Number(m[4]),
+        Number(m[5]),
+        Number(m[6] || 0)
+      );
+      return localDateTime.toLocaleDateString('es-ES', {
+        day: '2-digit',
+        month: '2-digit',
+        year: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+
+    return new Date(raw).toLocaleDateString('es-ES', {
       day: '2-digit',
-      month: '2-digit', 
+      month: '2-digit',
       year: '2-digit',
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  const formatDateOnly = (fechaYmd) => {
+    if (!fechaYmd) return "N/A";
+    const raw = String(fechaYmd).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    const [y, m, d] = raw.split("-").map(Number);
+    return new Date(y, (m || 1) - 1, d || 1).toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  };
+
+  const getProgramacionBadge = (orden) => {
+    const estado = String(orden.programacion_estado || "").toLowerCase();
+    if (estado === "hoy") return { text: "Para hoy", className: "bg-emerald-100 text-emerald-800 border-emerald-200" };
+    if (estado === "futura") return { text: "Futura", className: "bg-blue-100 text-blue-800 border-blue-200" };
+    if (estado === "atrasada") return { text: "Atrasada", className: "bg-rose-100 text-rose-800 border-rose-200" };
+    return { text: "Sin fecha operativa", className: "bg-gray-100 text-gray-700 border-gray-300" };
+  };
+
+  const getReprogramacionBadge = (orden) => {
+    const veces = Number(orden?.cantidad_reprogramaciones || 0);
+    if (!(Number(orden?.fecha_reprogramada || 0) === 1 || veces > 0 || orden?.fecha_reprogramada === true)) {
+      return null;
+    }
+    return veces > 1 ? `🔄 Reprogramada ${veces} veces` : "🔄 Reprogramada";
+  };
+
+  const getReprogramacionTooltip = (orden) => {
+    if (!orden) return "";
+    const historial = Array.isArray(orden.reprogramacion_historial) ? orden.reprogramacion_historial : [];
+    const ultima = historial.length > 0 ? historial[historial.length - 1] : null;
+    const fechaAnt = (ultima?.fecha_anterior || orden.fecha_anterior_reprogramacion || "").trim();
+    const fechaNueva = (ultima?.fecha_nueva || orden.fecha_nueva_reprogramacion || "").trim();
+    const horaAnt = (ultima?.hora_anterior || orden.hora_anterior_reprogramacion || "").trim();
+    const horaNueva = (ultima?.hora_nueva || orden.hora_nueva_reprogramacion || "").trim();
+    const por = (ultima?.usuario_nombre || ultima?.usuario_login || orden.reprogramada_por || "").trim();
+    const en = (ultima?.created_at || orden.reprogramada_en || "").trim();
+    const motivo = (ultima?.motivo || orden.motivo_reprogramacion || "").trim();
+    const veces = Number(orden?.cantidad_reprogramaciones || historial.length || 0);
+    const lineas = [
+      `Reprogramaciones: ${veces}`,
+      `Fecha anterior: ${formatDateOnly(fechaAnt)}`,
+      `Fecha nueva: ${formatDateOnly(fechaNueva)}`,
+      `Hora anterior: ${horaAnt || "-"}`,
+      `Hora nueva: ${horaNueva || "-"}`,
+      `Usuario: ${por || "-"}`,
+      `Fecha del cambio: ${en || "-"}`,
+      `Motivo: ${motivo || "-"}`,
+    ];
+    return lineas.join("\n");
+  };
+
+  const applyQuickDateFilter = (mode) => {
+    setFiltroProgramacion(mode);
+    if (mode === "hoy" || mode === "manana" || mode === "atrasadas" || mode === "proximos_7" || mode === "todas") {
+      setFechaInicio("");
+      setFechaFin("");
+    }
+    setPage(0);
   };
 
   const cotizacionPendientePago = (orden) => {
@@ -266,8 +388,10 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     setFechaInicio("");
     setFechaFin("");
     setBusqueda("");
-    setEstadoFiltro("");
+    setEstadoFiltro("pendiente");
     setFiltroAlertaEstado("");
+    setFiltroProgramacion("hoy");
+    setFiltroEstadoProgramacion("todas");
     setRowsPerPage(3);
     setPage(0);
     setViewMode('table');
@@ -280,6 +404,8 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
     sessionStorage.removeItem(STORAGE_BUSQUEDA_KEY);
     sessionStorage.removeItem(STORAGE_ESTADO_KEY);
     sessionStorage.removeItem(STORAGE_ALERTA_KEY);
+    sessionStorage.removeItem(STORAGE_PROGRAMACION_KEY);
+    sessionStorage.removeItem(STORAGE_ESTADO_PROGRAMACION_KEY);
   };
 
   // Nota: la descarga de PDFs desde el panel de laboratorio se ha deshabilitado
@@ -343,13 +469,52 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
       </div>
 
       <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-3 mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium text-gray-700">Fecha:</span>
+          {[
+            { value: 'hoy', label: 'Hoy' },
+            { value: 'manana', label: 'Mañana' },
+            { value: 'atrasadas', label: 'Atrasadas' },
+            { value: 'proximos_7', label: 'Próximos 7 días' },
+            { value: 'todas', label: 'Todas' },
+          ].map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => applyQuickDateFilter(item.value)}
+              className={`px-2.5 py-1 rounded-lg text-xs border transition-colors ${
+                filtroProgramacion === item.value
+                  ? 'bg-purple-600 text-white border-purple-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-purple-50'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => applyQuickDateFilter('rango')}
+            className={`px-2.5 py-1 rounded-lg text-xs border transition-colors ${
+              filtroProgramacion === 'rango'
+                ? 'bg-purple-600 text-white border-purple-600'
+                : 'bg-white text-gray-700 border-gray-300 hover:bg-purple-50'
+            }`}
+          >
+            Rango personalizado
+          </button>
+          {fechaOperativaHoy && (
+            <span className="ml-auto text-xs text-gray-600">
+              Operativo hoy: {formatDateOnly(fechaOperativaHoy)}
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-3">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Desde</label>
             <input
               type="date"
               value={fechaInicio}
-              onChange={e => { setFechaInicio(e.target.value); setPage(0); }}
+              onChange={e => { setFechaInicio(e.target.value); setFiltroProgramacion('rango'); setPage(0); }}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
             />
           </div>
@@ -358,7 +523,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
             <input
               type="date"
               value={fechaFin}
-              onChange={e => { setFechaFin(e.target.value); setPage(0); }}
+              onChange={e => { setFechaFin(e.target.value); setFiltroProgramacion('rango'); setPage(0); }}
               className="w-full px-3 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
             />
           </div>
@@ -402,8 +567,20 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
               <option value={50}>50</option>
             </select>
           </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Estado de programación</label>
+            <select
+              value={filtroEstadoProgramacion}
+              onChange={e => { setFiltroEstadoProgramacion(e.target.value); setPage(0); }}
+              className="w-full px-3 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            >
+              <option value="todas">Todas</option>
+              <option value="programadas_originalmente">Programadas originalmente</option>
+              <option value="reprogramadas">Reprogramadas</option>
+            </select>
+          </div>
         </div>
-        {(filtroAlertaEstado || fechaInicio || fechaFin || busqueda.trim() || estadoFiltro || rowsPerPage !== 3 || pageSafe > 0 || viewMode !== 'table') && (
+        {(filtroAlertaEstado || fechaInicio || fechaFin || busqueda.trim() || estadoFiltro !== 'pendiente' || filtroProgramacion !== 'hoy' || filtroEstadoProgramacion !== 'todas' || rowsPerPage !== 3 || pageSafe > 0 || viewMode !== 'table') && (
           <div className="mt-3 flex items-center justify-between gap-2">
             <button
               type="button"
@@ -422,6 +599,25 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
             </button>
           </div>
         )}
+      </div>
+
+      <div className="mb-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+          <div className="text-xs text-slate-500">Total (filtro actual)</div>
+          <div className="text-lg font-semibold text-slate-800">{resumenPanel.total}</div>
+        </div>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <div className="text-xs text-amber-700">Pendientes</div>
+          <div className="text-lg font-semibold text-amber-800">{resumenPanel.pendientes}</div>
+        </div>
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+          <div className="text-xs text-emerald-700">Completadas</div>
+          <div className="text-lg font-semibold text-emerald-800">{resumenPanel.completadas}</div>
+        </div>
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+          <div className="text-xs text-blue-700">Programadas para hoy</div>
+          <div className="text-lg font-semibold text-blue-800">{resumenPanel.hoy}</div>
+        </div>
       </div>
 
       {/* Controles de vista y paginación */}
@@ -551,6 +747,10 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                         const medicoNombre = String(orden.medico_nombre || '').trim();
                         const medicoApellido = String(orden.medico_apellido || '').trim();
                         const medicoTexto = `${medicoNombre} ${medicoApellido}`.trim() || '-';
+                        const fechaProgramada = orden.fecha_programada_operativa_hora || orden.fecha_programada_operativa || orden.fecha;
+                        const badgeProgramacion = getProgramacionBadge(orden);
+                        const badgeReprogramacion = getReprogramacionBadge(orden);
+                        const tooltipReprogramacion = getReprogramacionTooltip(orden);
                         return (
                       <tr key={orden.id} className="border-b border-gray-100 hover:bg-purple-50/50 transition-colors">
                         <td className="px-4 py-3 text-sm font-medium text-gray-900">#{orden.id}</td>
@@ -570,7 +770,23 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-600 hidden md:table-cell">{medicoTexto}</td>
                         <td className="px-4 py-3 text-sm text-gray-600 hidden lg:table-cell">{consultaIdVisual > 0 ? consultaIdVisual : '-'}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600 hidden lg:table-cell">{formatFecha(orden.fecha)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-600 hidden lg:table-cell">
+                          <div>{formatFecha(fechaProgramada)}</div>
+                          <span className={`mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${badgeProgramacion.className}`}>
+                            {badgeProgramacion.text}
+                          </span>
+                          {Number(orden.fecha_programada_fallback_historico || 0) === 1 && (
+                            <div className="mt-1 text-[11px] text-amber-700">⚠ usando fecha histórica</div>
+                          )}
+                          {badgeReprogramacion && (
+                            <div
+                              className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border bg-cyan-50 text-cyan-800 border-cyan-200"
+                              title={tooltipReprogramacion}
+                            >
+                              {badgeReprogramacion}
+                            </div>
+                          )}
+                        </td>
                         <td className="px-4 py-3">
                           {(() => {
                             const estadoVisual = orden.estado_visual || orden.estado;
@@ -685,6 +901,10 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                   const medicoNombre = String(orden.medico_nombre || '').trim();
                   const medicoApellido = String(orden.medico_apellido || '').trim();
                   const medicoTexto = `${medicoNombre} ${medicoApellido}`.trim() || '-';
+                  const fechaProgramada = orden.fecha_programada_operativa_hora || orden.fecha_programada_operativa || orden.fecha;
+                  const badgeProgramacion = getProgramacionBadge(orden);
+                  const badgeReprogramacion = getReprogramacionBadge(orden);
+                  const tooltipReprogramacion = getReprogramacionTooltip(orden);
                   return (
                 <div key={orden.id} className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-white/20 p-6 hover:shadow-xl transition-all transform hover:scale-105">
                   {(() => {
@@ -768,7 +988,21 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
                       </div>
                       <div>
                         <p className="text-xs text-gray-500 uppercase tracking-wide">Fecha</p>
-                        <p className="text-sm text-gray-700">{formatFecha(orden.fecha)}</p>
+                        <p className="text-sm text-gray-700">{formatFecha(fechaProgramada)}</p>
+                        <span className={`mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${badgeProgramacion.className}`}>
+                          {badgeProgramacion.text}
+                        </span>
+                        {badgeReprogramacion && (
+                          <span
+                            className="mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border bg-cyan-50 text-cyan-800 border-cyan-200"
+                            title={tooltipReprogramacion}
+                          >
+                            {badgeReprogramacion}
+                          </span>
+                        )}
+                        {Number(orden.fecha_programada_fallback_historico || 0) === 1 && (
+                          <p className="mt-1 text-[11px] text-amber-700">⚠ usando fecha histórica</p>
+                        )}
                       </div>
                     </div>
 

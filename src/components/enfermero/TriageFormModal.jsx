@@ -3,6 +3,8 @@ import { Icon } from '@fluentui/react';
 
 export default function TriageFormModal({ triajeActual, triajeData, cargandoTriaje, guardando, onGuardar, onCancelar }) {
   if (!triajeActual) return null;
+  const fechaOperativa = String(triajeActual?.fecha_programada_operativa || triajeActual?.fecha || "");
+  const horaOperativa = String(triajeActual?.hora_programada_operativa || triajeActual?.hora || "");
   return (
     <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
       <div className="bg-gradient-to-r from-emerald-500 to-green-600 p-6 text-white">
@@ -22,7 +24,7 @@ export default function TriageFormModal({ triajeActual, triajeData, cargandoTria
           </div>
           <div className="flex items-center gap-2 text-sm bg-white/20 rounded-xl px-3 py-2">
             <Icon iconName="Calendar" className="text-lg" />
-            <span>{triajeActual.fecha} - {triajeActual.hora}</span>
+            <span>{fechaOperativa} - {horaOperativa}</span>
           </div>
         </div>
       </div>

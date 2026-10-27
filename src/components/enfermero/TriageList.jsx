@@ -9,11 +9,11 @@ import TriageCards from "./TriageCards";
 import TriagePagination from "./TriagePagination";
 import TriageFormModal from "./TriageFormModal";
 import { authFetch } from "../../utils/apiClient";
+import Swal from "sweetalert2";
 
 
 function TriageList() {
   const {
-    triajeStatus,
     triajeStats,
     loading,
     error,
@@ -31,6 +31,10 @@ function TriageList() {
     setPage,
     busqueda,
     setBusqueda,
+    filtroProgramacion,
+    setFiltroProgramacion,
+    estadoTriaje,
+    setEstadoTriaje,
     fechaDesde,
     setFechaDesde,
     fechaHasta,
@@ -74,12 +78,56 @@ function TriageList() {
       }
     };
     try {
-      const response = await authFetch("api_triaje.php", {
+      let response = await authFetch("api_triaje.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      const result = await response.json();
+      let result = await response.json();
+      if (!result?.success && String(result?.code || "") === "triaje_future_forbidden") {
+        const confirm = await Swal.fire({
+          title: "Triaje futuro",
+          text: String(result?.error || "Este triaje aún no corresponde."),
+          icon: "warning",
+          showCancelButton: true,
+          confirmButtonText: "Excepción administrativa",
+          cancelButtonText: "Cerrar",
+        });
+        if (confirm.isConfirmed) {
+          const motivoPrompt = await Swal.fire({
+            title: "Motivo de excepción",
+            input: "text",
+            inputLabel: "Describe por qué se realizará el triaje anticipado",
+            inputPlaceholder: "Motivo obligatorio",
+            showCancelButton: true,
+            confirmButtonText: "Confirmar excepción",
+            cancelButtonText: "Cancelar",
+            inputValidator: (value) => {
+              if (!String(value || "").trim()) return "El motivo es obligatorio";
+              return null;
+            },
+          });
+          if (motivoPrompt.isConfirmed) {
+            response = await authFetch("api_triaje.php", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                ...payload,
+                permitir_anticipado: true,
+                confirmar_anticipado: true,
+                motivo_anticipado: String(motivoPrompt.value || "").trim(),
+              }),
+            });
+            result = await response.json();
+          } else {
+            setGuardando(false);
+            return;
+          }
+        } else {
+          setGuardando(false);
+          return;
+        }
+      }
       if (!result.success) {
         alert('Error al guardar triaje: ' + (result.error || 'Error desconocido'));
         setGuardando(false);
@@ -112,6 +160,10 @@ function TriageList() {
       <TriageFilters
         busqueda={busqueda}
         setBusqueda={setBusqueda}
+        filtroProgramacion={filtroProgramacion}
+        setFiltroProgramacion={setFiltroProgramacion}
+        estadoTriaje={estadoTriaje}
+        setEstadoTriaje={setEstadoTriaje}
         fechaDesde={fechaDesde}
         setFechaDesde={setFechaDesde}
         fechaHasta={fechaHasta}
@@ -160,12 +212,10 @@ function TriageList() {
               <>
                 <TriageTable
                   consultasPagina={consultasPagina}
-                  triajeStatus={triajeStatus}
                   onRealizarTriaje={handleRealizarTriaje}
                 />
                 <TriageCards
                   consultasPagina={consultasPagina}
-                  triajeStatus={triajeStatus}
                   onRealizarTriaje={handleRealizarTriaje}
                 />
               </>

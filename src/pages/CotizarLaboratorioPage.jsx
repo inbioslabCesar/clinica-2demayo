@@ -9,7 +9,7 @@ import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import useSubmitGuard from "../hooks/useSubmitGuard";
 import { confirmarLimpiezaCarrito } from "../utils/cotizacionSubmit";
-import { getLimaDate, getLimaTime as getDefaultTime } from "../utils/dateTime";
+import { getLimaDate, getLimaTime as getDefaultTime, normalizeHourHm } from "../utils/dateTime";
 import { getNextSuggestedHoraVisible, getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import { aplicarExclusionConsultaDelCarrito, aplicarSugerenciaEnDetalles, buildAgendaGuardEntriesFromDetalles, detectarCruceConCarrito, secuenciarDetallesPacienteSinCruce, validarAgendaAntesDeCotizar } from "../utils/agendaGuardCotizacion";
 
@@ -109,6 +109,7 @@ export default function CotizarLaboratorioPage() {
   const [pendingLabItems, setPendingLabItems] = useState([]); // items desde cobro para mapear contra examenes
   const [preloadedItems, setPreloadedItems] = useState([]); // líneas exactas precargadas para eliminar exacto
   const [cotizacionDetallesOriginales, setCotizacionDetallesOriginales] = useState([]);
+  const [programacionConsultaCotizacion, setProgramacionConsultaCotizacion] = useState(null); // {consultaId, fecha, hora}
   const [cotizacionVersionActual, setCotizacionVersionActual] = useState(0);
   const [cajaEstado, setCajaEstado] = useState(null);
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
@@ -128,13 +129,55 @@ export default function CotizarLaboratorioPage() {
   const getDisplayPrice = (examenId, basePrice) => String(getCoberturaExamen(examenId)?.origen_cobro || "") === "contrato"
     ? 0
     : Number(basePrice || 0);
+  const programacionBaseConsulta = useMemo(() => {
+    if (!Array.isArray(cotizacionDetallesOriginales) || cotizacionDetallesOriginales.length === 0) {
+      return null;
+    }
+
+    const normalizarFecha = (raw) => String(raw || "").slice(0, 10);
+    const normalizarHora = (raw) => normalizeHourHm(raw || "");
+    const tieneHoraValida = (raw) => Boolean(normalizarHora(raw));
+
+    if (programacionConsultaCotizacion?.fecha && programacionConsultaCotizacion?.hora) {
+      return {
+        fecha: normalizarFecha(programacionConsultaCotizacion.fecha),
+        hora: normalizarHora(programacionConsultaCotizacion.hora),
+      };
+    }
+
+    const detalleConsulta = cotizacionDetallesOriginales.find((detalle) => {
+      const tipo = String(detalle?.servicio_tipo || "").toLowerCase().trim();
+      if (tipo !== "consulta") return false;
+      const fecha = normalizarFecha(detalle?.fecha_programada || detalle?.fecha || "");
+      return /^\d{4}-\d{2}-\d{2}$/.test(fecha);
+    });
+
+    if (detalleConsulta) {
+      const fecha = normalizarFecha(detalleConsulta?.fecha_programada || detalleConsulta?.fecha || "");
+      const hora = tieneHoraValida(detalleConsulta?.hora_programada) ? normalizarHora(detalleConsulta.hora_programada) : "";
+      return { fecha, hora };
+    }
+
+    const detalleConConsulta = cotizacionDetallesOriginales.find((detalle) => {
+      const consultaId = Number(detalle?.consulta_id || 0);
+      if (consultaId <= 0) return false;
+      const fecha = normalizarFecha(detalle?.fecha_programada || detalle?.fecha || "");
+      return /^\d{4}-\d{2}-\d{2}$/.test(fecha);
+    });
+
+    if (!detalleConConsulta) return null;
+
+    const fecha = normalizarFecha(detalleConConsulta?.fecha_programada || detalleConConsulta?.fecha || "");
+    const hora = tieneHoraValida(detalleConConsulta?.hora_programada) ? normalizarHora(detalleConConsulta.hora_programada) : "";
+    return { fecha, hora };
+  }, [cotizacionDetallesOriginales, programacionConsultaCotizacion]);
 
   const getProgramacionSugeridaExamen = (examenId, fechaPreferida = "") => {
     const exIdNum = Number(examenId || 0);
     const tarifa = tarifas.find((t) => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exIdNum && t.activo === 1);
     const ex = examenes.find((e) => Number(e.id) === exIdNum);
     const medicoId = Number(tarifa?.medico_id || ex?.medico_id || 0);
-    const fechaBase = String(fechaPreferida || getLimaDate()).slice(0, 10);
+    const fechaBase = String(fechaPreferida || programacionBaseConsulta?.fecha || getLimaDate()).slice(0, 10);
     const sugerida = suggestNextHorarioFromCart(cart?.items, {
       medicoId,
       fechaBase,
@@ -144,7 +187,7 @@ export default function CotizarLaboratorioPage() {
 
     return {
       fecha: String(sugerida?.fecha || referencia?.fecha || fechaBase).slice(0, 10),
-      hora: String(sugerida?.hora || referencia?.hora || getDefaultTime()).slice(0, 5),
+      hora: String(sugerida?.hora || referencia?.hora || programacionBaseConsulta?.hora || getDefaultTime()).slice(0, 5),
       medico_id: medicoId > 0 ? medicoId : null,
     };
   };
@@ -185,7 +228,7 @@ export default function CotizarLaboratorioPage() {
         return;
       }
 
-      const fechaRef = getLimaDate();
+      const fechaRef = String(programacionBaseConsulta?.fecha || getLimaDate()).slice(0, 10);
       const examIds = examenes.map((examen) => Number(examen.id)).filter((id) => id > 0);
       const statusPending = Object.fromEntries(examIds.map((id) => [id, "pending"]));
       if (!cancelled) {
@@ -259,10 +302,12 @@ export default function CotizarLaboratorioPage() {
       setPreloadedLab({});
       setDerivaciones({});
       setSeleccionados([]);
+      setProgramacionConsultaCotizacion(null);
     }
     if (!cotizacionId) {
       setCotizacionDetallesOriginales([]);
       setCotizacionVersionActual(0);
+      setProgramacionConsultaCotizacion(null);
     }
     if (cobroId) loaders.push(authFetch(`${BASE_URL}api_cobros.php?cobro_id=${cobroId}`, { credentials: "include" }).then(r => r.json()).then(data => {
       const cobro = data.cobro || data?.result?.cobro || null;
@@ -374,6 +419,24 @@ export default function CotizarLaboratorioPage() {
         setPreloadedItems(prev => [...prev, ...itemsLab]);
       }
     }));
+    if (cotizacionId) loaders.push(
+      authFetch(`${BASE_URL}api_consultas.php?cotizacion_id=${cotizacionId}&no_cache=1`, { credentials: "include", cache: "no-store" })
+        .then((res) => res.json())
+        .then((data) => {
+          if (!data?.success) return;
+          const consulta = Array.isArray(data.consultas) ? data.consultas[0] : (data.consulta || null);
+          const consultaId = Number(consulta?.id || consulta?.consulta_id || 0);
+          const fecha = String(consulta?.fecha || "").slice(0, 10);
+          const hora = normalizeHourHm(consulta?.hora || "");
+          if (/^\d{4}-\d{2}-\d{2}$/.test(fecha) && hora) {
+            setProgramacionConsultaCotizacion({
+              consultaId: consultaId > 0 ? consultaId : 0,
+              fecha,
+              hora,
+            });
+          }
+        })
+    );
     if (!loaders.length) return;
     Promise.all(loaders).catch(() => {});
   }, [cobroId, cotizacionId]);
@@ -908,8 +971,8 @@ export default function CotizarLaboratorioPage() {
     const detalles = secuenciarDetallesPacienteSinCruce({
       detalles: detallesFiltrados,
       cartItems: cart?.items,
-      fallbackFecha: getLimaDate(),
-      fallbackHora: getDefaultTime(),
+      fallbackFecha: String(programacionBaseConsulta?.fecha || getLimaDate()).slice(0, 10),
+      fallbackHora: String(programacionBaseConsulta?.hora || getDefaultTime()).slice(0, 5),
       stepMinutes: 30,
     });
 
@@ -1045,8 +1108,8 @@ export default function CotizarLaboratorioPage() {
     const detallesLaboratorio = secuenciarDetallesPacienteSinCruce({
       detalles: construirDetallesSeleccionados(),
       cartItems: cart?.items,
-      fallbackFecha: getLimaDate(),
-      fallbackHora: getDefaultTime(),
+      fallbackFecha: String(programacionBaseConsulta?.fecha || getLimaDate()).slice(0, 10),
+      fallbackHora: String(programacionBaseConsulta?.hora || getDefaultTime()).slice(0, 5),
       stepMinutes: 30,
     });
     const detallesFinales = cotizacionId && !isAdendaMode
@@ -1060,7 +1123,7 @@ export default function CotizarLaboratorioPage() {
 
     const total = detallesFinales.reduce((acc, d) => acc + Number(d.subtotal || 0), 0);
 
-      const fechaRef = getLimaDate();
+      const fechaRef = String(programacionBaseConsulta?.fecha || getLimaDate()).slice(0, 10);
       const payload = cotizacionId
       ? {
           accion: isAdendaMode ? 'adenda' : 'editar',

@@ -73,6 +73,19 @@ if (!function_exists('hdisp_normalize_slot_minutes')) {
     }
 }
 
+if (!function_exists('hdisp_hora_a_minutos')) {
+    function hdisp_hora_a_minutos(string $hora): ?int {
+        $norm = hdisp_normalize_hora_hms($hora);
+        if ($norm === null) return null;
+        $partes = explode(':', $norm);
+        if (count($partes) < 2) return null;
+        $h = (int)$partes[0];
+        $m = (int)$partes[1];
+        if ($h < 0 || $h > 23 || $m < 0 || $m > 59) return null;
+        return ($h * 60) + $m;
+    }
+}
+
 if (!function_exists('hdisp_get_slot_minutes')) {
     function hdisp_get_slot_minutes(mysqli $conn): int {
         static $cached = null;
@@ -129,38 +142,45 @@ if ($method === 'GET') {
         $horariosDisponibles = [];
         
         $horariosOcupadosSet = [];
+        $cotizacionesExcluirIds = [];
+        if ($cotizacion_id_excluir > 0) {
+            $cotizacionesExcluirIds = episodio_cotizaciones_cadena_ids($conn, $cotizacion_id_excluir) ?: [$cotizacion_id_excluir];
+            $cotizacionesExcluirIds = array_values(array_unique(array_filter(array_map('intval', (array)$cotizacionesExcluirIds), function ($id) {
+                return $id > 0;
+            })));
+        }
         $hasConsultasCotizacion = hdisp_table_exists($conn, 'consultas')
             && hdisp_column_exists($conn, 'consultas', 'cotizacion_id');
         $sqlConsultas = '
                 SELECT hora FROM consultas 
                 WHERE medico_id = ? AND fecha = ? AND ' . agenda_sql_consulta_ocupa_medico('') . '
             ';
+        $typesCons = 'is';
+        $paramsCons = [$medico_id, $fecha];
         if ($consulta_id_excluir > 0) {
             $sqlConsultas .= ' AND id <> ?';
+            $typesCons .= 'i';
+            $paramsCons[] = $consulta_id_excluir;
         }
-        if ($cotizacion_id_excluir > 0 && $hasConsultasCotizacion) {
-            $sqlConsultas .= ' AND COALESCE(cotizacion_id, 0) <> ?';
+        if (!empty($cotizacionesExcluirIds) && $hasConsultasCotizacion) {
+            $phCot = implode(',', array_fill(0, count($cotizacionesExcluirIds), '?'));
+            $sqlConsultas .= ' AND COALESCE(cotizacion_id, 0) NOT IN (' . $phCot . ')';
+            $typesCons .= str_repeat('i', count($cotizacionesExcluirIds));
+            $paramsCons = array_merge($paramsCons, $cotizacionesExcluirIds);
         }
         $stmt_consultas = $conn->prepare($sqlConsultas);
-        if ($consulta_id_excluir > 0 && $cotizacion_id_excluir > 0 && $hasConsultasCotizacion) {
-            $stmt_consultas->bind_param('isii', $medico_id, $fecha, $consulta_id_excluir, $cotizacion_id_excluir);
-        } elseif ($consulta_id_excluir > 0) {
-            $stmt_consultas->bind_param('isi', $medico_id, $fecha, $consulta_id_excluir);
-        } elseif ($cotizacion_id_excluir > 0 && $hasConsultasCotizacion) {
-            $stmt_consultas->bind_param('isi', $medico_id, $fecha, $cotizacion_id_excluir);
-        } else {
-            $stmt_consultas->bind_param('is', $medico_id, $fecha);
-        }
-
-        $stmt_consultas->execute();
-        $res_consultas = $stmt_consultas->get_result();
-        while ($consulta = $res_consultas->fetch_assoc()) {
-            $horaNorm = hdisp_normalize_hora_hms($consulta['hora'] ?? null);
-            if ($horaNorm !== null) {
-                $horariosOcupadosSet[$horaNorm] = true;
+        if ($stmt_consultas) {
+            $stmt_consultas->bind_param($typesCons, ...$paramsCons);
+            $stmt_consultas->execute();
+            $res_consultas = $stmt_consultas->get_result();
+            while ($consulta = $res_consultas->fetch_assoc()) {
+                $horaNorm = hdisp_normalize_hora_hms($consulta['hora'] ?? null);
+                if ($horaNorm !== null) {
+                    $horariosOcupadosSet[$horaNorm] = true;
+                }
             }
+            $stmt_consultas->close();
         }
-        $stmt_consultas->close();
 
         // Unificar ocupados de agenda de servicios para que la disponibilidad
         // refleje la misma verdad operativa usada en Recordatorios.
@@ -217,7 +237,7 @@ if ($method === 'GET') {
             $canExcludeAgendaCotizacion = ($cotizacion_id_excluir > 0 && hdisp_column_exists($conn, 'agenda_servicios_cotizacion', 'cotizacion_id'));
             $canExcludeDetalleCotizacion = ($cotizacion_id_excluir > 0 && $hasDetalleCotizacionId && $joinDetalle !== '');
             // Se excluye todo el episodio (cotización base y adendas): sus servicios comparten hora con la consulta.
-            $cotizacionesExcluirSql = implode(',', array_map('intval', episodio_cotizaciones_cadena_ids($conn, $cotizacion_id_excluir) ?: [$cotizacion_id_excluir]));
+            $cotizacionesExcluirSql = implode(',', array_map('intval', !empty($cotizacionesExcluirIds) ? $cotizacionesExcluirIds : [$cotizacion_id_excluir]));
             if ($canExcludeAgendaCotizacion || $canExcludeDetalleCotizacion) {
                 $sqlAgenda .= ' AND (';
                 $conds = [];
@@ -247,8 +267,15 @@ if ($method === 'GET') {
 
         $horariosOcupados = array_keys($horariosOcupadosSet);
         sort($horariosOcupados);
-
         $slotMinutes = hdisp_get_slot_minutes($conn);
+        $ocupadosMinutos = [];
+        foreach ($horariosOcupados as $horaOcupada) {
+            $min = hdisp_hora_a_minutos((string)$horaOcupada);
+            if ($min !== null) {
+                $ocupadosMinutos[] = $min;
+            }
+        }
+
         while ($row = $res->fetch_assoc()) {
             
             // Generar horarios con la duración base configurada.
@@ -263,8 +290,18 @@ if ($method === 'GET') {
             while ($h < $h_fin || ($h == $h_fin && $m < $m_fin)) {
                 $horaStr = sprintf("%02d:%02d:00", $h, $m); // Formato completo con segundos
                 
-                // Solo agregar si no está ocupado
-                if (!isset($horariosOcupadosSet[$horaStr])) {
+                // Bloquear por solape real de intervalos (misma regla del modal de reprogramación).
+                $inicioSlot = ($h * 60) + $m;
+                $finSlot = min(24 * 60, $inicioSlot + $slotMinutes);
+                $solapa = false;
+                foreach ($ocupadosMinutos as $inicioOcupado) {
+                    if ($inicioOcupado < $finSlot && ($inicioOcupado + $slotMinutes) > $inicioSlot) {
+                        $solapa = true;
+                        break;
+                    }
+                }
+
+                if (!$solapa) {
                     $horariosDisponibles[] = [
                         'hora' => sprintf("%02d:%02d", $h, $m), // Para mostrar en frontend sin segundos
                         'hora_db' => $horaStr, // Para comparar con BD

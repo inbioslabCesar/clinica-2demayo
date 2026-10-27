@@ -1,7 +1,18 @@
 import { memo } from 'react';
 import { Icon } from '@fluentui/react';
 
-function TriageTable({ consultasPagina, triajeStatus, onRealizarTriaje }) {
+function TriageTable({ consultasPagina, onRealizarTriaje }) {
+  const estadoConsultaNorm = (consulta) => String(consulta?.estado || "").toLowerCase().trim();
+  const esCancelado = (consulta) => ["cancelada", "cancelado", "anulada", "anulado"].includes(estadoConsultaNorm(consulta));
+  const esRealizado = (consulta) => Number(consulta?.triaje_realizado || 0) === 1 && !esCancelado(consulta);
+  const esPendiente = (consulta) => !esRealizado(consulta) && !esCancelado(consulta);
+  const esReprogramado = (consulta) => Number(consulta?.es_reprogramada || 0) === 1;
+  const estadoVisual = (consulta) => {
+    if (esCancelado(consulta)) return "Cancelado";
+    if (esRealizado(consulta)) return "Realizado";
+    return "Pendiente";
+  };
+
   const getContratoMeta = (consulta) => {
     const esContrato = Number(consulta?.es_contrato || 0) === 1;
     if (!esContrato) {
@@ -26,6 +37,15 @@ function TriageTable({ consultasPagina, triajeStatus, onRealizarTriaje }) {
     if (!hora) return '-';
     return String(hora).slice(0, 5);
   };
+
+  const formatearFechaYHora = (consulta) => {
+    const fechaOperativa = String(consulta?.fecha_programada_operativa || consulta?.fecha || "");
+    const horaOperativa = String(consulta?.hora_programada_operativa || consulta?.hora || "");
+    return {
+      fecha: formatearFecha(fechaOperativa),
+      hora: formatearHora(horaOperativa),
+    };
+  };
   return (
     <div className="hidden lg:block">
       <table className="w-full">
@@ -42,6 +62,9 @@ function TriageTable({ consultasPagina, triajeStatus, onRealizarTriaje }) {
         <tbody className="divide-y divide-gray-200">
           {consultasPagina.map((c) => {
             const contratoMeta = getContratoMeta(c);
+            const estado = estadoVisual(c);
+            const fechaHora = formatearFechaYHora(c);
+            const usaFallback = Number(c?.fecha_operativa_fallback_historico || 0) === 1;
             return (
             <tr key={c.id} className="hover:bg-gray-50 transition-colors duration-200">
               <td className="px-6 py-4">
@@ -77,16 +100,31 @@ function TriageTable({ consultasPagina, triajeStatus, onRealizarTriaje }) {
                 <div className="flex items-center gap-2">
                   <Icon iconName="Calendar" className="text-lg text-gray-400" />
                   <div className="text-sm">
-                    <div className="text-gray-800">{formatearFecha(c.fecha)}</div>
-                    <div className="text-gray-500">{formatearHora(c.hora)}</div>
+                    <div className="text-gray-800">{fechaHora.fecha}</div>
+                    <div className="text-gray-500">{fechaHora.hora}</div>
+                    {esReprogramado(c) && (
+                      <div className="text-xs font-semibold text-blue-700 mt-1" title={`Reprogramado en: ${String(c?.reprogramada_en || "-")}`}>
+                        🔄 Reprogramado
+                      </div>
+                    )}
+                    {usaFallback && (
+                      <div className="text-xs text-amber-700 mt-1">
+                        ⚠ usando fecha histórica
+                      </div>
+                    )}
                   </div>
                 </div>
               </td>
               <td className="px-6 py-4">
-                {triajeStatus[c.id] === 'Completado' ? (
+                {estado === 'Realizado' ? (
                   <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
                     <Icon iconName="CheckMark" className="text-sm" />
-                    Completado
+                    Realizado
+                  </span>
+                ) : estado === 'Cancelado' ? (
+                  <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-rose-100 text-rose-800">
+                    <Icon iconName="Blocked2" className="text-sm" />
+                    Cancelado
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-yellow-100 text-yellow-800">
@@ -98,6 +136,8 @@ function TriageTable({ consultasPagina, triajeStatus, onRealizarTriaje }) {
               <td className="px-6 py-4">
                 <button
                   className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-500 to-green-600 text-white font-semibold rounded-xl hover:from-emerald-600 hover:to-green-700 transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"
+                  disabled={!esPendiente(c)}
+                  style={!esPendiente(c) ? { opacity: 0.55, cursor: "not-allowed" } : undefined}
                   onClick={() => onRealizarTriaje(c)}
                 >
                   <Icon iconName="Health" className="text-lg" />

@@ -4,7 +4,16 @@ import { authFetch } from "../../utils/apiClient";
 export default function useTriageConsultas() {
   const [consultas, setConsultas] = useState([]);
   const [triajeStatus, setTriajeStatus] = useState({});
-  const [triajeStats, setTriajeStats] = useState({ pendientes: 0, completados: 0 });
+  const [triajeStats, setTriajeStats] = useState({
+    total: 0,
+    pendientes: 0,
+    completados: 0,
+    cancelados: 0,
+    reprogramados: 0,
+    atrasados: 0,
+    futuros: 0,
+    hoy: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [triajeActual, setTriajeActual] = useState(null);
@@ -14,6 +23,8 @@ export default function useTriageConsultas() {
   const [rowsPerPage, setRowsPerPage] = useState(5);
   const [page, setPage] = useState(1);
   const [busqueda, setBusqueda] = useState("");
+  const [filtroProgramacion, setFiltroProgramacion] = useState("hoy");
+  const [estadoTriaje, setEstadoTriaje] = useState("pendiente");
   const [fechaDesde, setFechaDesde] = useState("");
   const [fechaHasta, setFechaHasta] = useState("");
   const [totalRows, setTotalRows] = useState(0);
@@ -23,7 +34,16 @@ export default function useTriageConsultas() {
   const limpiarListado = () => {
     setConsultas([]);
     setTriajeStatus({});
-    setTriajeStats({ pendientes: 0, completados: 0 });
+    setTriajeStats({
+      total: 0,
+      pendientes: 0,
+      completados: 0,
+      cancelados: 0,
+      reprogramados: 0,
+      atrasados: 0,
+      futuros: 0,
+      hoy: 0,
+    });
     setTotalRows(0);
     setTotalPages(1);
   };
@@ -43,8 +63,10 @@ export default function useTriageConsultas() {
       page: String(page),
       per_page: String(rowsPerPage),
       search: busqueda.trim(),
-      fecha_desde: fechaDesde,
-      fecha_hasta: fechaHasta,
+      filtro_programacion: filtroProgramacion,
+      estado_triaje: estadoTriaje,
+      fecha_desde: filtroProgramacion === "rango" ? fechaDesde : "",
+      fecha_hasta: filtroProgramacion === "rango" ? fechaHasta : "",
       _t: String(Date.now()),
     });
 
@@ -65,9 +87,23 @@ export default function useTriageConsultas() {
           });
           setTriajeStatus(statusObj);
 
-          const pendientes = Number(data?.stats?.pendientes ?? Math.max(0, Number(data?.pagination?.total || 0) - Number(data?.stats?.completados || 0)));
+          const pendientes = Number(data?.stats?.pendientes ?? 0);
           const completados = Number(data?.stats?.completados ?? 0);
-          setTriajeStats({ pendientes, completados });
+          const cancelados = Number(data?.stats?.cancelados ?? 0);
+          const reprogramados = Number(data?.stats?.reprogramados ?? 0);
+          const atrasados = Number(data?.stats?.atrasados ?? 0);
+          const futuros = Number(data?.stats?.futuros ?? 0);
+          const hoy = Number(data?.stats?.hoy ?? 0);
+          setTriajeStats({
+            total: Number(data?.stats?.total ?? data?.pagination?.total ?? listaConsultas.length ?? 0),
+            pendientes,
+            completados,
+            cancelados,
+            reprogramados,
+            atrasados,
+            futuros,
+            hoy,
+          });
 
           const total = Number(data?.pagination?.total ?? listaConsultas.length ?? 0);
           const totalPagesSrv = Math.max(1, Number(data?.pagination?.total_pages ?? 1));
@@ -104,7 +140,7 @@ export default function useTriageConsultas() {
       recargarConsultas();
     }, 220);
     return () => clearTimeout(timer);
-  }, [page, rowsPerPage, busqueda, fechaDesde, fechaHasta]);
+  }, [page, rowsPerPage, busqueda, fechaDesde, fechaHasta, filtroProgramacion, estadoTriaje]);
 
   const consultasFiltradas = consultas;
   const consultasPagina = consultas;
@@ -137,6 +173,10 @@ export default function useTriageConsultas() {
     setPage,
     busqueda,
     setBusqueda,
+    filtroProgramacion,
+    setFiltroProgramacion,
+    estadoTriaje,
+    setEstadoTriaje,
     fechaDesde,
     setFechaDesde,
     fechaHasta,

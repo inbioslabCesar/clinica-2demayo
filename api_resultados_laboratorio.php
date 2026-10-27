@@ -731,6 +731,128 @@ if (!function_exists('rl_column_exists')) {
     }
 }
 
+if (!function_exists('rl_table_exists')) {
+    function rl_table_exists(mysqli $conn, string $table): bool
+    {
+        $stmt = $conn->prepare('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1');
+        if (!$stmt) {
+            return false;
+        }
+        $stmt->bind_param('s', $table);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $exists = $res && $res->num_rows > 0;
+        $stmt->close();
+        return $exists;
+    }
+}
+
+if (!function_exists('rl_operational_today_ymd')) {
+    function rl_operational_today_ymd(): string
+    {
+        return (new DateTime('now', new DateTimeZone('America/Lima')))->format('Y-m-d');
+    }
+}
+
+if (!function_exists('rl_resolver_fecha_operativa_orden')) {
+    function rl_resolver_fecha_operativa_orden(mysqli $conn, int $ordenId, int $cotizacionId, $rawExamenes): ?string
+    {
+        if ($ordenId <= 0 && $cotizacionId <= 0) {
+            return null;
+        }
+        if (!rl_table_exists($conn, 'agenda_servicios_cotizacion')) {
+            return null;
+        }
+        $examIds = normalize_exam_ids_from_raw($rawExamenes);
+        if (empty($examIds)) {
+            return null;
+        }
+
+        $params = [];
+        $types = '';
+        $sql = 'SELECT a.fecha_programada
+                FROM agenda_servicios_cotizacion a
+                LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id
+                WHERE a.fecha_programada IS NOT NULL
+                  AND LOWER(TRIM(COALESCE(a.servicio_tipo, ""))) = "laboratorio"
+                  AND COALESCE(a.servicio_id, cd.servicio_id) IN (';
+        $examPlaceholders = implode(',', array_fill(0, count($examIds), '?'));
+        $sql .= $examPlaceholders . ')';
+        $params = array_merge($params, $examIds);
+        $types .= str_repeat('i', count($examIds));
+
+        if ($cotizacionId > 0) {
+            $sql .= ' AND a.cotizacion_id = ?';
+            $params[] = $cotizacionId;
+            $types .= 'i';
+        }
+        $sql .= ' AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado","no_asistio","anulada","completado","atendido","espontaneo","pagado")';
+        $sql .= ' ORDER BY a.fecha_programada ASC, a.id ASC LIMIT 1';
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return null;
+        }
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $fecha = trim((string)($row['fecha_programada'] ?? ''));
+        if ($fecha === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fecha)) {
+            return null;
+        }
+        return $fecha;
+    }
+}
+
+if (!function_exists('rl_can_override_future_processing')) {
+    function rl_can_override_future_processing($sessionUsuario): bool
+    {
+        $rol = strtolower(trim((string)($sessionUsuario['rol'] ?? '')));
+        return in_array($rol, ['admin', 'administrador', 'superadmin', 'gerencia'], true);
+    }
+}
+
+if (!function_exists('rl_ensure_anticipado_auditoria_schema')) {
+    function rl_ensure_anticipado_auditoria_schema(mysqli $conn): void
+    {
+        $sql = "CREATE TABLE IF NOT EXISTS laboratorio_procesamiento_anticipado_auditoria (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            orden_id INT NOT NULL,
+            cotizacion_id INT NULL,
+            fecha_operativa DATE NULL,
+            fecha_hoy_operativa DATE NOT NULL,
+            usuario_id INT NULL,
+            usuario_rol VARCHAR(60) NULL,
+            motivo VARCHAR(255) NOT NULL,
+            accion VARCHAR(30) NOT NULL DEFAULT 'override',
+            creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+        $conn->query($sql);
+    }
+}
+
+if (!function_exists('rl_registrar_auditoria_anticipado')) {
+    function rl_registrar_auditoria_anticipado(mysqli $conn, int $ordenId, int $cotizacionId, ?string $fechaOperativa, string $hoyOperativo, $sessionUsuario, string $motivo): void
+    {
+        rl_ensure_anticipado_auditoria_schema($conn);
+        $usuarioId = intval($sessionUsuario['id'] ?? 0);
+        $usuarioRol = trim((string)($sessionUsuario['rol'] ?? ''));
+        $motivoNorm = trim($motivo);
+        $stmt = $conn->prepare('INSERT INTO laboratorio_procesamiento_anticipado_auditoria (orden_id, cotizacion_id, fecha_operativa, fecha_hoy_operativa, usuario_id, usuario_rol, motivo, accion) VALUES (?, ?, ?, ?, ?, ?, ?, "override")');
+        if (!$stmt) {
+            return;
+        }
+        $cotizacionParam = $cotizacionId > 0 ? $cotizacionId : null;
+        $fechaOperativaParam = $fechaOperativa !== null ? $fechaOperativa : null;
+        $usuarioIdParam = $usuarioId > 0 ? $usuarioId : null;
+        $usuarioRolParam = $usuarioRol !== '' ? $usuarioRol : null;
+        $stmt->bind_param('iississ', $ordenId, $cotizacionParam, $fechaOperativaParam, $hoyOperativo, $usuarioIdParam, $usuarioRolParam, $motivoNorm);
+        $stmt->execute();
+        $stmt->close();
+    }
+}
+
 if (!function_exists('rl_consulta_requiere_filtro_estricto')) {
     function rl_consulta_requiere_filtro_estricto(mysqli $conn, int $consultaId): bool
     {
@@ -1424,7 +1546,7 @@ switch ($method) {
 
             $orden = null;
             if ($orden_id) {
-                $stmtOrden = $conn->prepare('SELECT id, consulta_id, estado, examenes FROM ordenes_laboratorio WHERE id = ? LIMIT 1');
+                $stmtOrden = $conn->prepare('SELECT id, consulta_id, cotizacion_id, estado, examenes FROM ordenes_laboratorio WHERE id = ? LIMIT 1');
                 $stmtOrden->bind_param('i', $orden_id);
                 $stmtOrden->execute();
                 $orden = $stmtOrden->get_result()->fetch_assoc();
@@ -1432,7 +1554,7 @@ switch ($method) {
             }
 
             if (!$orden && $consulta_id) {
-                $stmtOrden = $conn->prepare('SELECT id, consulta_id, estado, examenes FROM ordenes_laboratorio WHERE consulta_id = ? ORDER BY id DESC LIMIT 1');
+                $stmtOrden = $conn->prepare('SELECT id, consulta_id, cotizacion_id, estado, examenes FROM ordenes_laboratorio WHERE consulta_id = ? ORDER BY id DESC LIMIT 1');
                 $stmtOrden->bind_param('i', $consulta_id);
                 $stmtOrden->execute();
                 $orden = $stmtOrden->get_result()->fetch_assoc();
@@ -1447,6 +1569,36 @@ switch ($method) {
             if (strtolower(trim((string)($orden['estado'] ?? ''))) === 'cancelada') {
                 echo json_encode(['success' => false, 'error' => 'La orden de laboratorio esta cancelada']);
                 exit;
+            }
+
+            $fechaOperativa = rl_resolver_fecha_operativa_orden(
+                $conn,
+                intval($orden['id'] ?? 0),
+                intval($orden['cotizacion_id'] ?? 0),
+                $orden['examenes'] ?? []
+            );
+            $hoyOperativo = rl_operational_today_ymd();
+            if ($fechaOperativa !== null && $fechaOperativa > $hoyOperativo) {
+                $overrideFlag = intval($data['permite_procesamiento_anticipado'] ?? 0) === 1;
+                $confirmacionFlag = intval($data['confirmar_procesamiento_anticipado'] ?? 0) === 1;
+                $motivoOverride = trim((string)($data['motivo_procesamiento_anticipado'] ?? ''));
+                $puedeOverride = rl_can_override_future_processing($sessionUsuario ?? []);
+                if (!$puedeOverride || !$overrideFlag || !$confirmacionFlag || $motivoOverride === '') {
+                    echo json_encode([
+                        'success' => false,
+                        'error' => 'La orden está programada para el ' . date('d/m/Y', strtotime($fechaOperativa)) . ' y todavía no corresponde procesarla.',
+                    ]);
+                    exit;
+                }
+                rl_registrar_auditoria_anticipado(
+                    $conn,
+                    intval($orden['id'] ?? 0),
+                    intval($orden['cotizacion_id'] ?? 0),
+                    $fechaOperativa,
+                    $hoyOperativo,
+                    $sessionUsuario ?? [],
+                    $motivoOverride
+                );
             }
 
             $stmtRes = $conn->prepare('SELECT id, resultados FROM resultados_laboratorio WHERE orden_id = ? ORDER BY id DESC LIMIT 1');
@@ -1700,7 +1852,7 @@ switch ($method) {
         // múltiples órdenes que comparten la misma consulta_id.
         $orden = null;
         if ($orden_id) {
-            $stmt_orden = $conn->prepare('SELECT id, consulta_id, estado, examenes FROM ordenes_laboratorio WHERE id = ? LIMIT 1');
+            $stmt_orden = $conn->prepare('SELECT id, consulta_id, cotizacion_id, estado, examenes FROM ordenes_laboratorio WHERE id = ? LIMIT 1');
             $stmt_orden->bind_param('i', $orden_id);
             $stmt_orden->execute();
             $orden = $stmt_orden->get_result()->fetch_assoc();
@@ -1708,14 +1860,14 @@ switch ($method) {
         }
         if (!$orden && $consulta_id) {
             // Compatibilidad hacia atrás: algunos flujos antiguos enviaban consulta_id.
-            $stmt_orden = $conn->prepare('SELECT id, consulta_id, estado, examenes FROM ordenes_laboratorio WHERE id = ? LIMIT 1');
+            $stmt_orden = $conn->prepare('SELECT id, consulta_id, cotizacion_id, estado, examenes FROM ordenes_laboratorio WHERE id = ? LIMIT 1');
             $stmt_orden->bind_param('i', $consulta_id);
             $stmt_orden->execute();
             $orden = $stmt_orden->get_result()->fetch_assoc();
             $stmt_orden->close();
 
             if (!$orden) {
-                $stmt_orden = $conn->prepare('SELECT id, consulta_id, estado, examenes FROM ordenes_laboratorio WHERE consulta_id = ? ORDER BY id DESC LIMIT 1');
+                $stmt_orden = $conn->prepare('SELECT id, consulta_id, cotizacion_id, estado, examenes FROM ordenes_laboratorio WHERE consulta_id = ? ORDER BY id DESC LIMIT 1');
                 $stmt_orden->bind_param('i', $consulta_id);
                 $stmt_orden->execute();
                 $orden = $stmt_orden->get_result()->fetch_assoc();
@@ -1770,6 +1922,36 @@ switch ($method) {
         if (isset($orden['estado']) && strtolower((string)$orden['estado']) === 'cancelada') {
             echo json_encode(['success' => false, 'error' => 'La orden de laboratorio está cancelada']);
             exit;
+        }
+
+        $fechaOperativa = rl_resolver_fecha_operativa_orden(
+            $conn,
+            intval($orden['id'] ?? 0),
+            intval($orden['cotizacion_id'] ?? 0),
+            $orden['examenes'] ?? []
+        );
+        $hoyOperativo = rl_operational_today_ymd();
+        if ($fechaOperativa !== null && $fechaOperativa > $hoyOperativo) {
+            $overrideFlag = intval($data['permite_procesamiento_anticipado'] ?? 0) === 1;
+            $confirmacionFlag = intval($data['confirmar_procesamiento_anticipado'] ?? 0) === 1;
+            $motivoOverride = trim((string)($data['motivo_procesamiento_anticipado'] ?? ''));
+            $puedeOverride = rl_can_override_future_processing($sessionUsuario ?? []);
+            if (!$puedeOverride || !$overrideFlag || !$confirmacionFlag || $motivoOverride === '') {
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'La orden está programada para el ' . date('d/m/Y', strtotime($fechaOperativa)) . ' y todavía no corresponde procesarla.',
+                ]);
+                exit;
+            }
+            rl_registrar_auditoria_anticipado(
+                $conn,
+                intval($orden['id'] ?? 0),
+                intval($orden['cotizacion_id'] ?? 0),
+                $fechaOperativa,
+                $hoyOperativo,
+                $sessionUsuario ?? [],
+                $motivoOverride
+            );
         }
         $ok = false;
         $resultadoId = 0;

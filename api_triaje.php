@@ -83,6 +83,72 @@ function triaje_actor_puede_guardar($actor) {
     return false;
 }
 
+function triaje_parse_bool($value) {
+    if (is_bool($value)) return $value;
+    if (is_numeric($value)) return ((int)$value) === 1;
+    $norm = strtolower(trim((string)$value));
+    return in_array($norm, ['1', 'true', 'si', 'sí', 'yes', 'on'], true);
+}
+
+function triaje_hoy_operativo_ymd() {
+    return (new DateTime('now', new DateTimeZone('America/Lima')))->format('Y-m-d');
+}
+
+function triaje_actor_puede_anticipado($actor) {
+    $rol = strtolower(trim((string)($actor['rol'] ?? '')));
+    if (in_array($rol, ['admin', 'administrador', 'superadmin', 'gerencia'], true)) {
+        return true;
+    }
+    $permisos = triaje_normalizar_permisos($actor['permisos'] ?? []);
+    foreach ($permisos as $permiso) {
+        $permNorm = strtolower(trim((string)$permiso));
+        if (in_array($permNorm, ['triaje_anticipado', 'realizar_triaje_anticipado', 'override_triaje_fecha'], true)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function triaje_ensure_anticipado_auditoria_schema($conn) {
+    $sql = "CREATE TABLE IF NOT EXISTS triaje_procesamiento_anticipado_auditoria (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        consulta_id INT NOT NULL,
+        triaje_id INT NULL,
+        fecha_programada_operativa DATE NULL,
+        fecha_hoy_operativa DATE NOT NULL,
+        usuario_id INT NULL,
+        usuario_rol VARCHAR(60) NULL,
+        usuario_nombre VARCHAR(120) NULL,
+        motivo VARCHAR(255) NOT NULL,
+        accion VARCHAR(30) NOT NULL DEFAULT 'override',
+        creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_tpaa_consulta (consulta_id),
+        KEY idx_tpaa_fecha (fecha_programada_operativa)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+    $conn->query($sql);
+}
+
+function triaje_registrar_auditoria_anticipado($conn, $consultaId, $triajeId, $fechaProgramada, $hoyOperativo, $actor, $motivo) {
+    triaje_ensure_anticipado_auditoria_schema($conn);
+    $stmt = $conn->prepare('INSERT INTO triaje_procesamiento_anticipado_auditoria (consulta_id, triaje_id, fecha_programada_operativa, fecha_hoy_operativa, usuario_id, usuario_rol, usuario_nombre, motivo, accion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, "override")');
+    if (!$stmt) {
+        return;
+    }
+    $consultaParam = (int)$consultaId;
+    $triajeParam = (int)$triajeId > 0 ? (int)$triajeId : null;
+    $fechaProgParam = (is_string($fechaProgramada) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaProgramada)) ? $fechaProgramada : null;
+    $hoyParam = (string)$hoyOperativo;
+    $usuarioIdParam = (int)($actor['id'] ?? 0) > 0 ? (int)$actor['id'] : null;
+    $usuarioRolParam = trim((string)($actor['rol'] ?? ''));
+    $usuarioRolParam = $usuarioRolParam !== '' ? $usuarioRolParam : null;
+    $usuarioNombreParam = trim((string)($actor['nombre'] ?? ''));
+    $usuarioNombreParam = $usuarioNombreParam !== '' ? $usuarioNombreParam : null;
+    $motivoParam = trim((string)$motivo);
+    $stmt->bind_param('iississs', $consultaParam, $triajeParam, $fechaProgParam, $hoyParam, $usuarioIdParam, $usuarioRolParam, $usuarioNombreParam, $motivoParam);
+    $stmt->execute();
+    $stmt->close();
+}
+
 function triaje_table_exists($conn, $table) {
     $stmt = $conn->prepare('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ? LIMIT 1');
     if (!$stmt) return false;
@@ -160,6 +226,56 @@ switch ($method) {
             exit;
         }
 
+        $stmtConsulta = $conn->prepare('SELECT id, fecha, estado FROM consultas WHERE id = ? LIMIT 1');
+        if (!$stmtConsulta) {
+            echo json_encode(['success' => false, 'error' => 'No se pudo validar la consulta del triaje']);
+            exit;
+        }
+        $consultaIdInt = (int)$consulta_id;
+        $stmtConsulta->bind_param('i', $consultaIdInt);
+        $stmtConsulta->execute();
+        $consultaRow = $stmtConsulta->get_result()->fetch_assoc();
+        $stmtConsulta->close();
+        if (!$consultaRow) {
+            echo json_encode(['success' => false, 'error' => 'Consulta no encontrada para registrar triaje']);
+            exit;
+        }
+
+        $fechaProgramadaOperativa = trim((string)($consultaRow['fecha'] ?? ''));
+        $hoyOperativo = triaje_hoy_operativo_ymd();
+        $estadoConsulta = strtolower(trim((string)($consultaRow['estado'] ?? '')));
+        if (in_array($estadoConsulta, ['cancelada', 'cancelado', 'anulada', 'anulado'], true)) {
+            echo json_encode(['success' => false, 'error' => 'La consulta está cancelada y no permite registrar triaje']);
+            exit;
+        }
+
+        $esFuturo = preg_match('/^\d{4}-\d{2}-\d{2}$/', $fechaProgramadaOperativa) && $fechaProgramadaOperativa > $hoyOperativo;
+        $allowFutureOverride = triaje_parse_bool($data['permitir_anticipado'] ?? false);
+        $confirmFutureOverride = triaje_parse_bool($data['confirmar_anticipado'] ?? false);
+        $motivoFutureOverride = trim((string)($data['motivo_anticipado'] ?? ''));
+        if ($esFuturo) {
+            $fechaMsg = DateTime::createFromFormat('Y-m-d', $fechaProgramadaOperativa, new DateTimeZone('America/Lima'));
+            $fechaMsgFmt = $fechaMsg ? $fechaMsg->format('d/m/Y') : $fechaProgramadaOperativa;
+            if (!$allowFutureOverride || !triaje_actor_puede_anticipado($actor)) {
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Este triaje está programado para el ' . $fechaMsgFmt . ' y todavía no corresponde realizarlo.',
+                    'code' => 'triaje_future_forbidden',
+                    'fecha_programada_operativa' => $fechaProgramadaOperativa,
+                ]);
+                exit;
+            }
+            if (!$confirmFutureOverride || $motivoFutureOverride === '') {
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Para realizar este triaje anticipado debes confirmar la acción y registrar un motivo.',
+                    'code' => 'triaje_future_requires_confirmation',
+                    'fecha_programada_operativa' => $fechaProgramadaOperativa,
+                ]);
+                exit;
+            }
+        }
+
         triaje_ensure_audit_schema($conn);
 
         $origenRegistro = trim((string)($datos['origen_registro'] ?? ''));
@@ -169,12 +285,15 @@ switch ($method) {
 
         $json = json_encode($datos);
         // Verificar si ya existe triaje para esta consulta
+        $triajeIdExistente = 0;
         $stmt_check = $conn->prepare('SELECT id FROM triaje WHERE consulta_id = ?');
         $stmt_check->bind_param('i', $consulta_id);
         $stmt_check->execute();
         $res_check = $stmt_check->get_result();
         $clasificacion = isset($datos['clasificacion']) ? $datos['clasificacion'] : null;
-        if ($res_check->fetch_assoc()) {
+        $rowTriajeExistente = $res_check->fetch_assoc();
+        if ($rowTriajeExistente) {
+            $triajeIdExistente = (int)($rowTriajeExistente['id'] ?? 0);
             // Ya existe: actualizar
             $stmt = $conn->prepare('UPDATE triaje SET datos = ?, fecha_registro = CURRENT_TIMESTAMP, actualizado_por_id = ?, actualizado_por_rol = ?, actualizado_por_nombre = ?, origen_registro = ? WHERE consulta_id = ?');
             if (!$stmt) {
@@ -232,6 +351,17 @@ switch ($method) {
             exit;
         }
         $stmt2->close();
+        if ($esFuturo && $allowFutureOverride && $confirmFutureOverride && $motivoFutureOverride !== '' && $ok && $exec_ok) {
+            triaje_registrar_auditoria_anticipado(
+                $conn,
+                (int)$consulta_id,
+                $triajeIdExistente,
+                $fechaProgramadaOperativa,
+                $hoyOperativo,
+                $actor,
+                $motivoFutureOverride
+            );
+        }
         echo json_encode([
             'success' => $ok,
             'updated' => true,

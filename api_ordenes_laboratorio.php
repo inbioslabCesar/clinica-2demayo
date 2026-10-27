@@ -652,6 +652,600 @@ if (!function_exists('ol_normalize_examenes_ids')) {
     }
 }
 
+if (!function_exists('ol_mapa_fechas_programadas_laboratorio')) {
+    function ol_mapa_fechas_programadas_laboratorio(mysqli $conn, array $cotizacionIds): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $cotizacionIds), static function ($id) {
+            return $id > 0;
+        })));
+        if (empty($ids) || !ol_table_exists($conn, 'agenda_servicios_cotizacion')) {
+            return [];
+        }
+
+        $relPorBase = ol_cotizaciones_relacionadas_por_raiz($conn, $ids);
+        $idsBusqueda = [];
+        foreach ($relPorBase as $baseId => $relIds) {
+            foreach ((array)$relIds as $rid) {
+                $rid = intval($rid);
+                if ($rid > 0) {
+                    $idsBusqueda[$rid] = true;
+                }
+            }
+            $baseId = intval($baseId);
+            if ($baseId > 0) {
+                $idsBusqueda[$baseId] = true;
+            }
+        }
+        $idsBusqueda = array_keys($idsBusqueda);
+        if (empty($idsBusqueda)) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($idsBusqueda), '?'));
+        $sql = 'SELECT a.id AS agenda_id, a.cotizacion_id, a.cotizacion_detalle_id, COALESCE(cd.servicio_id, a.servicio_id, 0) AS servicio_id, a.fecha_programada, a.hora_programada
+                FROM agenda_servicios_cotizacion a
+                LEFT JOIN cotizaciones_detalle cd ON cd.id = a.cotizacion_detalle_id
+                WHERE a.cotizacion_id IN (' . $placeholders . ')
+                  AND LOWER(TRIM(COALESCE(a.servicio_tipo, ""))) = "laboratorio"
+                  AND a.fecha_programada IS NOT NULL
+                  AND LOWER(TRIM(COALESCE(a.estado_evento, ""))) NOT IN ("cancelado","no_asistio","anulada","completado","atendido","espontaneo","pagado")
+                ORDER BY a.fecha_programada ASC, a.hora_programada ASC, a.id ASC';
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return [];
+        }
+        $stmt->bind_param(str_repeat('i', count($idsBusqueda)), ...$idsBusqueda);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        $slotsByCot = [];
+        foreach ($rows as $row) {
+            $cotId = intval($row['cotizacion_id'] ?? 0);
+            $servId = intval($row['servicio_id'] ?? 0);
+            $cotDetalleId = intval($row['cotizacion_detalle_id'] ?? 0);
+            $agendaId = intval($row['agenda_id'] ?? 0);
+            $fecha = trim((string)($row['fecha_programada'] ?? ''));
+            if ($cotId <= 0 || $servId <= 0 || $fecha === '') {
+                continue;
+            }
+            if (!isset($slotsByCot[$cotId])) {
+                $slotsByCot[$cotId] = [];
+            }
+            $slot = [
+                'cotizacion_id' => $cotId,
+                'cotizacion_detalle_id' => $cotDetalleId > 0 ? $cotDetalleId : null,
+                'agenda_id' => $agendaId > 0 ? $agendaId : null,
+                'servicio_id' => $servId,
+                'fecha' => $fecha,
+                'hora' => trim((string)($row['hora_programada'] ?? '')),
+            ];
+            if ($agendaId > 0) {
+                $slotsByCot[$cotId]['agenda:' . $agendaId] = $slot;
+            }
+            if ($cotDetalleId > 0) {
+                $slotsByCot[$cotId]['detalle:' . $cotDetalleId] = $slot;
+            }
+            if (!isset($slotsByCot[$cotId]['servicio:' . $servId])) {
+                $slotsByCot[$cotId]['servicio:' . $servId] = $slot;
+            }
+        }
+
+        $map = [];
+        foreach ($ids as $baseCotId) {
+            $baseCotId = intval($baseCotId);
+            if ($baseCotId <= 0) {
+                continue;
+            }
+            $relIds = $relPorBase[$baseCotId] ?? [$baseCotId];
+            $relIds = array_values(array_unique(array_filter(array_map('intval', (array)$relIds), static function ($id) {
+                return $id > 0;
+            })));
+            $combined = [];
+            foreach ($relIds as $relId) {
+                if (!isset($slotsByCot[$relId])) {
+                    continue;
+                }
+                foreach ($slotsByCot[$relId] as $k => $slot) {
+                    if (!isset($combined[$k])) {
+                        $combined[$k] = $slot;
+                    }
+                }
+            }
+            $map[$baseCotId] = $combined;
+        }
+        return $map;
+    }
+}
+
+if (!function_exists('ol_resolver_fecha_programada_operativa')) {
+    function ol_resolver_fecha_programada_operativa(array $row, array $mapFechasPorCotizacion): array
+    {
+        $cotizacionId = intval($row['cotizacion_id'] ?? 0);
+        if ($cotizacionId <= 0 || !isset($mapFechasPorCotizacion[$cotizacionId])) {
+            return [
+                'fecha' => null,
+                'fecha_hora' => null,
+                'hora_referencia_visita' => null,
+                'origen' => 'fallback_historico',
+                'cotizacion_id_agenda' => null,
+                'detalle' => [],
+                'fallback_historico' => 1,
+            ];
+        }
+
+        $agendaPorServicio = $mapFechasPorCotizacion[$cotizacionId];
+        $rawExam = $row['examenes'] ?? [];
+        if (is_array($rawExam)) {
+            $decodedExam = $rawExam;
+        } else {
+            $decodedExam = json_decode((string)$rawExam, true);
+        }
+        $examIds = ol_normalize_examenes_ids(is_array($decodedExam) ? $decodedExam : []);
+        if (empty($examIds)) {
+            return [
+                'fecha' => null,
+                'fecha_hora' => null,
+                'hora_referencia_visita' => null,
+                'origen' => 'fallback_historico',
+                'cotizacion_id_agenda' => null,
+                'detalle' => [],
+                'fallback_historico' => 1,
+            ];
+        }
+
+        $metaExamenPorServicio = [];
+        if (is_array($decodedExam)) {
+            foreach ($decodedExam as $itExam) {
+                if (!is_array($itExam)) {
+                    continue;
+                }
+                $sid = intval($itExam['id'] ?? 0);
+                if ($sid <= 0 || isset($metaExamenPorServicio[$sid])) {
+                    continue;
+                }
+                $metaExamenPorServicio[$sid] = [
+                    'cotizacion_detalle_id' => intval($itExam['cotizacion_detalle_id'] ?? 0),
+                    'agenda_id' => intval($itExam['agenda_id'] ?? 0),
+                    'orden_id' => intval($itExam['orden_id'] ?? 0),
+                ];
+            }
+        }
+
+        $detalle = [];
+        $fechaOperativa = null;
+        $fechaHoraOperativa = null;
+        foreach ($examIds as $examId) {
+            $slot = null;
+            $metaExam = $metaExamenPorServicio[$examId] ?? [];
+            $agendaIdMeta = intval($metaExam['agenda_id'] ?? 0);
+            $cotDetalleIdMeta = intval($metaExam['cotizacion_detalle_id'] ?? 0);
+            if ($agendaIdMeta > 0 && isset($agendaPorServicio['agenda:' . $agendaIdMeta])) {
+                $slot = $agendaPorServicio['agenda:' . $agendaIdMeta];
+            } elseif ($cotDetalleIdMeta > 0 && isset($agendaPorServicio['detalle:' . $cotDetalleIdMeta])) {
+                $slot = $agendaPorServicio['detalle:' . $cotDetalleIdMeta];
+            } elseif (isset($agendaPorServicio['servicio:' . $examId])) {
+                $slot = $agendaPorServicio['servicio:' . $examId];
+            } elseif (isset($agendaPorServicio[$examId])) {
+                // compatibilidad con mapas antiguos
+                $slot = $agendaPorServicio[$examId];
+            }
+            if ($slot === null) {
+                continue;
+            }
+            if (is_array($slot)) {
+                $fecha = trim((string)($slot['fecha'] ?? ''));
+                $hora = trim((string)($slot['hora'] ?? ''));
+                $cotizacionEncontrada = intval($slot['cotizacion_id'] ?? 0);
+            } else {
+                $fecha = trim((string)$slot);
+                $hora = '';
+                $cotizacionEncontrada = 0;
+            }
+            $horaNorm = $hora !== '' ? $hora : '00:00:00';
+            $fechaHora = $fecha !== '' ? ($fecha . ' ' . $horaNorm) : null;
+            $origen = $cotizacionEncontrada > 0 && $cotizacionEncontrada !== $cotizacionId ? 'agenda_adenda' : 'agenda';
+            $detalle[] = [
+                'servicio_id' => $examId,
+                'fecha_programada' => $fecha,
+                'hora_programada' => $hora,
+                'fecha_hora_programada' => $fechaHora,
+                'cotizacion_id_agenda' => $cotizacionEncontrada > 0 ? $cotizacionEncontrada : $cotizacionId,
+                'origen_fecha' => $origen,
+            ];
+            if ($fechaOperativa === null) {
+                $fechaOperativa = $fecha;
+                $fechaHoraOperativa = $fechaHora;
+                $origenFechaOperativa = $origen;
+                $cotizacionAgendaOperativa = $cotizacionEncontrada > 0 ? $cotizacionEncontrada : $cotizacionId;
+                $horaReferenciaVisita = $hora;
+            }
+        }
+
+        if ($fechaOperativa === null) {
+            return [
+                'fecha' => null,
+                'fecha_hora' => null,
+                'hora_referencia_visita' => null,
+                'origen' => 'fallback_historico',
+                'cotizacion_id_agenda' => null,
+                'detalle' => [],
+                'fallback_historico' => 1,
+            ];
+        }
+
+        return [
+            'fecha' => $fechaOperativa,
+            'fecha_hora' => $fechaHoraOperativa,
+            'hora_referencia_visita' => $horaReferenciaVisita ?? null,
+            'origen' => $origenFechaOperativa ?? 'agenda',
+            'cotizacion_id_agenda' => $cotizacionAgendaOperativa ?? $cotizacionId,
+            'detalle' => $detalle,
+            'fallback_historico' => 0,
+        ];
+    }
+}
+
+if (!function_exists('ol_is_valid_ymd')) {
+    function ol_is_valid_ymd($value): bool
+    {
+        $value = trim((string)$value);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+            return false;
+        }
+        $dt = DateTime::createFromFormat('Y-m-d', $value, new DateTimeZone('America/Lima'));
+        return $dt instanceof DateTime && $dt->format('Y-m-d') === $value;
+    }
+}
+
+if (!function_exists('ol_operational_today_ymd')) {
+    function ol_operational_today_ymd(): string
+    {
+        return (new DateTime('now', new DateTimeZone('America/Lima')))->format('Y-m-d');
+    }
+}
+
+if (!function_exists('ol_add_days_ymd')) {
+    function ol_add_days_ymd(string $baseYmd, int $days): string
+    {
+        $dt = DateTime::createFromFormat('Y-m-d', $baseYmd, new DateTimeZone('America/Lima'));
+        if (!$dt) {
+            return $baseYmd;
+        }
+        if ($days !== 0) {
+            $modifier = ($days >= 0 ? '+' : '') . $days . ' day';
+            $dt->modify($modifier);
+        }
+        return $dt->format('Y-m-d');
+    }
+}
+
+if (!function_exists('ol_resolver_filtro_programacion')) {
+    function ol_resolver_filtro_programacion($modoRaw, $fechaDesdeRaw, $fechaHastaRaw, $soloVisiblesPanel = false): array
+    {
+        $hoy = ol_operational_today_ymd();
+        $modo = strtolower(trim((string)$modoRaw));
+        $fechaDesde = trim((string)$fechaDesdeRaw);
+        $fechaHasta = trim((string)$fechaHastaRaw);
+
+        if (!ol_is_valid_ymd($fechaDesde)) {
+            $fechaDesde = '';
+        }
+        if (!ol_is_valid_ymd($fechaHasta)) {
+            $fechaHasta = '';
+        }
+
+        if ($modo === '') {
+            if ($fechaDesde !== '' || $fechaHasta !== '') {
+                $modo = 'rango';
+            } elseif ($soloVisiblesPanel) {
+                $modo = 'hoy';
+            } else {
+                $modo = 'todas';
+            }
+        }
+
+        $desde = null;
+        $hasta = null;
+        switch ($modo) {
+            case 'hoy':
+                $desde = $hoy;
+                $hasta = $hoy;
+                break;
+            case 'manana':
+                $desde = ol_add_days_ymd($hoy, 1);
+                $hasta = $desde;
+                break;
+            case 'atrasadas':
+                $desde = null;
+                $hasta = ol_add_days_ymd($hoy, -1);
+                break;
+            case 'proximos_7':
+            case 'proximos7':
+                $modo = 'proximos_7';
+                $desde = ol_add_days_ymd($hoy, 1);
+                $hasta = ol_add_days_ymd($hoy, 7);
+                break;
+            case 'rango':
+                $desde = $fechaDesde !== '' ? $fechaDesde : null;
+                $hasta = $fechaHasta !== '' ? $fechaHasta : null;
+                break;
+            case 'todas':
+            default:
+                $modo = 'todas';
+                $desde = null;
+                $hasta = null;
+                break;
+        }
+
+        if ($desde !== null && $hasta !== null && strcmp($desde, $hasta) > 0) {
+            $tmp = $desde;
+            $desde = $hasta;
+            $hasta = $tmp;
+        }
+
+        return [
+            'modo' => $modo,
+            'hoy' => $hoy,
+            'desde' => $desde,
+            'hasta' => $hasta,
+            'fecha_desde_input' => $fechaDesde,
+            'fecha_hasta_input' => $fechaHasta,
+        ];
+    }
+}
+
+if (!function_exists('ol_fecha_operativa_orden')) {
+    function ol_fecha_operativa_orden(array $row): ?string
+    {
+        $fecha = trim((string)($row['fecha_programada_operativa'] ?? ''));
+        if (ol_is_valid_ymd($fecha)) {
+            return $fecha;
+        }
+
+        $fechaHora = trim((string)($row['fecha_programada_operativa_hora'] ?? ''));
+        if ($fechaHora !== '' && preg_match('/^(\d{4}-\d{2}-\d{2})[ T]\d{2}:\d{2}(:\d{2})?$/', $fechaHora, $m) && ol_is_valid_ymd($m[1])) {
+            return $m[1];
+        }
+
+        $historica = trim((string)($row['fecha_historica_orden'] ?? $row['fecha'] ?? ''));
+        if ($historica !== '' && preg_match('/^(\d{4}-\d{2}-\d{2})/', $historica, $m2) && ol_is_valid_ymd($m2[1])) {
+            return $m2[1];
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('ol_clasificar_programacion_orden')) {
+    function ol_clasificar_programacion_orden(array $row, string $hoy): string
+    {
+        $fechaOperativa = ol_fecha_operativa_orden($row);
+        if ($fechaOperativa === null) {
+            return 'sin_fecha';
+        }
+        if ($fechaOperativa < $hoy) {
+            return 'atrasada';
+        }
+        if ($fechaOperativa > $hoy) {
+            return 'futura';
+        }
+        return 'hoy';
+    }
+}
+
+if (!function_exists('ol_match_programacion_orden')) {
+    function ol_match_programacion_orden(array $row, array $filtro): bool
+    {
+        $modo = $filtro['modo'] ?? 'todas';
+        if ($modo === 'todas') {
+            return true;
+        }
+        $fechaOperativa = ol_fecha_operativa_orden($row);
+        if ($fechaOperativa === null) {
+            return false;
+        }
+        $desde = $filtro['desde'] ?? null;
+        $hasta = $filtro['hasta'] ?? null;
+        if ($desde !== null && $fechaOperativa < $desde) {
+            return false;
+        }
+        if ($hasta !== null && $fechaOperativa > $hasta) {
+            return false;
+        }
+        return true;
+    }
+}
+
+if (!function_exists('ol_resolver_filtro_estado_reprogramacion')) {
+    function ol_resolver_filtro_estado_reprogramacion($raw): string
+    {
+        $value = strtolower(trim((string)$raw));
+        if (in_array($value, ['reprogramadas', 'programadas_originalmente', 'todas'], true)) {
+            return $value;
+        }
+        return 'todas';
+    }
+}
+
+if (!function_exists('ol_mapa_reprogramaciones_laboratorio')) {
+    function ol_mapa_reprogramaciones_laboratorio(mysqli $conn, array $cotizacionIds): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $cotizacionIds), static function ($id) {
+            return $id > 0;
+        })));
+        if (empty($ids) || !ol_table_exists($conn, 'agenda_reprogramaciones_auditoria')) {
+            return [];
+        }
+
+        $relPorBase = ol_cotizaciones_relacionadas_por_raiz($conn, $ids);
+        $idsBusqueda = [];
+        foreach ($relPorBase as $baseId => $relIds) {
+            foreach ((array)$relIds as $rid) {
+                $rid = intval($rid);
+                if ($rid > 0) {
+                    $idsBusqueda[$rid] = true;
+                }
+            }
+            $baseId = intval($baseId);
+            if ($baseId > 0) {
+                $idsBusqueda[$baseId] = true;
+            }
+        }
+        $idsBusqueda = array_keys($idsBusqueda);
+        if (empty($idsBusqueda)) {
+            return [];
+        }
+
+        $ph = implode(',', array_fill(0, count($idsBusqueda), '?'));
+        $sql = 'SELECT a.id, a.evento_grupo, a.cotizacion_id, a.servicio_id, a.servicio_tipo,
+                       a.fecha_anterior, a.fecha_nueva, a.hora_anterior, a.hora_nueva, a.motivo, a.created_at,
+                       a.usuario_id, u.nombre AS usuario_nombre, u.usuario AS usuario_login
+                FROM agenda_reprogramaciones_auditoria a
+                LEFT JOIN usuarios u ON u.id = a.usuario_id
+                WHERE a.cotizacion_id IN (' . $ph . ')
+                  AND LOWER(TRIM(COALESCE(a.servicio_tipo, ""))) = "laboratorio"
+                ORDER BY a.created_at ASC, a.id ASC';
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            return [];
+        }
+        $stmt->bind_param(str_repeat('i', count($idsBusqueda)), ...$idsBusqueda);
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        $eventosPorCotizacionReal = [];
+        foreach ($rows as $row) {
+            $cotId = intval($row['cotizacion_id'] ?? 0);
+            $servId = intval($row['servicio_id'] ?? 0);
+            if ($cotId <= 0 || $servId <= 0) {
+                continue;
+            }
+            if (!isset($eventosPorCotizacionReal[$cotId])) {
+                $eventosPorCotizacionReal[$cotId] = [];
+            }
+            if (!isset($eventosPorCotizacionReal[$cotId][$servId])) {
+                $eventosPorCotizacionReal[$cotId][$servId] = [];
+            }
+            $eventosPorCotizacionReal[$cotId][$servId][] = [
+                'id' => intval($row['id'] ?? 0),
+                'evento_grupo' => trim((string)($row['evento_grupo'] ?? '')),
+                'fecha_anterior' => trim((string)($row['fecha_anterior'] ?? '')),
+                'fecha_nueva' => trim((string)($row['fecha_nueva'] ?? '')),
+                'hora_anterior' => trim((string)($row['hora_anterior'] ?? '')),
+                'hora_nueva' => trim((string)($row['hora_nueva'] ?? '')),
+                'motivo' => trim((string)($row['motivo'] ?? '')),
+                'created_at' => trim((string)($row['created_at'] ?? '')),
+                'usuario_id' => intval($row['usuario_id'] ?? 0),
+                'usuario_nombre' => trim((string)($row['usuario_nombre'] ?? '')),
+                'usuario_login' => trim((string)($row['usuario_login'] ?? '')),
+            ];
+        }
+
+        $map = [];
+        foreach ($ids as $baseCotId) {
+            $baseCotId = intval($baseCotId);
+            if ($baseCotId <= 0) {
+                continue;
+            }
+            $map[$baseCotId] = [];
+            $relIds = $relPorBase[$baseCotId] ?? [$baseCotId];
+            $relIds = array_values(array_unique(array_filter(array_map('intval', (array)$relIds), static function ($id) {
+                return $id > 0;
+            })));
+            foreach ($relIds as $relId) {
+                if (!isset($eventosPorCotizacionReal[$relId])) {
+                    continue;
+                }
+                foreach ($eventosPorCotizacionReal[$relId] as $servId => $eventos) {
+                    $servId = intval($servId);
+                    if ($servId <= 0) {
+                        continue;
+                    }
+                    if (!isset($map[$baseCotId][$servId])) {
+                        $map[$baseCotId][$servId] = [];
+                    }
+                    foreach ((array)$eventos as $entry) {
+                        $group = trim((string)($entry['evento_grupo'] ?? ''));
+                        $eventKey = $group !== '' ? $group : ('row-' . intval($entry['id'] ?? 0));
+                        if (!isset($map[$baseCotId][$servId][$eventKey])) {
+                            $map[$baseCotId][$servId][$eventKey] = $entry;
+                        }
+                    }
+                }
+            }
+            foreach ($map[$baseCotId] as $servId => $eventsByKey) {
+                $map[$baseCotId][$servId] = array_values($eventsByKey);
+            }
+        }
+        return $map;
+    }
+}
+
+if (!function_exists('ol_resolver_reprogramacion_orden')) {
+    function ol_resolver_reprogramacion_orden(array $row, array $mapReprogramaciones): array
+    {
+        $cotId = intval($row['cotizacion_id'] ?? 0);
+        if ($cotId <= 0 || !isset($mapReprogramaciones[$cotId])) {
+            return [
+                'es_reprogramada' => false,
+                'cantidad' => 0,
+                'ultima' => null,
+                'historial' => [],
+            ];
+        }
+
+        $decodedExam = is_array($row['examenes'] ?? null)
+            ? ($row['examenes'] ?? [])
+            : json_decode((string)($row['examenes'] ?? '[]'), true);
+        $examIds = ol_normalize_examenes_ids(is_array($decodedExam) ? $decodedExam : []);
+        if (empty($examIds)) {
+            return [
+                'es_reprogramada' => false,
+                'cantidad' => 0,
+                'ultima' => null,
+                'historial' => [],
+            ];
+        }
+
+        $eventosMap = [];
+        foreach ($examIds as $servId) {
+            if (!isset($mapReprogramaciones[$cotId][$servId])) {
+                continue;
+            }
+            foreach ($mapReprogramaciones[$cotId][$servId] as $entry) {
+                $grupo = trim((string)($entry['evento_grupo'] ?? ''));
+                $key = $grupo !== '' ? $grupo : ('row-' . intval($entry['id'] ?? 0));
+                if (!isset($eventosMap[$key])) {
+                    $eventosMap[$key] = $entry;
+                }
+            }
+        }
+        if (empty($eventosMap)) {
+            return [
+                'es_reprogramada' => false,
+                'cantidad' => 0,
+                'ultima' => null,
+                'historial' => [],
+            ];
+        }
+
+        $eventos = array_values($eventosMap);
+        usort($eventos, static function ($a, $b) {
+            return strcmp((string)($a['created_at'] ?? ''), (string)($b['created_at'] ?? ''));
+        });
+        $ultima = end($eventos);
+        reset($eventos);
+        return [
+            'es_reprogramada' => true,
+            'cantidad' => count($eventos),
+            'ultima' => $ultima ?: null,
+            'historial' => $eventos,
+        ];
+    }
+}
+
 if (!function_exists('ol_is_laboratorio_operador_role')) {
     function ol_is_laboratorio_operador_role($rol)
     {
@@ -1834,7 +2428,14 @@ switch ($method) {
         $offset = ($page - 1) * $limit;
         $filtro_fecha_desde = isset($_GET['filtro_fecha_desde']) ? trim((string)$_GET['filtro_fecha_desde']) : '';
         $filtro_fecha_hasta = isset($_GET['filtro_fecha_hasta']) ? trim((string)$_GET['filtro_fecha_hasta']) : '';
+        $filtro_programacion = isset($_GET['filtro_programacion']) ? trim((string)$_GET['filtro_programacion']) : '';
+        $filtro_estado_programacion = isset($_GET['filtro_estado_programacion']) ? trim((string)$_GET['filtro_estado_programacion']) : '';
         $filtro_busqueda = isset($_GET['filtro_busqueda']) ? trim((string)$_GET['filtro_busqueda']) : '';
+        if ($solo_visibles_panel && !$estado) {
+            $estado = 'pendiente';
+        }
+        $filtroProgramacionMeta = ol_resolver_filtro_programacion($filtro_programacion, $filtro_fecha_desde, $filtro_fecha_hasta, $solo_visibles_panel);
+        $filtroEstadoProgramacionNorm = ol_resolver_filtro_estado_reprogramacion($filtro_estado_programacion);
 
         if ($vista === 'permiso_consulta') {
             if (!$consulta_id || $consulta_id <= 0) {
@@ -2061,17 +2662,6 @@ switch ($method) {
                 $paramsResumen[] = $cotizacion_id_filtro;
                 $typesResumen .= 'i';
             }
-            if ($filtro_fecha_desde !== '') {
-                $sqlResumenPanel .= ' AND DATE(o.fecha) >= ?';
-                $paramsResumen[] = $filtro_fecha_desde;
-                $typesResumen .= 's';
-            }
-            if ($filtro_fecha_hasta !== '') {
-                $sqlResumenPanel .= ' AND DATE(o.fecha) <= ?';
-                $paramsResumen[] = $filtro_fecha_hasta;
-                $typesResumen .= 's';
-            }
-
             $stmtResumenPanel = $conn->prepare($sqlResumenPanel);
             if (!$stmtResumenPanel) {
                 http_response_code(500);
@@ -2173,16 +2763,6 @@ switch ($method) {
             $params[] = $medicoSesionId;
             $types .= 'i';
         }
-        if ($filtro_fecha_desde !== '') {
-            $sql .= ' AND DATE(o.fecha) >= ?';
-            $params[] = $filtro_fecha_desde;
-            $types .= 's';
-        }
-        if ($filtro_fecha_hasta !== '') {
-            $sql .= ' AND DATE(o.fecha) <= ?';
-            $params[] = $filtro_fecha_hasta;
-            $types .= 's';
-        }
         if ($filtro_busqueda !== '') {
             $sql .= ' AND (
                 CONCAT(IFNULL(p2.nombre, p.nombre), " ", IFNULL(p2.apellido, p.apellido)) LIKE ?
@@ -2260,12 +2840,6 @@ switch ($method) {
                 . ' c.medico_id, c_ref.medico_id'
                 . ' ) = ?';
         }
-        if ($filtro_fecha_desde !== '') {
-            $sqlCount .= ' AND DATE(o.fecha) >= ?';
-        }
-        if ($filtro_fecha_hasta !== '') {
-            $sqlCount .= ' AND DATE(o.fecha) <= ?';
-        }
         if ($filtro_busqueda !== '') {
             $sqlCount .= ' AND (
                 CONCAT(IFNULL(p2.nombre, p.nombre), " ", IFNULL(p2.apellido, p.apellido)) LIKE ?
@@ -2290,7 +2864,8 @@ switch ($method) {
         }
 
         $totalRegistros = 0;
-        if ($usePagination && !$resumen_alertas) {
+        $paginateInPhp = $usePagination && $solo_visibles_panel && !$resumen_alertas;
+        if ($usePagination && !$resumen_alertas && !$paginateInPhp) {
             $stmtCount = $conn->prepare($sqlCount);
             if ($stmtCount) {
                 if ($params) {
@@ -2304,13 +2879,13 @@ switch ($method) {
         }
 
         $sql .= ' ORDER BY o.fecha DESC, o.id DESC';
-        if ($usePagination && !$resumen_alertas) {
+        if ($usePagination && !$resumen_alertas && !$paginateInPhp) {
             $sql .= ' LIMIT ? OFFSET ?';
         }
 
         $execTypes = $types;
         $execParams = $params;
-        if ($usePagination && !$resumen_alertas) {
+        if ($usePagination && !$resumen_alertas && !$paginateInPhp) {
             $execTypes .= 'ii';
             $execParams[] = $limit;
             $execParams[] = $offset;
@@ -2324,6 +2899,11 @@ switch ($method) {
         $res = $stmt->get_result();
         $rowsBase = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
         $stmt->close();
+        $cotizacionesRowsBase = array_values(array_unique(array_filter(array_map('intval', array_column($rowsBase, 'cotizacion_id')), function ($id) {
+            return $id > 0;
+        })));
+        $mapFechasProgramadasLab = ol_mapa_fechas_programadas_laboratorio($conn, $cotizacionesRowsBase);
+        $mapReprogramacionesLab = ol_mapa_reprogramaciones_laboratorio($conn, $cotizacionesRowsBase);
 
         if ($resumen_alertas) {
             $allOrderIds = [];
@@ -2369,6 +2949,24 @@ switch ($method) {
             foreach ($rowsBase as $rowBase) {
                 $orderId = intval($rowBase['id'] ?? 0);
                 if ($orderId <= 0) {
+                    continue;
+                }
+                $fechaOperativaMeta = ol_resolver_fecha_programada_operativa($rowBase, $mapFechasProgramadasLab);
+                $rowBase['fecha_programada_operativa'] = $fechaOperativaMeta['fecha'];
+                $rowBase['fecha_programada_operativa_hora'] = $fechaOperativaMeta['fecha_hora'] ?? null;
+                $rowBase['hora_referencia_visita'] = $fechaOperativaMeta['hora_referencia_visita'] ?? null;
+                $rowBase['origen_fecha_programada_operativa'] = $fechaOperativaMeta['origen'] ?? 'fallback_historico';
+                $rowBase['cotizacion_id_agenda_origen'] = $fechaOperativaMeta['cotizacion_id_agenda'] ?? null;
+                $rowBase['fecha_historica_orden'] = $rowBase['fecha'] ?? null;
+                $rowBase['fecha_programada_fallback_historico'] = intval($fechaOperativaMeta['fallback_historico'] ?? 1);
+                if (!ol_match_programacion_orden($rowBase, $filtroProgramacionMeta)) {
+                    continue;
+                }
+                $metaReprogBase = ol_resolver_reprogramacion_orden($rowBase, $mapReprogramacionesLab);
+                if ($filtroEstadoProgramacionNorm === 'reprogramadas' && !$metaReprogBase['es_reprogramada']) {
+                    continue;
+                }
+                if ($filtroEstadoProgramacionNorm === 'programadas_originalmente' && $metaReprogBase['es_reprogramada']) {
                     continue;
                 }
                 $resultadoRow = $resultadoPorOrden[$orderId] ?? null;
@@ -2555,6 +3153,30 @@ switch ($method) {
                 $progressSummary = calculate_exam_progress_summary($resultadosJson, $examIds, $detalleProgreso);
 
                 $row['examenes'] = $examenesSalida;
+                $fechaOperativaMeta = ol_resolver_fecha_programada_operativa($row, $mapFechasProgramadasLab);
+                $row['fecha_programada_operativa'] = $fechaOperativaMeta['fecha'];
+                $row['fecha_programada_operativa_hora'] = $fechaOperativaMeta['fecha_hora'] ?? null;
+                $row['hora_referencia_visita'] = $fechaOperativaMeta['hora_referencia_visita'] ?? null;
+                $row['origen_fecha_programada_operativa'] = $fechaOperativaMeta['origen'] ?? 'fallback_historico';
+                $row['cotizacion_id_agenda_origen'] = $fechaOperativaMeta['cotizacion_id_agenda'] ?? null;
+                $row['fecha_programada_operativa_detalle'] = $fechaOperativaMeta['detalle'];
+                $row['fecha_historica_orden'] = $row['fecha'] ?? null;
+                $row['fecha_programada_fallback_historico'] = intval($fechaOperativaMeta['fallback_historico'] ?? (empty($row['fecha_programada_operativa']) ? 1 : 0));
+                $row['programacion_estado'] = ol_clasificar_programacion_orden($row, $filtroProgramacionMeta['hoy']);
+                $metaReprog = ol_resolver_reprogramacion_orden($row, $mapReprogramacionesLab);
+                $row['fecha_reprogramada'] = $metaReprog['es_reprogramada'];
+                $row['cantidad_reprogramaciones'] = intval($metaReprog['cantidad'] ?? 0);
+                $ultimaReprog = is_array($metaReprog['ultima'] ?? null) ? $metaReprog['ultima'] : [];
+                $row['fecha_anterior_reprogramacion'] = trim((string)($ultimaReprog['fecha_anterior'] ?? ''));
+                $row['fecha_nueva_reprogramacion'] = trim((string)($ultimaReprog['fecha_nueva'] ?? ''));
+                $row['hora_anterior_reprogramacion'] = trim((string)($ultimaReprog['hora_anterior'] ?? ''));
+                $row['hora_nueva_reprogramacion'] = trim((string)($ultimaReprog['hora_nueva'] ?? ''));
+                $nombreReprograma = trim((string)($ultimaReprog['usuario_nombre'] ?? ''));
+                $loginReprograma = trim((string)($ultimaReprog['usuario_login'] ?? ''));
+                $row['reprogramada_por'] = $nombreReprograma !== '' ? $nombreReprograma : $loginReprograma;
+                $row['reprogramada_en'] = trim((string)($ultimaReprog['created_at'] ?? ''));
+                $row['motivo_reprogramacion'] = trim((string)($ultimaReprog['motivo'] ?? ''));
+                $row['reprogramacion_historial'] = $metaReprog['historial'] ?? [];
                 $row['alarmas_activas'] = $alarmSummary['alarmas_activas'];
                 $row['alarmas_vencidas'] = $alarmSummary['alarmas_vencidas'];
                 $row['alarmas_vencidas_detalle'] = $alarmSummary['alarmas_vencidas_detalle'];
@@ -2571,6 +3193,16 @@ switch ($method) {
                     $row['estado_visual'] = $progressSummary['completos'] >= $progressSummary['total'] ? 'completado' : 'pendiente';
                 } else {
                     $row['estado_visual'] = $row['estado'];
+                }
+
+                if (!ol_match_programacion_orden($row, $filtroProgramacionMeta)) {
+                    continue;
+                }
+                if ($filtroEstadoProgramacionNorm === 'reprogramadas' && !$metaReprog['es_reprogramada']) {
+                    continue;
+                }
+                if ($filtroEstadoProgramacionNorm === 'programadas_originalmente' && $metaReprog['es_reprogramada']) {
+                    continue;
                 }
 
                 if (is_array($pagoLabRow)) {
@@ -2611,11 +3243,56 @@ switch ($method) {
                 $ordenesLigero[] = $row;
             }
 
-            $payloadLight = ['success' => true, 'ordenes' => $ordenesLigero];
+            $totalFiltrado = count($ordenesLigero);
+            $pendientesFiltradas = 0;
+            $completadasFiltradas = 0;
+            foreach ($ordenesLigero as $ordenTmp) {
+                $estadoVisualTmp = strtolower(trim((string)($ordenTmp['estado_visual'] ?? $ordenTmp['estado'] ?? '')));
+                if ($estadoVisualTmp === 'pendiente') {
+                    $pendientesFiltradas++;
+                } elseif ($estadoVisualTmp === 'completado') {
+                    $completadasFiltradas++;
+                }
+            }
+            $hoyFiltradas = 0;
+            foreach ($ordenesLigero as $ordenTmp) {
+                $fechaOpTmp = ol_fecha_operativa_orden($ordenTmp);
+                if ($fechaOpTmp !== null && $fechaOpTmp === ($filtroProgramacionMeta['hoy'] ?? '')) {
+                    $hoyFiltradas++;
+                }
+            }
+
+            $ordenesSalida = $ordenesLigero;
+            if ($paginateInPhp) {
+                $totalRegistros = $totalFiltrado;
+                $ordenesSalida = array_slice($ordenesLigero, $offset, $limit);
+            } elseif ($usePagination) {
+                $totalRegistros = max($totalRegistros, $totalFiltrado);
+            }
+
+            $payloadLight = [
+                'success' => true,
+                'ordenes' => $ordenesSalida,
+                'fecha_operativa_hoy' => $filtroProgramacionMeta['hoy'],
+                'filtro_programacion_aplicado' => $filtroProgramacionMeta['modo'],
+                'filtro_estado_programacion_aplicado' => $filtroEstadoProgramacionNorm,
+                'rango_programacion' => [
+                    'desde' => $filtroProgramacionMeta['desde'],
+                    'hasta' => $filtroProgramacionMeta['hasta'],
+                ],
+                'contadores' => [
+                    'total' => $totalFiltrado,
+                    'pendientes' => $pendientesFiltradas,
+                    'completadas' => $completadasFiltradas,
+                    'hoy' => $hoyFiltradas,
+                ],
+            ];
             if ($usePagination) {
                 $payloadLight['total'] = $totalRegistros;
                 $payloadLight['page'] = $page;
                 $payloadLight['limit'] = $limit;
+            } else {
+                $payloadLight['total'] = $totalFiltrado;
             }
 
             ol_log_slow_request($requestStartedAt, 'GET', 'listado_light');
@@ -2984,6 +3661,15 @@ switch ($method) {
             unset($exDetalle);
 
             $row['examenes'] = $examenes_detalle;
+            $fechaOperativaMeta = ol_resolver_fecha_programada_operativa($row, $mapFechasProgramadasLab);
+            $row['fecha_programada_operativa'] = $fechaOperativaMeta['fecha'];
+            $row['fecha_programada_operativa_hora'] = $fechaOperativaMeta['fecha_hora'] ?? null;
+            $row['hora_referencia_visita'] = $fechaOperativaMeta['hora_referencia_visita'] ?? null;
+            $row['origen_fecha_programada_operativa'] = $fechaOperativaMeta['origen'] ?? 'fallback_historico';
+            $row['cotizacion_id_agenda_origen'] = $fechaOperativaMeta['cotizacion_id_agenda'] ?? null;
+            $row['fecha_programada_operativa_detalle'] = $fechaOperativaMeta['detalle'];
+            $row['fecha_historica_orden'] = $row['fecha'] ?? null;
+            $row['fecha_programada_fallback_historico'] = intval($fechaOperativaMeta['fallback_historico'] ?? (empty($row['fecha_programada_operativa']) ? 1 : 0));
 
             $resultadoRow = $resultadoPorOrden[$orderId] ?? null;
             $resultadosJson = null;
