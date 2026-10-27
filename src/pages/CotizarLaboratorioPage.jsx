@@ -129,6 +129,33 @@ export default function CotizarLaboratorioPage() {
   const getDisplayPrice = (examenId, basePrice) => String(getCoberturaExamen(examenId)?.origen_cobro || "") === "contrato"
     ? 0
     : Number(basePrice || 0);
+  const tarifasLabByExamen = useMemo(() => {
+    const map = new Map();
+    for (const tarifa of Array.isArray(tarifas) ? tarifas : []) {
+      if (String(tarifa?.servicio_tipo || "").toLowerCase().trim() !== "laboratorio") continue;
+      if (Number(tarifa?.activo || 0) !== 1) continue;
+      const examenId = Number(tarifa?.examen_id || 0);
+      if (examenId <= 0 || map.has(examenId)) continue;
+      map.set(examenId, tarifa);
+    }
+    return map;
+  }, [tarifas]);
+  const getLabTarifa = (examenId) => tarifasLabByExamen.get(Number(examenId || 0)) || null;
+  const getLabBasePrice = (examenId, examenRow = null) => {
+    const exId = Number(examenId || 0);
+    const tarifa = getLabTarifa(exId);
+    if (tarifa) {
+      return Number(tarifa?.precio_particular || 0);
+    }
+    if (examenRow && examenRow.precio_publico !== undefined && examenRow.precio_publico !== null && examenRow.precio_publico !== "") {
+      return Number(examenRow.precio_publico || 0);
+    }
+    const ex = Array.isArray(examenes) ? examenes.find((item) => Number(item?.id || 0) === exId) : null;
+    if (ex && ex.precio_publico !== undefined && ex.precio_publico !== null && ex.precio_publico !== "") {
+      return Number(ex.precio_publico || 0);
+    }
+    return 0;
+  };
   const programacionBaseConsulta = useMemo(() => {
     if (!Array.isArray(cotizacionDetallesOriginales) || cotizacionDetallesOriginales.length === 0) {
       return null;
@@ -174,7 +201,7 @@ export default function CotizarLaboratorioPage() {
 
   const getProgramacionSugeridaExamen = (examenId, fechaPreferida = "") => {
     const exIdNum = Number(examenId || 0);
-    const tarifa = tarifas.find((t) => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exIdNum && t.activo === 1);
+    const tarifa = getLabTarifa(exIdNum);
     const ex = examenes.find((e) => Number(e.id) === exIdNum);
     const medicoId = Number(tarifa?.medico_id || ex?.medico_id || 0);
     const fechaBase = String(fechaPreferida || programacionBaseConsulta?.fecha || getLimaDate()).slice(0, 10);
@@ -193,28 +220,45 @@ export default function CotizarLaboratorioPage() {
   };
 
   useEffect(() => {
-    // Cargar exámenes, tarifas, ranking y paciente
+    let cancelled = false;
+
     Promise.all([
-      authFetch(`${BASE_URL}api_examenes_laboratorio.php`, { credentials: "include", cache: "no-store" }).then(res => res.json()),
-      authFetch(`${BASE_URL}api_tarifas.php`, { credentials: "include", cache: "no-store" }).then(res => res.json()),
-      authFetch(`${BASE_URL}api_examenes_laboratorio_ranking.php`, { credentials: "include", cache: "no-store" }).then(res => res.json()),
+      authFetch(`${BASE_URL}api_examenes_laboratorio.php`, { credentials: "include", cache: "no-store" }).then((res) => res.json()),
       pacienteIdNum > 0
-        ? authFetch(`${BASE_URL}api_pacientes.php?id=${pacienteIdNum}`, { credentials: "include", cache: "no-store" }).then(res => res.json())
-        : Promise.resolve({ success: false })
-    ]).then(([examenesData, tarifasData, rankingData, pacienteData]) => {
+        ? authFetch(`${BASE_URL}api_pacientes.php?id=${pacienteIdNum}`, { credentials: "include", cache: "no-store" }).then((res) => res.json())
+        : Promise.resolve({ success: false }),
+    ]).then(([examenesData, pacienteData]) => {
+      if (cancelled) return;
       setExamenes(Array.isArray(examenesData?.examenes) ? examenesData.examenes : []);
-      setTarifas(Array.isArray(tarifasData?.tarifas) ? tarifasData.tarifas : []);
-      setRanking(Array.isArray(rankingData?.ranking) ? rankingData.ranking : []);
+      setTarifas([]);
       if (pacienteData && pacienteData.success && pacienteData.paciente) {
         setPaciente(pacienteData.paciente);
       }
       setLoading(false);
-      // Eliminado log de depuración de tarifas y examenes
     }).catch(() => {
+      if (cancelled) return;
       setLoading(false);
       setMensaje("No se pudo cargar información del cotizador. Intenta nuevamente.");
     });
-  }, [pacienteId]);
+
+    return () => { cancelled = true; };
+  }, [pacienteIdNum]);
+
+  useEffect(() => {
+    let cancelled = false;
+    authFetch(`${BASE_URL}api_examenes_laboratorio_ranking.php`, { credentials: "include", cache: "no-store" })
+      .then((res) => res.json())
+      .then((rankingData) => {
+        if (cancelled) return;
+        setRanking(Array.isArray(rankingData?.ranking) ? rankingData.ranking : []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRanking([]);
+      });
+
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -571,9 +615,8 @@ export default function CotizarLaboratorioPage() {
       const desiredQty = isSelected ? Math.max(preQty, 1) : 0;
       const diff = desiredQty - preQty;
       if (diff > 0 || metadataChanged) {
-        const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exId && t.activo === 1);
         const ex = examenes.find(e => Number(e.id) === exId);
-        const basePrecio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
+        const basePrecio = getLabBasePrice(exId, ex);
         const precio = getDisplayPrice(exId, basePrecio);
         const qtyToAdd = metadataChanged ? Math.max(preQty, 1) : diff;
         itemsToAdd.push({
@@ -798,27 +841,26 @@ export default function CotizarLaboratorioPage() {
     return seleccionados.reduce((total, exId) => {
       const exIdNum = Number(exId);
       const ex = examenes.find(e => Number(e.id) === exIdNum);
-      const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exIdNum && t.activo === 1);
-      const basePrecio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
+      const basePrecio = getLabBasePrice(exIdNum, ex);
       const precio = getDisplayPrice(exIdNum, basePrecio);
       return total + precio;
     }, 0);
   };
 
-  if (loading) return <div>Cargando exámenes y tarifas...</div>;
+  if (loading) return <div>Cargando exámenes...</div>;
   // Obtener categorías únicas
   const categorias = Array.from(new Set(examenes.map(ex => ex?.categoria).filter(Boolean)));
   // Filtrar exámenes por búsqueda y categoría
   // Ordenar por ranking (más solicitados primero)
-  const rankingIds = ranking.map(r => Number(r?.id)).filter(Number.isFinite);
+  const rankingIndex = new Map(ranking.map((r, idx) => [Number(r?.id), idx]).filter(([id]) => Number.isFinite(id)));
   const examenesOrdenados = [...examenes].sort((a, b) => {
     const idA = Number(a?.id);
     const idB = Number(b?.id);
     const aContrato = String(getCoberturaExamen(idA)?.origen_cobro || "") === "contrato";
     const bContrato = String(getCoberturaExamen(idB)?.origen_cobro || "") === "contrato";
     if (aContrato !== bContrato) return aContrato ? -1 : 1;
-    const idxA = rankingIds.indexOf(idA);
-    const idxB = rankingIds.indexOf(idB);
+    const idxA = rankingIndex.has(idA) ? rankingIndex.get(idA) : -1;
+    const idxB = rankingIndex.has(idB) ? rankingIndex.get(idB) : -1;
     if (idxA === -1 && idxB === -1) return safeText(a?.nombre).localeCompare(safeText(b?.nombre));
     if (idxA === -1) return 1;
     if (idxB === -1) return -1;
@@ -889,10 +931,10 @@ export default function CotizarLaboratorioPage() {
     return seleccionados.map(exId => {
       const exIdNum = Number(exId);
       const ex = examenes.find(e => Number(e.id) === exIdNum);
-      const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exIdNum && t.activo === 1);
+      const tarifa = getLabTarifa(exIdNum);
       const descripcion = (ex && typeof ex.nombre === 'string' && ex.nombre.trim() !== "" && ex.nombre !== "0") ? ex.nombre : "Examen sin nombre";
       const derivacion = derivaciones[exId] || { derivado: false };
-      const basePrecio = tarifa ? parseFloat(tarifa.precio_particular) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : 0);
+      const basePrecio = getLabBasePrice(exIdNum, ex);
       const precio = getDisplayPrice(exIdNum, basePrecio);
       const programacion = programacionPorExamen[exIdNum] || getProgramacionSugeridaExamen(exIdNum);
       const medicoIdDetalle = Number(tarifa?.medico_id || ex?.medico_id || 0);
@@ -1431,13 +1473,13 @@ export default function CotizarLaboratorioPage() {
                 <ul className="divide-y divide-gray-100">
                   {paginated.map(ex => {
                     const exIdNum = Number(ex.id);
-                    const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exIdNum && t.activo === 1);
+                    const tarifa = getLabTarifa(exIdNum);
                     const isSelected = seleccionados.includes(exIdNum);
                     const derivacion = derivaciones[exIdNum] || { derivado: false, tipo: '', valor: '', laboratorio: '' };
                     const cubiertaPorContrato = String(getCoberturaExamen(exIdNum)?.origen_cobro || "") === "contrato";
                     const coberturaResuelta = coverageStatusByExamen[exIdNum] === "done";
                     // Usar precio_publico si no hay tarifa
-                    const basePrecio = tarifa ? tarifa.precio_particular : (ex.precio_publico ? parseFloat(ex.precio_publico) : "-");
+                    const basePrecio = tarifa ? Number(tarifa.precio_particular || 0) : (ex.precio_publico ? parseFloat(ex.precio_publico) : "-");
                     const precio = basePrecio === "-" ? "-" : getDisplayPrice(exIdNum, basePrecio);
                     const precioMostrar = precio !== "-" ? Number(precio).toFixed(2) : "-";
                     return (
@@ -1569,10 +1611,10 @@ export default function CotizarLaboratorioPage() {
                 {seleccionados.map(exId => {
                   const exIdNum = Number(exId);
                   const ex = examenes.find(e => Number(e.id) === exIdNum);
-                  const tarifa = tarifas.find(t => t.servicio_tipo === "laboratorio" && Number(t.examen_id) === exIdNum && t.activo === 1);
+                  const tarifa = getLabTarifa(exIdNum);
                   const cubiertaPorContrato = String(getCoberturaExamen(exIdNum)?.origen_cobro || "") === "contrato";
                   const coberturaResuelta = coverageStatusByExamen[exIdNum] === "done";
-                  const basePrecio = tarifa ? tarifa.precio_particular : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : "-");
+                  const basePrecio = tarifa ? Number(tarifa.precio_particular || 0) : (ex && ex.precio_publico ? parseFloat(ex.precio_publico) : "-");
                   const precio = basePrecio === "-" ? "-" : getDisplayPrice(exIdNum, basePrecio);
                   const precioMostrar = precio !== "-" ? Number(precio).toFixed(2) : "-";
                   const cantidad = 1;

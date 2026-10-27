@@ -1,6 +1,5 @@
 import { authFetch } from "../utils/apiClient";
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import QuickAccessNav from "../components/comunes/QuickAccessNav";
 
@@ -33,16 +32,36 @@ function inDateRange(value, desde, hasta) {
   return true;
 }
 
-function esConsultaCancelada(estadoRaw) {
-  return ["cancelada", "cancelado", "anulada", "anulado"].includes(String(estadoRaw || "").toLowerCase().trim());
-}
-
 function estadoBadgeClasses(estadoRaw) {
   const estado = String(estadoRaw || "").toLowerCase().trim();
   if (["completada", "completado", "atendida", "atendido"].includes(estado)) return "bg-emerald-100 text-emerald-800";
   if (["cancelada", "cancelado", "anulada", "anulado"].includes(estado)) return "bg-rose-100 text-rose-800";
   if (estado === "falta_cancelar") return "bg-amber-100 text-amber-800";
   return "bg-sky-100 text-sky-800";
+}
+
+function estadoGestionLabel(estadoRaw) {
+  const estado = String(estadoRaw || "").toLowerCase().trim();
+  if (!estado || estado === "-") return "N/A";
+  if (estado === "pendiente") return "Sin gestionar";
+  if (estado === "contactado") return "Contactado";
+  if (estado === "confirmado") return "Confirmado";
+  if (estado === "no_contesta") return "No contesta";
+  if (estado === "reprogramar") return "Reprogramar";
+  if (estado === "cancelado") return "Cancelado";
+  return estado;
+}
+
+function estadoGestionBadgeClasses(estadoRaw) {
+  const estado = String(estadoRaw || "").toLowerCase().trim();
+  if (!estado || estado === "-") return "bg-slate-100 text-slate-600";
+  if (estado === "pendiente") return "bg-slate-100 text-slate-700";
+  if (estado === "contactado") return "bg-sky-100 text-sky-700";
+  if (estado === "confirmado") return "bg-emerald-100 text-emerald-700";
+  if (estado === "no_contesta") return "bg-amber-100 text-amber-700";
+  if (estado === "reprogramar") return "bg-fuchsia-100 text-fuchsia-700";
+  if (estado === "cancelado") return "bg-rose-100 text-rose-700";
+  return "bg-violet-100 text-violet-800";
 }
 
 function origenLabel(origenRaw) {
@@ -87,6 +106,50 @@ function servicioAgendaLabel(row) {
   return servicioTipoLabel(row?.servicio_tipo);
 }
 
+function agruparOperativaAgendaServicio(items) {
+  const grupos = new Map();
+  const salida = [];
+
+  for (const raw of Array.isArray(items) ? items : []) {
+    const item = { ...raw };
+    const origen = String(item?.origen_consulta || "").toLowerCase().trim();
+    if (origen !== "agenda_servicio") {
+      salida.push(item);
+      continue;
+    }
+
+    const cotizacionGrupoId = Number(item?.cotizacion_grupo_id || item?.cotizacion_id || 0);
+    if (cotizacionGrupoId <= 0) {
+      salida.push(item);
+      continue;
+    }
+
+    const key = `agenda-cotizacion-${cotizacionGrupoId}`;
+    const existente = grupos.get(key);
+    if (!existente) {
+      const base = { ...item, _agenda_items: [{ ...item }] };
+      grupos.set(key, base);
+      salida.push(base);
+      continue;
+    }
+    existente._agenda_items.push({ ...item });
+  }
+
+  for (const item of salida) {
+    const agendaItems = Array.isArray(item?._agenda_items) ? item._agenda_items : [];
+    if (agendaItems.length <= 1) continue;
+
+    const serviciosUnicos = Array.from(new Set(
+      agendaItems.map((agenda) => servicioAgendaLabel(agenda)).filter(Boolean)
+    ));
+    item.servicios_label = serviciosUnicos.join(" + ");
+    item.agendas_count = agendaItems.length;
+    item.servicios_count = serviciosUnicos.length;
+  }
+
+  return salida;
+}
+
 function normalizarConsultaPura(row) {
   return {
     ...row,
@@ -100,7 +163,6 @@ function normalizarConsultaPura(row) {
 }
 
 export default function ListaConsultasPage() {
-  const navigate = useNavigate();
   const [consultas, setConsultas] = useState([]);
   const [totalRows, setTotalRows] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -157,9 +219,10 @@ export default function ListaConsultasPage() {
           const desde = String(fechaDesde || "").trim();
           const hasta = String(fechaHasta || "").trim();
           const filtrados = items.filter((it) => inDateRange(it?.fecha, desde, hasta));
+          const agrupados = agruparOperativaAgendaServicio(filtrados);
 
-          setAllRows(filtrados);
-          setTotalRows(filtrados.length);
+          setAllRows(agrupados);
+          setTotalRows(agrupados.length);
         })
         .catch((err) => {
           if (err?.name === "AbortError") return;
@@ -249,7 +312,7 @@ export default function ListaConsultasPage() {
         Paciente: `${c.paciente_nombre || ""} ${c.paciente_apellido || ""}`.trim(),
         Medico: `${c.medico_nombre || ""} ${c.medico_apellido || ""}`.trim(),
         Estado: c.estado_consulta || "",
-        "Estado gestión": c.estado_gestion || "",
+        "Estado gestión": estadoGestionLabel(c.estado_gestion),
         "Servicio agendable": servicioAgendaLabel(c),
         Origen: origenLabel(c.origen_consulta),
         Cobro: estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente, c.cobro_anulado),
@@ -281,7 +344,7 @@ export default function ListaConsultasPage() {
         `${c.paciente_nombre || ""} ${c.paciente_apellido || ""}`.trim(),
         `${c.medico_nombre || ""} ${c.medico_apellido || ""}`.trim(),
         c.estado_consulta || "",
-        c.estado_gestion || "",
+        estadoGestionLabel(c.estado_gestion),
         servicioAgendaLabel(c),
         origenLabel(c.origen_consulta),
         estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente, c.cobro_anulado),
@@ -292,34 +355,6 @@ export default function ListaConsultasPage() {
     });
     const fecha = new Date().toISOString().slice(0, 10);
     doc.save(`${modoVista === "operativa" ? "consultas_operativas" : "consultas_puras"}_${fecha}.pdf`);
-  };
-
-  const goEditar = (row) => {
-    const pacienteId = Number(row?.paciente_id || 0);
-    const consultaIdRef = Number(row?.consulta_id_ref || 0);
-    const consultaId = Number(row?.id || 0);
-    const cotizacionId = Number(row?.cotizacion_id || 0);
-    const origen = String(row?.origen_consulta || "").trim().toLowerCase();
-
-    if (origen === "agenda_servicio") {
-      if (consultaIdRef > 0 && pacienteId > 0) {
-        navigate(`/agendar-consulta?paciente_id=${pacienteId}&consulta_id=${consultaIdRef}`);
-        return;
-      }
-      if (cotizacionId > 0) {
-        navigate(`/cotizaciones?cotizacion_id=${cotizacionId}`);
-        return;
-      }
-    }
-
-    if (pacienteId > 0 && consultaId > 0) {
-      navigate(`/agendar-consulta?paciente_id=${pacienteId}&consulta_id=${consultaId}`);
-      return;
-    }
-
-    if (cotizacionId > 0) {
-      navigate(`/cotizaciones?cotizacion_id=${cotizacionId}`);
-    }
   };
 
   return (
@@ -491,13 +526,12 @@ export default function ListaConsultasPage() {
                     <th className="px-3 py-3 text-left font-semibold">Servicio</th>
                     <th className="px-3 py-3 text-left font-semibold">Origen</th>
                     <th className="px-3 py-3 text-left font-semibold">Cobro</th>
-                    <th className="px-3 py-3 text-center font-semibold">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {consultas.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                      <td colSpan={9} className="px-3 py-8 text-center text-slate-500">
                         No hay consultas en el rango seleccionado
                       </td>
                     </tr>
@@ -527,8 +561,8 @@ export default function ListaConsultasPage() {
                           </span>
                         </td>
                         <td className="px-3 py-3">
-                          <span className="inline-block rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800">
-                            {String(c.estado_gestion || "").trim() || "-"}
+                          <span className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${estadoGestionBadgeClasses(c.estado_gestion)}`}>
+                            {estadoGestionLabel(c.estado_gestion)}
                           </span>
                         </td>
                         <td className="px-3 py-3 text-slate-700">
@@ -536,7 +570,9 @@ export default function ListaConsultasPage() {
                             <span className="font-semibold text-slate-700">{servicioAgendaLabel(c)}</span>
                             {String(c.origen_consulta || "").toLowerCase().trim() === "agenda_servicio" && (
                               <span className="text-[11px] text-slate-500">
-                                {servicioTipoLabel(c.servicio_tipo)} {Number(c?.cotizacion_id || 0) > 0 ? `· Cotización #${Number(c.cotizacion_id)}` : ""}
+                                {servicioTipoLabel(c.servicio_tipo)}
+                                {Number(c?.cotizacion_id || 0) > 0 ? ` · Cotización #${Number(c.cotizacion_id)}` : ""}
+                                {Number(c?.agendas_count || 0) > 1 ? ` · ${Number(c.agendas_count)} ítems` : ""}
                               </span>
                             )}
                           </div>
@@ -546,24 +582,6 @@ export default function ListaConsultasPage() {
                         </td>
                         <td className="px-3 py-3 text-slate-700">
                           {estadoCobroLabel(c.cotizacion_estado, c.saldo_pendiente, c.cobro_anulado)}
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          {esConsultaCancelada(c.estado_consulta) ? (
-                            <span
-                              className="inline-block rounded-md bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500"
-                              title="Consulta cancelada/anulada: no se puede editar. Para atender al paciente, genera una nueva cotización."
-                            >
-                              Anulada
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => goEditar(c)}
-                              className="rounded-md px-3 py-1.5 text-xs font-semibold text-white transition"
-                              style={{ backgroundColor: "var(--color-primary)" }}
-                            >
-                              Editar
-                            </button>
-                          )}
                         </td>
                       </tr>
                     ))
