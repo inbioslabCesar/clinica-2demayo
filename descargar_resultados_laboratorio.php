@@ -917,8 +917,38 @@ $getParamTokenPdf = function (array $param): string {
     return normalize_resultado_key_token($base);
 };
 
-$fechaIngresoRaw = (string)($orden['fecha'] ?? ($row['fecha'] ?? ''));
-$fechaIngresoFmtGlobal = pdf_formatear_fecha_hora_corta($fechaIngresoRaw);
+$fechaRealizacionTs = 0;
+$fechaRealizacionRaw = '';
+
+if (!empty($row['validado_en'])) {
+    $tsValidado = strtotime((string)$row['validado_en']);
+    if ($tsValidado !== false && $tsValidado > 0) {
+        $fechaRealizacionTs = max($fechaRealizacionTs, (int)$tsValidado);
+    }
+}
+if (!empty($row['fecha_validacion'])) {
+    $tsFechaValid = strtotime((string)$row['fecha_validacion']);
+    if ($tsFechaValid !== false && $tsFechaValid > 0) {
+        $fechaRealizacionTs = max($fechaRealizacionTs, (int)$tsFechaValid);
+    }
+}
+foreach ($resultados_map as $k => $v) {
+    $kk = (string)$k;
+    if (strpos($kk, '__param_validado_at__') === false) continue;
+    $rawAt = trim((string)$v);
+    if ($rawAt === '') continue;
+    $tsAt = strtotime($rawAt);
+    if ($tsAt === false || $tsAt <= 0) continue;
+    if ($tsAt > $fechaRealizacionTs) {
+        $fechaRealizacionTs = (int)$tsAt;
+    }
+}
+if ($fechaRealizacionTs > 0) {
+    $fechaRealizacionRaw = date('Y-m-d H:i:s', $fechaRealizacionTs);
+} else {
+    $fechaRealizacionRaw = (string)($row['fecha'] ?? ($orden['fecha'] ?? ''));
+}
+$fechaRealizacionFmtGlobal = pdf_formatear_fecha_hora_corta($fechaRealizacionRaw);
 
 if (empty($examenes_detalle)) {
     $rowsHtml .= '<tr><td colspan="5" style="padding:8px;"><pre style="margin:0;white-space:pre-wrap;">' . h(json_encode($resultados_map, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) . '</pre></td></tr>';
@@ -995,7 +1025,7 @@ if (empty($examenes_detalle)) {
             continue;
         }
 
-        $examFechaIngresoFmt = $fechaIngresoFmtGlobal;
+        $examFechaIngresoFmt = $fechaRealizacionFmtGlobal;
         $examFechaValidacionTs = 0;
         $examFechaValidacionFmt = '';
         foreach ($resultados_map as $rk => $rv) {
@@ -1093,7 +1123,7 @@ if (empty($examenes_detalle)) {
                     $rowsHtml .= '<tr><td colspan="5" style="background:' . h($titleBackground) . ';color:' . h($titleColor) . ';font-weight:' . h($titleWeight) . ';font-style:' . h($titleStyle) . ';text-align:' . h($titleAlign) . ';padding:4px 7px;border-top:1px solid #d6deea;">' . h($nombre_param) . '</td></tr>';
                     $examTieneFilas = true;
                     if (!$examIngresoMostrado && $examFechaIngresoFmt !== '') {
-                        $rowsHtml .= '<tr><td colspan="5" style="padding:2px 7px 3px 7px;color:#334155;text-align:right;font-size:9px;">Fecha de ingreso: ' . h($examFechaIngresoFmt) . '</td></tr>';
+                        $rowsHtml .= '<tr><td colspan="5" style="padding:2px 7px 3px 7px;color:#334155;text-align:right;font-size:9px;">Fecha de realización: ' . h($examFechaIngresoFmt) . '</td></tr>';
                         $examIngresoMostrado = true;
                     }
                     continue;
@@ -1288,7 +1318,7 @@ if (empty($examenes_detalle)) {
                 $refCellHtml = $refs !== '' ? $refs : '&nbsp;';
 
                 if (!$examIngresoMostrado && $examFechaIngresoFmt !== '') {
-                    $rowsHtml .= '<tr><td colspan="5" style="padding:2px 7px 3px 7px;color:#334155;text-align:right;font-size:9px;">Fecha de ingreso: ' . h($examFechaIngresoFmt) . '</td></tr>';
+                    $rowsHtml .= '<tr><td colspan="5" style="padding:2px 7px 3px 7px;color:#334155;text-align:right;font-size:9px;">Fecha de realización: ' . h($examFechaIngresoFmt) . '</td></tr>';
                     $examIngresoMostrado = true;
                 }
 
@@ -1308,7 +1338,7 @@ if (empty($examenes_detalle)) {
         } else {
             $rawKey = (string)$exId;
             if (!$examIngresoMostrado && $examFechaIngresoFmt !== '') {
-                $rowsHtml .= '<tr><td colspan="5" style="padding:2px 7px 3px 7px;color:#334155;text-align:right;font-size:9px;">Fecha de ingreso: ' . h($examFechaIngresoFmt) . '</td></tr>';
+                $rowsHtml .= '<tr><td colspan="5" style="padding:2px 7px 3px 7px;color:#334155;text-align:right;font-size:9px;">Fecha de realización: ' . h($examFechaIngresoFmt) . '</td></tr>';
                 $examIngresoMostrado = true;
             }
             $val = isset($resultados_map[$rawKey]) ? $resultados_map[$rawKey] : null;
@@ -1380,7 +1410,7 @@ $headerHtml = '<div style="font-family:dejavusanscondensed, DejaVu Sans, Arial, 
     . '<td width="50%" style="vertical-align:top;line-height:1.17;font-size:10.8px;">'
     . ($sexo ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Sexo:</span> ' . h($sexo) . '</div>' : '')
     . ($fecha_nacimiento ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Fecha Nac.:</span> ' . h($fecha_nacimiento) . '</div>' : '')
-    . '<div style="font-size:10.8px;"><span style="font-weight:600;">Fecha Examen:</span> ' . h($row['fecha']) . '</div>'
+    . '<div style="font-size:10.8px;"><span style="font-weight:600;">Fecha Examen:</span> ' . h($fechaRealizacionFmtGlobal !== '' ? $fechaRealizacionFmtGlobal : (string)($row['fecha'] ?? '')) . '</div>'
     . ($tipo_solicitud ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Referencia:</span> ' . h($tipo_solicitud) . '</div>' : '')
     . (($tipo_solicitud === 'Médico' && $medico_solicitante) ? '<div style="font-size:10.8px;"><span style="font-weight:600;">Médico:</span> ' . h($medico_solicitante) . '</div>' : '')
     . '</td></tr></table>'
