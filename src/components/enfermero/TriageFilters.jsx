@@ -61,7 +61,7 @@ export default function TriageFilters({
             type="text"
             value={busqueda}
             onChange={e => { setBusqueda(e.target.value); setPage(1); }}
-            placeholder="Buscar paciente, médico..."
+            placeholder="Buscar paciente, médico, DNI o HC..."
             className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all duration-300"
           />
         </div>

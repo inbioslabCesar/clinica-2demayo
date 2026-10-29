@@ -2695,22 +2695,27 @@ switch ($method) {
                     . 'OR CONCAT_WS(" ", pacientes.nombre, pacientes.apellido) LIKE ? '
                     . 'OR pacientes.historia_clinica LIKE ? '
                     . 'OR pacientes.dni LIKE ? '
+                    . 'OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(pacientes.historia_clinica, ""), "HC", ""), ":", ""), "-", ""), " ", "")) LIKE ? '
+                    . 'OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(pacientes.dni, ""), "DNI", ""), ":", ""), "-", ""), " ", "")) LIKE ? '
                     . 'OR medicos.nombre LIKE ? '
                     . 'OR medicos.apellido LIKE ? '
                     . 'OR medicos.especialidad LIKE ? '
                     . 'OR CAST(consultas.id AS CHAR) LIKE ?'
                     . ')';
                 $searchLike = '%' . $searchNorm . '%';
+                $searchDocLike = '%' . $searchDoc . '%';
                 $paramsTri[] = $searchLike;
                 $paramsTri[] = $searchLike;
                 $paramsTri[] = $searchLike;
                 $paramsTri[] = $searchLike;
                 $paramsTri[] = $searchLike;
+                $paramsTri[] = $searchDocLike;
+                $paramsTri[] = $searchDocLike;
                 $paramsTri[] = $searchLike;
                 $paramsTri[] = $searchLike;
                 $paramsTri[] = $searchLike;
                 $paramsTri[] = $searchLike;
-                $typesTri .= 'sssssssss';
+                $typesTri .= 'sssssssssss';
             }
 
             $fromTri = ' FROM consultas '

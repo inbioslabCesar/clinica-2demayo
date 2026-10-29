@@ -533,7 +533,7 @@ function OrdenesLaboratorioList({ onSeleccionarOrden }) {
               type="text"
               value={busqueda}
               onChange={e => { setBusqueda(e.target.value); setPage(0); }}
-              placeholder="Paciente o médico..."
+              placeholder="Paciente, médico, DNI o HC..."
               className="w-full px-3 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
             />
             {(busqueda !== busquedaDebounced || (loading && initialLoaded)) && (

@@ -23,6 +23,7 @@ export default function useTriageConsultas() {
   const [rowsPerPage, setRowsPerPage] = useState(5);
   const [page, setPage] = useState(1);
   const [busqueda, setBusqueda] = useState("");
+  const [busquedaDebounced, setBusquedaDebounced] = useState("");
   const [filtroProgramacion, setFiltroProgramacion] = useState("hoy");
   const [estadoTriaje, setEstadoTriaje] = useState("pendiente");
   const [fechaDesde, setFechaDesde] = useState("");
@@ -30,6 +31,14 @@ export default function useTriageConsultas() {
   const [totalRows, setTotalRows] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const lastRequestRef = useRef(0);
+  const hasInitialLoadRef = useRef(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setBusquedaDebounced(busqueda);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [busqueda]);
 
   const limpiarListado = () => {
     setConsultas([]);
@@ -53,7 +62,7 @@ export default function useTriageConsultas() {
   const recargarConsultas = (intento = 0) => {
     const requestId = Date.now();
     lastRequestRef.current = requestId;
-    if (intento === 0) {
+    if (intento === 0 && !hasInitialLoadRef.current) {
       setLoading(true);
     }
     const params = new URLSearchParams({
@@ -62,7 +71,7 @@ export default function useTriageConsultas() {
       incluir_completadas_sin_triaje: "1",
       page: String(page),
       per_page: String(rowsPerPage),
-      search: busqueda.trim(),
+      search: busquedaDebounced.trim(),
       filtro_programacion: filtroProgramacion,
       estado_triaje: estadoTriaje,
       fecha_desde: filtroProgramacion === "rango" ? fechaDesde : "",
@@ -110,6 +119,7 @@ export default function useTriageConsultas() {
           setTotalRows(total);
           setTotalPages(totalPagesSrv);
           setError(null);
+          hasInitialLoadRef.current = true;
         } else {
           const mensaje = data.error || "Error al cargar consultas";
           if (esErrorConexionBD(mensaje) && intento < 2) {
@@ -118,6 +128,7 @@ export default function useTriageConsultas() {
           }
           setError(mensaje);
           limpiarListado();
+          hasInitialLoadRef.current = true;
         }
         setLoading(false);
       })
@@ -131,6 +142,7 @@ export default function useTriageConsultas() {
         }
         setError("Error de red");
         limpiarListado();
+        hasInitialLoadRef.current = true;
         setLoading(false);
       });
   };
@@ -140,7 +152,7 @@ export default function useTriageConsultas() {
       recargarConsultas();
     }, 220);
     return () => clearTimeout(timer);
-  }, [page, rowsPerPage, busqueda, fechaDesde, fechaHasta, filtroProgramacion, estadoTriaje]);
+  }, [page, rowsPerPage, busquedaDebounced, fechaDesde, fechaHasta, filtroProgramacion, estadoTriaje]);
 
   const consultasFiltradas = consultas;
   const consultasPagina = consultas;

@@ -2771,6 +2771,8 @@ switch ($method) {
                 OR IFNULL(p2.apellido, p.apellido) LIKE ?
                 OR IFNULL(m.nombre, "") LIKE ?
                 OR IFNULL(m.apellido, "") LIKE ?
+                OR IFNULL(p2.dni, p.dni) LIKE ?
+                OR IFNULL(p2.historia_clinica, p.historia_clinica) LIKE ?
             )';
             $searchLike = '%' . $filtro_busqueda . '%';
             $params[] = $searchLike;
@@ -2779,7 +2781,9 @@ switch ($method) {
             $params[] = $searchLike;
             $params[] = $searchLike;
             $params[] = $searchLike;
-            $types .= 'ssssss';
+            $params[] = $searchLike;
+            $params[] = $searchLike;
+            $types .= 'ssssssss';
         }
         if ($esSesionMedico && !$consulta_id) {
             // Tercer camino para ordenes de contrato sin consulta_id directo:
@@ -2848,6 +2852,8 @@ switch ($method) {
                 OR IFNULL(p2.apellido, p.apellido) LIKE ?
                 OR IFNULL(m.nombre, "") LIKE ?
                 OR IFNULL(m.apellido, "") LIKE ?
+                OR IFNULL(p2.dni, p.dni) LIKE ?
+                OR IFNULL(p2.historia_clinica, p.historia_clinica) LIKE ?
             )';
         }
         if ($esSesionMedico && !$consulta_id) {
