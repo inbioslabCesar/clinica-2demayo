@@ -80,15 +80,15 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
         return $cached;
     }
 
-    $baseUrl = trim((string)(getenv('APISPERU_BASE_URL') ?: ($_ENV['APISPERU_BASE_URL'] ?? 'https://dniruc.apisperu.com/api/v1')));
+    $baseUrl = trim((string)(getenv('APISPERU_BASE_URL') ?: ($_ENV['APISPERU_BASE_URL'] ?? 'https://apiperu.net/consulta')));
     if ($baseUrl === '') {
-        $baseUrl = 'https://dniruc.apisperu.com/api/v1';
+        $baseUrl = 'https://apiperu.net/consulta';
     }
     if (pacientes_buscar_ends_with($baseUrl, '/')) {
         $baseUrl = rtrim($baseUrl, '/');
     }
 
-    $url = $baseUrl . '/dni/' . rawurlencode($dni) . '?token=' . rawurlencode($token);
+    $url = $baseUrl . '/dni/' . rawurlencode($dni);
 
     $ch = curl_init();
     curl_setopt_array($ch, [
@@ -101,6 +101,7 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
         CURLOPT_DNS_CACHE_TIMEOUT => 300,
         CURLOPT_HTTPHEADER => [
             'Accept: application/json',
+            'Authorization: Bearer ' . $token,
         ],
     ]);
 
@@ -122,14 +123,16 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
         return ['found' => false, 'error' => 'Respuesta externa inválida'];
     }
 
-    if ($httpCode >= 400) {
+    // apiperu.net: 401 = token inválido; el resto de fallos llega con HTTP 200 y success=false
+    if ($httpCode >= 400 || (array_key_exists('success', $decoded) && !$decoded['success'])) {
         $message = trim((string)($decoded['message'] ?? $decoded['error'] ?? 'Servicio externo no disponible'));
         return ['found' => false, 'error' => $message !== '' ? $message : 'Servicio externo no disponible'];
     }
 
-    $nombres = trim((string)($decoded['nombres'] ?? ''));
-    $apellidoPaterno = trim((string)($decoded['apellidoPaterno'] ?? $decoded['apellido_paterno'] ?? ''));
-    $apellidoMaterno = trim((string)($decoded['apellidoMaterno'] ?? $decoded['apellido_materno'] ?? ''));
+    $data = (isset($decoded['data']) && is_array($decoded['data'])) ? $decoded['data'] : $decoded;
+    $nombres = trim((string)($data['nombres'] ?? ''));
+    $apellidoPaterno = trim((string)($data['apellido_paterno'] ?? $data['apellidoPaterno'] ?? ''));
+    $apellidoMaterno = trim((string)($data['apellido_materno'] ?? $data['apellidoMaterno'] ?? ''));
     $apellidos = trim($apellidoPaterno . ' ' . $apellidoMaterno);
 
     if ($nombres === '' && $apellidos === '') {

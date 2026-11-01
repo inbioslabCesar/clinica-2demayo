@@ -43,7 +43,7 @@ return [
     'DB_USER' => 'u330560936_clinicas',
     'DB_PASS' => 'TU_PASSWORD_AQUI',
    'APISPERU_TOKEN' => 'TU_TOKEN_APISPERU',
-   'APISPERU_BASE_URL' => 'https://dniruc.apisperu.com/api/v1',
+   'APISPERU_BASE_URL' => 'https://apiperu.net/consulta',
 ];
 ```
 
@@ -51,7 +51,7 @@ return [
 
 - Puedes definir el token por variables de entorno o en el archivo de instancia.
 - Claves soportadas: APISPERU_TOKEN, APIS_PERU_TOKEN, DNIRUC_TOKEN.
-- URL base opcional: APISPERU_BASE_URL.
+- URL base opcional: APISPERU_BASE_URL (por defecto `https://apiperu.net/consulta`; el token se envía como `Authorization: Bearer`).
 
 Ejemplo mínimo en instancia:
 
@@ -59,7 +59,7 @@ Ejemplo mínimo en instancia:
 <?php
 return [
    'APISPERU_TOKEN' => 'TU_TOKEN_APISPERU',
-   'APISPERU_BASE_URL' => 'https://dniruc.apisperu.com/api/v1',
+   'APISPERU_BASE_URL' => 'https://apiperu.net/consulta',
 ];
 ```
 

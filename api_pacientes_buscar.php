@@ -250,23 +250,21 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
         ];
     }
 
+    // apiperu.net: GET {base}/dni/{dni} con Authorization: Bearer <token>
     $baseUrls = [];
     $envBase = trim((string)(getenv('APISPERU_BASE_URL') ?: ($_ENV['APISPERU_BASE_URL'] ?? '')));
     if ($envBase !== '') {
         $baseUrls[] = rtrim($envBase, '/');
     }
-    if (!in_array('https://dniruc.apisperu.com/api/v1', $baseUrls, true)) {
-        $baseUrls[] = 'https://dniruc.apisperu.com/api/v1';
-    }
-    if (!in_array('https://api.apisperu.com/v1', $baseUrls, true)) {
-        $baseUrls[] = 'https://api.apisperu.com/v1';
+    if (!in_array('https://apiperu.net/consulta', $baseUrls, true)) {
+        $baseUrls[] = 'https://apiperu.net/consulta';
     }
 
     $lastError = 'Error de red en consulta externa';
     $isTimeout = false;
 
     foreach ($baseUrls as $baseUrl) {
-        $url = $baseUrl . '/dni/' . rawurlencode($safeDni) . '?token=' . rawurlencode($token);
+        $url = $baseUrl . '/dni/' . rawurlencode($safeDni);
 
         // Hasta 2 intentos por endpoint para tolerar microcortes y alta latencia
         for ($attempt = 1; $attempt <= 2; $attempt++) {
@@ -319,23 +317,31 @@ function pacientes_buscar_consulta_dni_externa(string $dni): array {
                 continue;
             }
 
-            if ($httpCode === 404 || (!empty($decoded['message']) && stripos((string)$decoded['message'], 'no encontrado') !== false)) {
+            $message = trim((string)($decoded['message'] ?? $decoded['error'] ?? ''));
+
+            // apiperu.net: 401 = token inválido; el resto de fallos llega con HTTP 200 y success=false
+            if ($httpCode === 401 || $httpCode === 403) {
+                $lastError = $message !== '' ? $message : 'Token externo inválido o vencido';
+                break;
+            }
+
+            if ($httpCode === 404 || (array_key_exists('success', $decoded) && !$decoded['success'] && stripos($message, 'no se encontr') !== false)) {
                 pacientes_buscar_external_mark_success();
                 return ['found' => false, 'error' => 'DNI no encontrado en RENIEC', 'not_found' => true];
             }
 
-            if ($httpCode >= 400) {
-                $message = trim((string)($decoded['message'] ?? $decoded['error'] ?? 'Servicio externo no disponible'));
+            if ($httpCode >= 400 || (array_key_exists('success', $decoded) && !$decoded['success'])) {
                 $lastError = $message !== '' ? $message : 'Servicio externo no disponible';
                 break;
             }
 
-            $nombres = trim((string)($decoded['nombres'] ?? $decoded['nombre'] ?? ''));
-            $apellidoPaterno = trim((string)($decoded['apellidoPaterno'] ?? $decoded['apellido_paterno'] ?? ''));
-            $apellidoMaterno = trim((string)($decoded['apellidoMaterno'] ?? $decoded['apellido_materno'] ?? ''));
+            $data = (isset($decoded['data']) && is_array($decoded['data'])) ? $decoded['data'] : $decoded;
+            $nombres = trim((string)($data['nombres'] ?? $data['nombre'] ?? ''));
+            $apellidoPaterno = trim((string)($data['apellido_paterno'] ?? $data['apellidoPaterno'] ?? ''));
+            $apellidoMaterno = trim((string)($data['apellido_materno'] ?? $data['apellidoMaterno'] ?? ''));
             $apellidos = trim($apellidoPaterno . ' ' . $apellidoMaterno);
-            if ($apellidos === '' && !empty($decoded['apellido'])) {
-                $apellidos = trim((string)$decoded['apellido']);
+            if ($apellidos === '' && !empty($data['apellido'])) {
+                $apellidos = trim((string)$data['apellido']);
             }
 
             if ($nombres === '' && $apellidos === '') {
