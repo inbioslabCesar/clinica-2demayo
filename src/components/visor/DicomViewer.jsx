@@ -13,18 +13,43 @@ function tagInt(ds, tag, def = 0) {
 function autoWindow(byteArray, pixelOffset, pixelLength, rows, cols, bitsAllocated, isSigned) {
   const total = rows * cols;
   const view = new DataView(byteArray.buffer, byteArray.byteOffset + pixelOffset, pixelLength);
-  const vals = new (isSigned ? Float32Array : Float32Array)(total);
-  for (let i = 0; i < total; i++) {
+  const readVal = (i) => {
     if (bitsAllocated === 16) {
-      vals[i] = isSigned ? view.getInt16(i * 2, true) : view.getUint16(i * 2, true);
-    } else {
-      vals[i] = view.getUint8(i);
+      return isSigned ? view.getInt16(i * 2, true) : view.getUint16(i * 2, true);
     }
+    return view.getUint8(i);
+  };
+
+  // Percentiles p1/p99 con histograma (O(n)): evita copiar y ordenar millones de píxeles.
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < total; i++) {
+    const v = readVal(i);
+    if (v < min) min = v;
+    if (v > max) max = v;
   }
-  const sorted = [...vals].sort((a, b) => a - b);
-  const p1  = sorted[Math.max(0, Math.floor(total * 0.01))];
-  const p99 = sorted[Math.min(total - 1, Math.floor(total * 0.99))];
-  const ww  = Math.max(1, p99 - p1);
+  if (!(max > min)) return { wc: Math.round(min || 0), ww: 1 };
+
+  const BINS = 4096;
+  const scale = (BINS - 1) / (max - min);
+  const hist = new Uint32Array(BINS);
+  for (let i = 0; i < total; i++) {
+    hist[Math.floor((readVal(i) - min) * scale)]++;
+  }
+
+  const percentile = (p) => {
+    const target = Math.floor(total * p);
+    let acc = 0;
+    for (let b = 0; b < BINS; b++) {
+      acc += hist[b];
+      if (acc > target) return min + b / scale;
+    }
+    return max;
+  };
+
+  const p1 = percentile(0.01);
+  const p99 = percentile(0.99);
+  const ww = Math.max(1, p99 - p1);
   return { wc: Math.round(p1 + ww / 2), ww: Math.round(ww) };
 }
 

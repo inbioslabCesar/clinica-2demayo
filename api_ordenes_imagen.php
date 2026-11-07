@@ -1808,6 +1808,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'download') {
     header('Content-Disposition: inline; filename="' . $safeName . '"');
     header('Content-Length: ' . filesize($row['archivo_path']));
     header('Cache-Control: private, max-age=3600');
+    // Libera el lock de sesión: evita bloquear otras peticiones mientras se transmite el archivo.
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
     readfile($row['archivo_path']);
     exit;
 }
@@ -2437,8 +2441,17 @@ if ($method === 'POST') {
             exit;
         }
 
+        // Autorización ya resuelta: liberar el lock de sesión para no bloquear el resto de la HC durante la subida.
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+
         $uploadDir = __DIR__ . '/uploads/imagenes_diagnostico/' . $orden['paciente_id'] . '/';
-        if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
+        if (!is_dir($uploadDir) && !@mkdir($uploadDir, 0755, true) && !is_dir($uploadDir)) {
+            error_log("[ordenes_imagen] No se pudo crear directorio de subida: $uploadDir");
+            echo json_encode(['success' => false, 'error' => 'No se pudo crear la carpeta de almacenamiento en el servidor (verifique espacio en disco y permisos).']);
+            exit;
+        }
 
         $files = $_FILES['archivos'];
         $count = is_array($files['name']) ? count($files['name']) : 0;
@@ -2472,8 +2485,14 @@ if ($method === 'POST') {
         }
 
         $subidos = 0;
+        $fallosEscritura = 0;
+        $erroresSubida = [];
         for ($i = 0; $i < $count; $i++) {
-            if ($files['error'][$i] !== UPLOAD_ERR_OK) continue;
+            if ($files['error'][$i] !== UPLOAD_ERR_OK) {
+                error_log("[ordenes_imagen] Error de subida PHP (codigo {$files['error'][$i]}) orden $orden_id archivo '{$files['name'][$i]}'");
+                $erroresSubida[] = (int)$files['error'][$i];
+                continue;
+            }
             if ($files['size'][$i] > 100 * 1024 * 1024) continue; // 100 MB max
 
             $mimeType = finfo_file($finfo, $files['tmp_name'][$i]);
@@ -2491,7 +2510,11 @@ if ($method === 'POST') {
             $safeName       = date('Ymd_His') . '_oi' . $orden_id . '_' . $i . '.' . $fileExt;
             $destPath       = $uploadDir . $safeName;
 
-            if (!move_uploaded_file($files['tmp_name'][$i], $destPath)) continue;
+            if (!move_uploaded_file($files['tmp_name'][$i], $destPath)) {
+                error_log("[ordenes_imagen] move_uploaded_file fallo para $destPath (posible disco lleno o sin permisos)");
+                $fallosEscritura++;
+                continue;
+            }
 
             $stmtInsertArchivo->bind_param('issis', $orden_id, $nombreOriginal, $destPath, $tamano, $mimeType);
             if (!$stmtInsertArchivo->execute()) {
@@ -2507,7 +2530,14 @@ if ($method === 'POST') {
             $conn->query("UPDATE ordenes_imagen SET estado = 'completado' WHERE id = $orden_id");
         }
 
-        echo json_encode(['success' => true, 'subidos' => $subidos]);
+        $respuesta = ['success' => true, 'subidos' => $subidos];
+        if ($subidos === 0 && ($fallosEscritura > 0 || !empty($erroresSubida))) {
+            $respuesta['success'] = false;
+            $respuesta['error'] = $fallosEscritura > 0
+                ? 'El servidor no pudo guardar el archivo (posible falta de espacio en disco o permisos).'
+                : 'El archivo no llegó completo al servidor (revise el límite de tamaño de subida del hosting).';
+        }
+        echo json_encode($respuesta);
 
     } else {
         // ── JSON actions ────────────────────────────────────────────────────

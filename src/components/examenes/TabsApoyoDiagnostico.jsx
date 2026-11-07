@@ -4,8 +4,92 @@ import ResultadosLaboratorio from "./ResultadosLaboratorio";
 import SolicitudProcedimientos from "./SolicitudProcedimientos";
 import VisorInformeImagenologiaHC from "../imagenologia/VisorInformeImagenologiaHC";
 import CardInformeImagenologia from "../imagenologia/CardInformeImagenologia";
-import { authFetch } from "../../utils/apiClient";
+import { authFetch, resolveAppUrl } from "../../utils/apiClient";
 import Swal from "sweetalert2";
+
+// ── Consulta compartida de órdenes de imagen ──────────────────────────────────
+// El panel padre y los 3 sub-paneles (RX/Eco/TC) consultaban el mismo endpoint cada 15 s
+// (4 peticiones idénticas). Se comparte la petición en vuelo y se evita refrescar mientras se sube.
+const ORDENES_IMAGEN_DEDUPE_MS = 3000;
+const ordenesImagenInflight = new Map();
+let subidasImagenActivas = 0;
+
+function fetchOrdenesImagenConsulta(consultaId, { force = false } = {}) {
+  const key = String(consultaId);
+  const cached = ordenesImagenInflight.get(key);
+  if (!force && cached && Date.now() - cached.ts < ORDENES_IMAGEN_DEDUPE_MS) {
+    return cached.promise;
+  }
+  const promise = authFetch(`api_ordenes_imagen.php?consulta_id=${encodeURIComponent(consultaId)}`)
+    .then((r) => r.json())
+    .then((data) => {
+      if (force && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("ordenes-imagen-actualizadas"));
+      }
+      return data;
+    })
+    .catch((err) => {
+      ordenesImagenInflight.delete(key);
+      throw err;
+    });
+  ordenesImagenInflight.set(key, { promise, ts: Date.now() });
+  return promise;
+}
+
+// ── Compresión previa de imágenes pesadas (reduce tiempo de subida en producción) ─
+const COMPRIMIR_DESDE_BYTES = 1.5 * 1024 * 1024;
+const MAX_LADO_PX = 3000;
+const CALIDAD_JPEG = 0.9;
+const MIMES_COMPRIMIBLES = ["image/png", "image/jpeg", "image/bmp", "image/webp"];
+
+async function optimizarImagenParaSubida(file) {
+  try {
+    if (!MIMES_COMPRIMIBLES.includes(file.type) || file.size < COMPRIMIR_DESDE_BYTES) return file;
+    if (typeof createImageBitmap !== "function") return file;
+
+    const bitmap = await createImageBitmap(file);
+    const escala = Math.min(1, MAX_LADO_PX / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * escala));
+    canvas.height = Math.max(1, Math.round(bitmap.height * escala));
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", CALIDAD_JPEG));
+    if (!blob || blob.size >= file.size * 0.9) return file;
+
+    const base = file.name.replace(/\.[^.]+$/, "") || "imagen";
+    return new File([blob], `${base}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
+  } catch {
+    return file;
+  }
+}
+
+// XHR para poder mostrar progreso real de subida.
+function subirConProgreso(path, formData, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", resolveAppUrl(path));
+    xhr.withCredentials = true;
+    xhr.timeout = 10 * 60 * 1000;
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      try {
+        resolve(JSON.parse(xhr.responseText));
+      } catch {
+        reject(new Error(`Respuesta inválida del servidor (HTTP ${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Error de red"));
+    xhr.ontimeout = () => reject(new Error("Tiempo de espera agotado"));
+    xhr.send(formData);
+  });
+}
 
 // ── Tipos de imágenes diagnósticas ────────────────────────────────────────────
 const TIPOS_IMAGEN = [
@@ -23,6 +107,8 @@ const ESTADO_BADGE = {
 function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
   const [archivos, setArchivos] = useState([]);
   const [subiendo, setSubiendo] = useState(false);
+  const [progreso, setProgreso] = useState(0);
+  const [fase, setFase] = useState("");
 
   const agregarArchivos = (fileList) => {
     const lista = Array.from(fileList || []);
@@ -32,28 +118,34 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
   const quitar = (idx) => setArchivos((prev) => prev.filter((_, i) => i !== idx));
 
   const handleSubir = async () => {
-    if (!orden?.id || archivos.length === 0) return;
+    if (!orden?.id || archivos.length === 0 || subiendo) return;
     setSubiendo(true);
+    setProgreso(0);
+    subidasImagenActivas += 1;
     try {
+      setFase("Optimizando imágenes...");
+      const optimizados = await Promise.all(archivos.map(optimizarImagenParaSubida));
+
       const fd = new FormData();
       fd.append("orden_id", String(orden.id));
-      archivos.forEach((f) => fd.append("archivos[]", f));
+      optimizados.forEach((f) => fd.append("archivos[]", f, f.name));
 
-      const res = await authFetch("api_ordenes_imagen.php", {
-        method: "POST",
-        body: fd,
-      });
-      const data = await res.json();
-      if (data.success) {
+      setFase("Subiendo...");
+      const data = await subirConProgreso("api_ordenes_imagen.php", fd, setProgreso);
+      if (data.success && Number(data.subidos || 0) > 0) {
         onUploaded?.();
         onClose?.();
+      } else if (data.success) {
+        alert("El servidor no aceptó ningún archivo (formato no permitido o tamaño excedido).");
       } else {
         alert(data.error || "No se pudieron subir los archivos");
       }
-    } catch {
-      alert("Error de conexión al subir archivos");
+    } catch (err) {
+      alert(err?.message || "Error de conexión al subir archivos");
     } finally {
+      subidasImagenActivas = Math.max(0, subidasImagenActivas - 1);
       setSubiendo(false);
+      setFase("");
     }
   };
 
@@ -85,7 +177,15 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
             </div>
           )}
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex items-center justify-end gap-2 pt-2">
+            {subiendo && (
+              <div className="flex-1 mr-2">
+                <div className="text-[11px] text-gray-600 mb-1">{fase}{fase === "Subiendo..." ? ` ${progreso}%` : ""}</div>
+                <div className="h-1.5 w-full rounded bg-gray-200 overflow-hidden">
+                  <div className="h-full bg-blue-600 transition-all" style={{ width: `${fase === "Subiendo..." ? progreso : 5}%` }} />
+                </div>
+              </div>
+            )}
             <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs border rounded hover:bg-gray-50" disabled={subiendo}>Cancelar</button>
             <button
               type="button"
@@ -108,11 +208,10 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
   const [loadingOrdenes, setLoadingOrdenes] = useState(false);
   const [ordenSubir, setOrdenSubir] = useState(null);
 
-  const cargarOrdenes = useCallback(() => {
+  const cargarOrdenes = useCallback((force = false) => {
     if (!consultaId) return;
     setLoadingOrdenes(true);
-    authFetch(`api_ordenes_imagen.php?consulta_id=${consultaId}`)
-      .then((r) => r.json())
+    fetchOrdenesImagenConsulta(consultaId, { force: force === true })
       .then((d) => {
         if (d.success) {
           setOrdenes(
@@ -134,6 +233,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
         return;
       }
+      if (subidasImagenActivas > 0) return;
       cargarOrdenes();
     };
 
@@ -165,7 +265,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
       alert(data?.error || "No se pudo cancelar la solicitud");
       return;
     }
-    cargarOrdenes();
+    cargarOrdenes(true);
   };
 
   const esPagada = (cot) => {
@@ -290,7 +390,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
               pacienteNombre={String(pacienteId || "")}
               medicoNombre={medicoNombre}
               canEdit={Boolean(ord?.can_edit_informe)}
-              onInformeActualizado={cargarOrdenes}
+              onInformeActualizado={() => cargarOrdenes(true)}
             />
           </div>
 
@@ -309,7 +409,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
         <ModalSubidaRapidaImagenHC
           orden={ordenSubir}
           onClose={() => setOrdenSubir(null)}
-          onUploaded={cargarOrdenes}
+          onUploaded={() => cargarOrdenes(true)}
         />
       )}
     </div>
@@ -397,10 +497,9 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
     return "";
   }, []);
 
-  const cargarAdjuntosImagenPorTipo = useCallback(() => {
+  const cargarAdjuntosImagenPorTipo = useCallback((force = false) => {
     if (!consultaId) return;
-    authFetch(`api_ordenes_imagen.php?consulta_id=${consultaId}`)
-      .then((response) => response.json())
+    fetchOrdenesImagenConsulta(consultaId, { force: force === true })
       .then((data) => {
         const rows = Array.isArray(data?.ordenes) ? data.ordenes : [];
         const next = { rx: 0, ecografia: 0, tomografia: 0 };
@@ -428,15 +527,20 @@ export default function TabsApoyoDiagnostico({ consultaId, pacienteId, resultado
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return;
       }
+      if (subidasImagenActivas > 0) return;
       cargarAdjuntosImagenPorTipo();
     };
 
+    const onOrdenesActualizadas = () => cargarAdjuntosImagenPorTipo();
+
     const timerId = window.setInterval(refreshIfVisible, 15000);
     document.addEventListener("visibilitychange", refreshIfVisible);
+    window.addEventListener("ordenes-imagen-actualizadas", onOrdenesActualizadas);
 
     return () => {
       window.clearInterval(timerId);
       document.removeEventListener("visibilitychange", refreshIfVisible);
+      window.removeEventListener("ordenes-imagen-actualizadas", onOrdenesActualizadas);
     };
   }, [cargarAdjuntosImagenPorTipo]);
 
