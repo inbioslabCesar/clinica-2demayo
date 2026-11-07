@@ -1648,6 +1648,11 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($method === 'GET') {
     rc_require_session_roles(['administrador', 'recepcionista']);
+    // Solo lectura de sesión: se libera el lock para no serializar las consultas simultáneas de la pantalla.
+    // $_SESSION sigue disponible en memoria para leer el id de usuario más abajo.
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
     rc_ensure_cola_medico_schema($conn);
 
     $vista = strtolower(trim((string)($_GET['vista'] ?? '')));

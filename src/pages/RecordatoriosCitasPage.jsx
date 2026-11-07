@@ -792,6 +792,8 @@ export default function RecordatoriosCitasPage() {
   const [nombreClinicaRemitente, setNombreClinicaRemitente] = useState("MI CLINICA");
   const skipFirstPaginationFetchRef = useRef(true);
   const skipNextPaginationFetchRef = useRef(false);
+  const cargarSeqRef = useRef(0);
+  const cargarAbortRef = useRef(null);
   const filaFlashTimerRef = useRef(null);
   const usandoVistaUnificada = tipoRecordatorio === "todos";
   const usaPaginacionCliente = usandoVistaUnificada;
@@ -835,6 +837,14 @@ export default function RecordatoriosCitasPage() {
   };
 
   const cargar = async () => {
+    // Solo la última consulta puede actualizar la pantalla; las anteriores se cancelan y se ignoran.
+    const seq = ++cargarSeqRef.current;
+    cargarAbortRef.current?.abort();
+    const controller = new AbortController();
+    cargarAbortRef.current = controller;
+    const esVigente = () => seq === cargarSeqRef.current;
+    const fetchOpts = { cache: "no-store", signal: controller.signal };
+
     setLoading(true);
     setError("");
     try {
@@ -855,9 +865,10 @@ export default function RecordatoriosCitasPage() {
         const faltasParams = new URLSearchParams({ ...base, tipo_recordatorio: "falta_cancelar" });
 
         const [dataCitas, dataFaltas] = await Promise.all([
-          fetchJsonWithRetry(`api_recordatorios_citas.php?${citasParams.toString()}`, { cache: "no-store" }, { attempts: 3, baseDelayMs: 240 }),
-          fetchJsonWithRetry(`api_recordatorios_citas.php?${faltasParams.toString()}`, { cache: "no-store" }, { attempts: 3, baseDelayMs: 240 }),
+          fetchJsonWithRetry(`api_recordatorios_citas.php?${citasParams.toString()}`, fetchOpts, { attempts: 3, baseDelayMs: 240 }),
+          fetchJsonWithRetry(`api_recordatorios_citas.php?${faltasParams.toString()}`, fetchOpts, { attempts: 3, baseDelayMs: 240 }),
         ]);
+        if (!esVigente()) return;
 
         if (!dataCitas.success) throw new Error(dataCitas.error || "No se pudo cargar recordatorios de citas");
         if (!dataFaltas.success) throw new Error(dataFaltas.error || "No se pudo cargar faltas por cancelar");
@@ -906,7 +917,8 @@ export default function RecordatoriosCitasPage() {
         params.set("page", String(page));
         params.set("per_page", String(rowsPerPage));
       }
-      const data = await fetchJsonWithRetry(`api_recordatorios_citas.php?${params.toString()}`, { cache: "no-store" }, { attempts: 3, baseDelayMs: 240 });
+      const data = await fetchJsonWithRetry(`api_recordatorios_citas.php?${params.toString()}`, fetchOpts, { attempts: 3, baseDelayMs: 240 });
+      if (!esVigente()) return;
       if (!data.success) {
         throw new Error(data.error || "No se pudo cargar recordatorios");
       }
@@ -935,14 +947,11 @@ export default function RecordatoriosCitasPage() {
         resuelto: Number(data?.prioridad?.resuelto || 0),
       });
     } catch (err) {
-      setError(err.message || "Error cargando recordatorios");
-      setItems([]);
-      setTotalItems(0);
-      setTotalPages(1);
-      setStatsGlobal({ urgentes: 0, hoy: 0, sin_telefono: 0, confirmadas: 0, atendidas: 0 });
-      setPrioridadGlobal({ critico: 0, alto: 0, normal: 0, bajo: 0, atendido: 0, resuelto: 0 });
+      if (err?.name === "AbortError" || !esVigente()) return;
+      // Se conserva la última lista cargada: un fallo de red no debe vaciar la pantalla.
+      setError(`${err.message || "Error cargando recordatorios"}. Se muestra la última lista cargada; reintente en unos segundos.`);
     } finally {
-      setLoading(false);
+      if (esVigente()) setLoading(false);
     }
   };
 
@@ -1062,6 +1071,9 @@ export default function RecordatoriosCitasPage() {
   useEffect(() => {
     cargarMedicos();
     cargarNombreClinicaRemitente();
+    return () => {
+      cargarAbortRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -3095,8 +3107,8 @@ export default function RecordatoriosCitasPage() {
                 <th className="p-3 text-left">Acciones</th>
               </tr>
             </thead>
-            <tbody>
-              {loading ? (
+            <tbody className={loading ? "opacity-60 transition-opacity" : ""}>
+              {loading && itemsPriorizados.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="p-5 text-center text-slate-500">Cargando recordatorios...</td>
                 </tr>
