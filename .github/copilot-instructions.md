@@ -56,3 +56,13 @@ Ejemplo:
 ## 5) Prohibición
 
 Queda prohibido dar por “listo para producción” un cambio que requiera BD sin detallar SQL y pasos de aplicación.
+
+## 6) Recordatorio obligatorio: regenerar el esquema de referencia
+
+Cada vez que una tarea cambie el schema de la BD de **desarrollo** (`poli2demayo`: tablas, columnas, índices, claves foráneas) o genere SQL de schema, el asistente **debe recordarlo explícitamente** al cerrar la tarea:
+
+- regenerar y commitear la referencia: `php scripts/esquema_bd/generar_esquema_referencia.php` (actualiza `db/esquema_referencia/esquema_referencia.json`),
+- actualizar los clientes con el actualizador CLI (`scripts/esquema_bd/README.md`): simulacro, respaldo con `mysqldump` y luego `--aplicar --confirmo-respaldo`, de a un cliente,
+- cambios de datos (backfills, correcciones) **no** los hace el actualizador: van como script en `sql/YYYY-MM-DD/`.
+
+Esto se suma al formato de cierre de la sección 2 (aparece en "Checklist post-deploy").
