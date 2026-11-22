@@ -671,6 +671,10 @@ final class EsquemaBd
                             $add('columnas', $tn, "{$tn}.{$cn}", null, 'omitida', 'Columna generada/AUTO_INCREMENT: crear a mano');
                             continue;
                         }
+                        if (empty($c['nulo']) && ($c['defecto']['t'] ?? 'ninguno') === 'ninguno' && $this->tieneFilas($tn)) {
+                            $add('columnas', $tn, "{$tn}.{$cn}", null, 'omitida', 'NOT NULL sin valor por defecto en tabla con datos: requiere una migración de datos (rellenar antes de crearla)');
+                            continue;
+                        }
                         $sql = 'ALTER TABLE ' . self::q($tn) . ' ADD COLUMN ' . $this->defColumna($cn, $c)
                             . ($previa === null ? ' FIRST' : ' AFTER ' . self::q($previa));
                         $add('columnas', $tn, "{$tn}.{$cn}", $sql, 'pendiente', 'Columna faltante');
@@ -829,6 +833,15 @@ final class EsquemaBd
         }
 
         return $acc;
+    }
+
+    private function tieneFilas(string $tabla): bool
+    {
+        try {
+            return $this->pdo->query('SELECT 1 FROM ' . self::q($tabla) . ' LIMIT 1')->fetchColumn() !== false;
+        } catch (PDOException $e) {
+            return true;
+        }
     }
 
     private function contarDuplicados(string $tabla, array $cols): int
