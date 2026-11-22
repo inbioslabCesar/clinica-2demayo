@@ -19,7 +19,8 @@ final class EsquemaBd
     public const TABLAS_EXCLUIDAS_REGEX = '/(^|_)backup(_|$)/i';
 
     // BD que --todas omite (se pueden pedir explícitamente con --empresa=slug).
-    public const BD_EXCLUIDAS_TODAS = ['u330560936_prueba_bd'];
+    // prueba_bd: pruebas. nutrimed_bd: inactiva (la activa de Nutrimed es userperu_bd).
+    public const BD_EXCLUIDAS_TODAS = ['u330560936_prueba_bd', 'u330560936_nutrimed_bd'];
 
     // Catálogos que deben existir en todos los clientes: 'tabla' => ['claves' => [...], 'excluir' => [...]].
     // Vacío por ahora; se declaran aquí cuando se decida qué catálogos sembrar.
