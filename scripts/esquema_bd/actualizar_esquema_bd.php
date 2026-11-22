@@ -128,6 +128,8 @@ function imprimirAcciones(array $acciones, bool $simulacro): void
         salida("  [{$m}] {$a['fase']} {$a['objeto']}" . ($a['nota'] !== '' ? " - {$a['nota']}" : '') . "\n");
         if ($a['sql'] !== null && in_array($a['estado'], ['pendiente', 'error'], true)) {
             salida('      ' . str_replace("\n", "\n      ", $a['sql']) . ";\n");
+        } elseif ($a['sql'] !== null && $a['estado'] === 'info') {
+            salida('      -- sugerido, NO se aplica: ' . $a['sql'] . ";\n");
         }
     }
 }

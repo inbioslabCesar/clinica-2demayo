@@ -35,7 +35,7 @@ FROM (
     JOIN information_schema.TABLES t
       ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME AND t.TABLE_TYPE = 'BASE TABLE'
     WHERE c.TABLE_SCHEMA = DATABASE()
-      AND c.TABLE_NAME NOT REGEXP '(^|_)backup(_|$)'
+      AND c.TABLE_NAME NOT REGEXP '(^|_)(backup|bkp|bak)(_|$)|^zfix_'
 
     UNION ALL
 
@@ -45,7 +45,7 @@ FROM (
                                ORDER BY s.SEQ_IN_INDEX SEPARATOR ','))
     FROM information_schema.STATISTICS s
     WHERE s.TABLE_SCHEMA = DATABASE()
-      AND s.TABLE_NAME NOT REGEXP '(^|_)backup(_|$)'
+      AND s.TABLE_NAME NOT REGEXP '(^|_)(backup|bkp|bak)(_|$)|^zfix_'
     GROUP BY s.TABLE_NAME, s.INDEX_NAME, s.NON_UNIQUE
 
     UNION ALL
@@ -62,7 +62,7 @@ FROM (
       ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME AND r.TABLE_NAME = k.TABLE_NAME
     WHERE k.TABLE_SCHEMA = DATABASE()
       AND k.REFERENCED_TABLE_NAME IS NOT NULL
-      AND k.TABLE_NAME NOT REGEXP '(^|_)backup(_|$)'
-      AND k.REFERENCED_TABLE_NAME NOT REGEXP '(^|_)backup(_|$)'
+      AND k.TABLE_NAME NOT REGEXP '(^|_)(backup|bkp|bak)(_|$)|^zfix_'
+      AND k.REFERENCED_TABLE_NAME NOT REGEXP '(^|_)(backup|bkp|bak)(_|$)|^zfix_'
     GROUP BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.REFERENCED_TABLE_NAME, r.DELETE_RULE, r.UPDATE_RULE
 ) x;

@@ -15,8 +15,8 @@ final class EsquemaBd
 {
     public const FORMATO = 1;
 
-    // Tablas de respaldo/puntuales que no forman parte del esquema.
-    public const TABLAS_EXCLUIDAS_REGEX = '/(^|_)backup(_|$)/i';
+    // Tablas de respaldo/puntuales (backup, bkp, bak, zfix_*) que no forman parte del esquema.
+    public const TABLAS_EXCLUIDAS_REGEX = '/(^|_)(backup|bkp|bak)(_|$)|^zfix_/i';
 
     // BD que --todas omite (se pueden pedir explícitamente con --empresa=slug).
     // prueba_bd: pruebas. nutrimed_bd: inactiva (la activa de Nutrimed es userperu_bd).
