@@ -66,6 +66,12 @@ Get-ChildItem -Force $root | ForEach-Object {
   }
 }
 
+# El actualizador de esquema de BD es solo CLI y se sube a mano, fuera de public_html.
+foreach ($rel in @('scripts\esquema_bd', 'db\esquema_referencia')) {
+  $p = Join-Path $backendDir $rel
+  if (Test-Path $p) { Remove-Item -Recurse -Force $p }
+}
+
 Write-Host '==> Copiando frontend de sistema (dist -> /public_html/sistema)...' -ForegroundColor Yellow
 Copy-Item -Path (Join-Path $distSistema '*') -Destination $sistemaDir -Recurse -Force
 

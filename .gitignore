@@ -107,6 +107,7 @@ tmp_diag_manual_*.php
 tmp_merge_lab_*.php
 _tmp_resultado_*.pdf
 tmp/api-cache/
+tmp/esquema_bd/
 tmp_case_*.php
 tmp_db_*.php
 tmp/mpdf/mpdf/ttfontdata/*.json
