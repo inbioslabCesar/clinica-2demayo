@@ -20,7 +20,8 @@ final class EsquemaBd
 
     // BD que --todas omite (se pueden pedir explícitamente con --empresa=slug).
     // prueba_bd: pruebas. nutrimed_bd: inactiva (la activa de Nutrimed es userperu_bd).
-    public const BD_EXCLUIDAS_TODAS = ['u330560936_prueba_bd', 'u330560936_nutrimed_bd'];
+    // sanAntonioBD: dominio provisional de Padua (la real es padua_bd).
+    public const BD_EXCLUIDAS_TODAS = ['u330560936_prueba_bd', 'u330560936_nutrimed_bd', 'u330560936_sanAntonioBD'];
 
     // Catálogos que deben existir en todos los clientes: 'tabla' => ['claves' => [...], 'excluir' => [...]].
     // Vacío por ahora; se declaran aquí cuando se decida qué catálogos sembrar.

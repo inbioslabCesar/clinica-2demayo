@@ -44,7 +44,7 @@ php scripts/esquema_bd/actualizar_esquema_bd.php --empresa=sistema_clinica2demay
 
 | Opción | Efecto |
 |---|---|
-| `--empresa=slug` / `--todas` | Qué BD(s); no se pueden combinar. `--todas` omite `u330560936_prueba_bd` y `u330560936_nutrimed_bd` (inactiva) salvo `--incluir-pruebas` |
+| `--empresa=slug` / `--todas` | Qué BD(s); no se pueden combinar. `--todas` omite `u330560936_prueba_bd`, `u330560936_nutrimed_bd` (inactiva) y `u330560936_sanAntonioBD` (dominio provisional de Padua) salvo `--incluir-pruebas` |
 | `--solo=tablas,columnas,indices,fks,semillas` | Limita fases. Por defecto: `tablas,columnas,indices,semillas` |
 | `--incluir-fks` | Agrega la fase `fks` a las fases por defecto |
 | `--nombres-exactos` | Crea índices/FKs por nombre aunque exista uno equivalente (para igualar a dev) |
