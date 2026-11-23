@@ -24,6 +24,7 @@ require_once $root . '/modules/AgendaMedicoRegla.php';
 require_once $root . '/modules/EpisodioAtencionModule.php';
 require_once $root . '/modules/ConsultaClinicaModule.php';
 require_once $root . '/modules/ModulosInstalacion.php';
+require_once $root . '/modules/EngineerAuth.php';
 
 /* ───────── Unitarias: regla "qué servicios ocupan al médico" ───────── */
 
@@ -101,6 +102,133 @@ prueba('sin conexión o sin tabla solo el módulo clínico queda activo', functi
     iguales(false, $mapa['portal_empresas']['activo']);
     iguales(false, ModulosInstalacion::habilitado(null, 'modulo_inexistente'));
     ModulosInstalacion::reiniciarCache();
+});
+
+/* ───────── Unitarias: panel Engineer (TOTP, login, límites, validación) ───────── */
+
+function engineerTmp(): string {
+    $d = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'engineer_test_' . bin2hex(random_bytes(4));
+    mkdir($d);
+    EngineerAuth::$dirTemporal = $d;
+    return $d;
+}
+function engineerLimpiar(string $d): void {
+    foreach (glob($d . DIRECTORY_SEPARATOR . '*') ?: [] as $f) { @unlink($f); }
+    @rmdir($d);
+    EngineerAuth::$dirTemporal = null;
+}
+function engineerCfg(string $pass = 'clave-de-prueba-123'): array {
+    return ['password_hash' => password_hash($pass, PASSWORD_DEFAULT), 'totp_secret' => EngineerAuth::base32Encode('12345678901234567890')];
+}
+
+prueba('TOTP: vector oficial de RFC 6238 y base32', function () {
+    iguales('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ', EngineerAuth::base32Encode('12345678901234567890'));
+    iguales('12345678901234567890', EngineerAuth::base32Decode('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'));
+    $s = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+    iguales('287082', EngineerAuth::totpCodigo($s, intdiv(59, 30)));
+    iguales('081804', EngineerAuth::totpCodigo($s, intdiv(1111111109, 30)));
+    iguales('050471', EngineerAuth::totpCodigo($s, intdiv(1111111111, 30)));
+});
+
+prueba('TOTP: acepta ±1 paso, rechaza lo demás y formatos inválidos', function () {
+    $s = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+    $t = 1111111109;
+    $cod = EngineerAuth::totpCodigo($s, intdiv($t, 30));
+    iguales(intdiv($t, 30), EngineerAuth::totpVerificar($s, $cod, $t));
+    iguales(intdiv($t, 30), EngineerAuth::totpVerificar($s, substr($cod, 0, 3) . ' ' . substr($cod, 3), $t), 'tolera espacios');
+    iguales(intdiv($t, 30), EngineerAuth::totpVerificar($s, $cod, $t + 30), 'un paso después aún vale');
+    iguales(null, EngineerAuth::totpVerificar($s, $cod, $t + 120), 'dos minutos después no vale');
+    iguales(null, EngineerAuth::totpVerificar($s, '12345', $t));
+    iguales(null, EngineerAuth::totpVerificar($s, 'abcdef', $t));
+    iguales(null, EngineerAuth::totpVerificar($s, '', $t));
+});
+
+prueba('login: requiere contraseña Y código; no distingue cuál falló', function () {
+    $d = engineerTmp();
+    $cfg = engineerCfg();
+    $t = 1700000000;
+    $bueno = EngineerAuth::totpCodigo($cfg['totp_secret'], intdiv($t, 30));
+    $malaPass = EngineerAuth::intentarLogin('otra-clave', $bueno, '10.0.0.1', $cfg, $t);
+    $malCodigo = EngineerAuth::intentarLogin('clave-de-prueba-123', '000000', '10.0.0.2', $cfg, $t);
+    iguales(['ok' => false, 'codigo' => 'invalido'], $malaPass);
+    iguales($malaPass, $malCodigo, 'mismo mensaje para ambos fallos');
+    iguales(['ok' => true, 'codigo' => 'ok'], EngineerAuth::intentarLogin('clave-de-prueba-123', $bueno, '10.0.0.3', $cfg, $t));
+    engineerLimpiar($d);
+});
+
+prueba('login: un código TOTP ya usado no se puede reutilizar (replay)', function () {
+    $d = engineerTmp();
+    $cfg = engineerCfg();
+    $t = 1700000000;
+    $cod = EngineerAuth::totpCodigo($cfg['totp_secret'], intdiv($t, 30));
+    iguales(true, EngineerAuth::intentarLogin('clave-de-prueba-123', $cod, '10.0.0.1', $cfg, $t)['ok']);
+    iguales(false, EngineerAuth::intentarLogin('clave-de-prueba-123', $cod, '10.0.0.1', $cfg, $t)['ok'], 'segundo uso del mismo código');
+    engineerLimpiar($d);
+});
+
+prueba('login: bloquea tras 5 fallos por IP y no afecta a otra IP', function () {
+    $d = engineerTmp();
+    $cfg = engineerCfg();
+    $t = 1700000000;
+    for ($i = 0; $i < EngineerAuth::MAX_FALLOS_IP; $i++) {
+        iguales('invalido', EngineerAuth::intentarLogin('mala', '000000', '10.9.9.9', $cfg, $t)['codigo']);
+    }
+    iguales('bloqueado', EngineerAuth::intentarLogin('mala', '000000', '10.9.9.9', $cfg, $t)['codigo']);
+    $bueno = EngineerAuth::totpCodigo($cfg['totp_secret'], intdiv($t, 30));
+    iguales('bloqueado', EngineerAuth::intentarLogin('clave-de-prueba-123', $bueno, '10.9.9.9', $cfg, $t)['codigo'], 'ni con credenciales correctas');
+    iguales('ok', EngineerAuth::intentarLogin('clave-de-prueba-123', $bueno, '10.1.1.1', $cfg, $t)['codigo'], 'otra IP sigue pudiendo');
+    iguales('invalido', EngineerAuth::intentarLogin('mala', '000000', '10.9.9.9', $cfg, $t + EngineerAuth::VENTANA_SEG + 1)['codigo'], 'pasada la ventana se libera');
+    engineerLimpiar($d);
+});
+
+prueba('login: el límite global frena ataques desde muchas IP', function () {
+    $d = engineerTmp();
+    $cfg = engineerCfg();
+    $t = 1700000000;
+    for ($i = 0; $i < EngineerAuth::MAX_FALLOS_GLOBAL; $i++) {
+        EngineerAuth::intentarLogin('mala', '000000', '172.16.0.' . ($i + 1), $cfg, $t);
+    }
+    iguales('bloqueado', EngineerAuth::intentarLogin('mala', '000000', '172.16.9.9', $cfg, $t)['codigo']);
+    engineerLimpiar($d);
+});
+
+prueba('login: sin configuración el panel está desactivado', function () {
+    iguales('desactivado', EngineerAuth::intentarLogin('x', '000000', '10.0.0.1', null, 1700000000)['codigo'] ?? 'desactivado');
+    iguales(null, EngineerAuth::cargarConfig(sys_get_temp_dir() . '/no-existe-engineer.php'));
+});
+
+prueba('sesión del panel: caduca por inactividad y valida CSRF', function () {
+    $_SESSION = [];
+    iguales(false, EngineerAuth::sesionActiva(1000));
+    $_SESSION['engineer'] = ['ts' => 1000, 'csrf' => str_repeat('a', 64)];
+    iguales(true, EngineerAuth::sesionActiva(1000 + EngineerAuth::SESION_TTL - 1));
+    iguales(true, EngineerAuth::csrfValido(str_repeat('a', 64)));
+    iguales(false, EngineerAuth::csrfValido(str_repeat('b', 64)));
+    iguales(false, EngineerAuth::csrfValido(''));
+    iguales(false, EngineerAuth::sesionActiva(1000 + (EngineerAuth::SESION_TTL - 1) + EngineerAuth::SESION_TTL + 1));
+    iguales(false, isset($_SESSION['engineer']), 'se elimina al caducar');
+    $_SESSION = [];
+});
+
+prueba('validar cambio de módulo: acepta lo correcto y rechaza lo peligroso', function () {
+    $ok = ModulosInstalacion::validarCambio('ocupacional', ['habilitado' => 1, 'estado' => 'activo', 'plan' => 'mensual', 'precio' => '150.5', 'moneda' => 'pen', 'fecha_inicio' => '2026-12-01', 'fecha_fin' => '2027-01-01', 'notas' => 'ok']);
+    iguales(1, $ok['habilitado']);
+    iguales(150.5, $ok['precio']);
+    iguales('PEN', $ok['moneda']);
+    iguales(null, ModulosInstalacion::validarCambio('portal_empresas', [])['plan']);
+    $debeFallar = function (string $mod, array $datos, string $msg) {
+        try { ModulosInstalacion::validarCambio($mod, $datos); } catch (InvalidArgumentException $e) { return; }
+        throw new RuntimeException("debía rechazar: $msg");
+    };
+    $debeFallar('clinico', ['habilitado' => 0], 'apagar el módulo clínico');
+    $debeFallar('inventado', ['habilitado' => 1], 'módulo desconocido');
+    $debeFallar('ocupacional', ['estado' => 'raro'], 'estado inválido');
+    $debeFallar('ocupacional', ['fecha_fin' => '2026-02-31'], 'fecha imposible');
+    $debeFallar('ocupacional', ['fecha_inicio' => '2026-05-01', 'fecha_fin' => '2026-04-01'], 'fin anterior al inicio');
+    $debeFallar('ocupacional', ['precio' => '-5'], 'precio negativo');
+    $debeFallar('ocupacional', ['precio' => 'abc'], 'precio no numérico');
+    $debeFallar('ocupacional', ['moneda' => 'SOLES'], 'moneda inválida');
+    $debeFallar('ocupacional', ['notas' => str_repeat('x', 256)], 'notas demasiado largas');
 });
 
 /* ───────── Con BD: ejecuta el SQL real y los endpoints ───────── */

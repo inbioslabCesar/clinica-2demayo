@@ -67,7 +67,7 @@ Get-ChildItem -Force $root | ForEach-Object {
 }
 
 # El actualizador de esquema de BD es solo CLI y se sube a mano, fuera de public_html.
-foreach ($rel in @('scripts\esquema_bd', 'db\esquema_referencia')) {
+foreach ($rel in @('scripts\esquema_bd', 'db\esquema_referencia', 'scripts\engineer_setup.php')) {
   $p = Join-Path $backendDir $rel
   if (Test-Path $p) { Remove-Item -Recurse -Force $p }
 }
