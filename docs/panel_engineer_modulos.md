@@ -50,4 +50,19 @@ En el frontend, `authFetch` trata cualquier 401/403 como sesión expirada: para 
 y oculte el menú con `useModulos().tiene('ocupacional')`. Ocultar el menú **no** protege: la guardia real es la del backend.
 
 ## Pruebas
-`php tests/php/run.php` (unitarias: TOTP con los vectores de RFC 6238, límites, sesión, validación, licencias).
+`php tests/php/run.php` (unitarias: TOTP con los vectores de RFC 6238, límites, sesión, validación, licencias, contraseñas ocupacionales).
+
+## Módulo ocupacional (backend trasladado)
+Los 18 PHP del repo `2demayo-ocupacional` (`api_ocupacional_*`, `api_login_empresa`, `api_empresa_portal_ordenes`, `api_upload_logo_ocupacional`,
+`db_ocupacional`) están en la raíz, **apagados por defecto**. Cambios respecto al original:
+- **Guardia de módulo:** `db_ocupacional.php` exige `ocupacional`; el portal exige además `portal_empresas`. Sin licencia activa, 403.
+- **BD:** por defecto los datos ocupacionales usan la misma BD. Para separarlos (confidencialidad) basta definir `DB_OCUP_HOST/NAME/USER/PASS`
+  en la configuración de la instancia; así funciona hoy 2 de Mayo (`so2demayo`).
+- **Esquema:** `db/esquema_referencia/esquema_referencia_ocupacional.json`. Aplicarlo con
+  `php scripts/esquema_bd/actualizar_esquema_bd.php --empresa=... --ref=db/esquema_referencia/esquema_referencia_ocupacional.json`
+  (en una BD separada hay que apuntar la herramienta a esa BD). Ya no se crean tablas durante una petición.
+- **Contraseñas de empresa (RRHH y médico):** se guardan con hash, la API **ya no las devuelve** (solo `rrhh_password_definida` /
+  `doctor_password_definida`) y editar una empresa con la contraseña vacía **la conserva**. Las antiguas en texto plano siguen sirviendo y se
+  convierten en hash al primer acceso al portal. **El formulario de empresas del frontend no debe mostrar la contraseña actual.**
+- **Portal de empresas:** límite de 8 intentos fallidos por IP o por cuenta (15 min), con el mismo mensaje para cualquier fallo.
+- Pendiente de revisar en el portal: el dominio de acceso está fijo (`@clinica2demayo.com`).

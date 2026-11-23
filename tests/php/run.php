@@ -25,6 +25,8 @@ require_once $root . '/modules/EpisodioAtencionModule.php';
 require_once $root . '/modules/ConsultaClinicaModule.php';
 require_once $root . '/modules/ModulosInstalacion.php';
 require_once $root . '/modules/EngineerAuth.php';
+require_once $root . '/modules/OcupacionalSecretos.php';
+require_once $root . '/modules/LimiteIntentos.php';
 
 /* ───────── Unitarias: regla "qué servicios ocupan al médico" ───────── */
 
@@ -92,6 +94,18 @@ prueba('licencia vencida entra en gracia y luego se suspende', function () {
 
 prueba('estado suspendido manual apaga el módulo aunque esté habilitado', function () {
     iguales(false, ModulosInstalacion::estadoEfectivo(['habilitado' => 1, 'estado' => 'suspendido'])['activo']);
+});
+
+prueba('tabla vacía o fila de clínico ausente: clínico siempre activo, el resto apagado', function () {
+    $m = ModulosInstalacion::completarMapa([], '2026-11-22');
+    iguales(true, $m['clinico']['activo'], 'tabla creada sin filas (p. ej. por la herramienta de esquema)');
+    iguales(false, $m['ocupacional']['activo']);
+    iguales(false, $m['portal_empresas']['activo']);
+    $conClinicoApagado = ModulosInstalacion::completarMapa(['clinico' => ['habilitado' => 0, 'estado' => 'suspendido']], '2026-11-22');
+    iguales(true, $conClinicoApagado['clinico']['activo'], 'ni siquiera una fila manipulada apaga el clínico');
+    $conOcup = ModulosInstalacion::completarMapa(['ocupacional' => ['habilitado' => 1, 'estado' => 'activo', 'fecha_fin' => null]], '2026-11-22');
+    iguales(true, $conOcup['ocupacional']['activo']);
+    iguales(false, $conOcup['portal_empresas']['activo'], 'un módulo sin fila sigue apagado');
 });
 
 prueba('sin conexión o sin tabla solo el módulo clínico queda activo', function () {
@@ -229,6 +243,63 @@ prueba('validar cambio de módulo: acepta lo correcto y rechaza lo peligroso', f
     $debeFallar('ocupacional', ['precio' => 'abc'], 'precio no numérico');
     $debeFallar('ocupacional', ['moneda' => 'SOLES'], 'moneda inválida');
     $debeFallar('ocupacional', ['notas' => str_repeat('x', 256)], 'notas demasiado largas');
+});
+
+/* ───────── Unitarias: contraseñas de empresas ocupacionales y límite de intentos ───────── */
+
+prueba('secretos ocupacionales: hashea, verifica hash y acepta texto plano heredado', function () {
+    $h = OcupacionalSecretos::hashear('Empresa#2026');
+    verdadero(OcupacionalSecretos::esHash($h));
+    verdadero($h !== 'Empresa#2026');
+    verdadero(OcupacionalSecretos::verificar('Empresa#2026', $h));
+    verdadero(!OcupacionalSecretos::verificar('otra', $h));
+    verdadero(!OcupacionalSecretos::esHash('Empresa#2026'), 'un texto plano no es hash');
+    verdadero(OcupacionalSecretos::verificar('clave-vieja', 'clave-vieja'), 'heredada en texto plano sigue valiendo');
+    verdadero(!OcupacionalSecretos::verificar('clave-vieja', 'clave-vieja '), 'sin tolerancia a diferencias');
+});
+
+prueba('secretos ocupacionales: vacíos nunca autentican', function () {
+    verdadero(!OcupacionalSecretos::verificar('', ''));
+    verdadero(!OcupacionalSecretos::verificar('x', ''));
+    verdadero(!OcupacionalSecretos::verificar('', 'x'));
+    verdadero(!OcupacionalSecretos::requiereActualizar(''));
+});
+
+prueba('secretos ocupacionales: el texto plano se actualiza a hash y el hash vigente no', function () {
+    verdadero(OcupacionalSecretos::requiereActualizar('texto-plano'));
+    verdadero(!OcupacionalSecretos::requiereActualizar(OcupacionalSecretos::hashear('algo-seguro-1')));
+});
+
+prueba('secretos ocupacionales: al editar, vacío conserva la actual y un valor nuevo se hashea', function () {
+    $actual = OcupacionalSecretos::hashear('vigente-123');
+    iguales($actual, OcupacionalSecretos::valorParaGuardar('', $actual));
+    iguales($actual, OcupacionalSecretos::valorParaGuardar('   ', $actual), 'espacios cuentan como vacío');
+    $nuevo = OcupacionalSecretos::valorParaGuardar(' nueva-clave-9 ', $actual);
+    verdadero($nuevo !== $actual && OcupacionalSecretos::esHash($nuevo));
+    verdadero(OcupacionalSecretos::verificar('nueva-clave-9', $nuevo), 'se recorta antes de hashear');
+    verdadero(OcupacionalSecretos::esHash(OcupacionalSecretos::valorParaGuardar('primera-vez', '')), 'alta nueva');
+    iguales('', OcupacionalSecretos::valorParaGuardar('', ''), 'sin contraseña definida sigue vacía');
+});
+
+prueba('límite de intentos: bloquea al llegar al máximo, por clave, y se libera pasada la ventana', function () {
+    $d = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'limite_test_' . bin2hex(random_bytes(4));
+    mkdir($d);
+    LimiteIntentos::$dirTemporal = $d;
+    $t = 1700000000;
+    for ($i = 0; $i < 3; $i++) {
+        verdadero(!LimiteIntentos::bloqueado('portal', ['ip:1.1.1.1', 'cuenta:a'], 3, $t), "aún no bloquea ($i)");
+        LimiteIntentos::registrarFallo('portal', ['ip:1.1.1.1', 'cuenta:a'], $t);
+    }
+    verdadero(LimiteIntentos::bloqueado('portal', ['ip:1.1.1.1'], 3, $t), 'bloquea por IP');
+    verdadero(LimiteIntentos::bloqueado('portal', ['ip:9.9.9.9', 'cuenta:a'], 3, $t), 'bloquea por cuenta aunque cambie la IP');
+    verdadero(!LimiteIntentos::bloqueado('portal', ['ip:9.9.9.9', 'cuenta:b'], 3, $t), 'otra IP y otra cuenta no');
+    verdadero(!LimiteIntentos::bloqueado('otro_espacio', ['ip:1.1.1.1'], 3, $t), 'los espacios no se mezclan');
+    verdadero(!LimiteIntentos::bloqueado('portal', ['ip:1.1.1.1'], 3, $t + LimiteIntentos::VENTANA_SEG + 1), 'se libera pasada la ventana');
+    LimiteIntentos::limpiar('portal', 'cuenta:a');
+    verdadero(!LimiteIntentos::bloqueado('portal', ['cuenta:a'], 3, $t), 'limpiar tras un acceso correcto');
+    foreach (glob($d . DIRECTORY_SEPARATOR . '*') ?: [] as $f) { @unlink($f); }
+    @rmdir($d);
+    LimiteIntentos::$dirTemporal = null;
 });
 
 /* ───────── Con BD: ejecuta el SQL real y los endpoints ───────── */

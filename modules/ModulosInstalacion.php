@@ -41,6 +41,25 @@ class ModulosInstalacion {
     }
 
     /**
+     * Mapa módulo => estado efectivo a partir de las filas leídas ($filas = null si no se pudieron leer).
+     * El módulo 'clinico' está activo siempre: no depende de que la tabla exista ni de que tenga su fila.
+     * @param array<string,array>|null $filas
+     */
+    public static function completarMapa(?array $filas, ?string $hoy = null): array {
+        $mapa = [];
+        foreach (self::MODULOS as $modulo) {
+            if ($modulo === 'clinico') {
+                $mapa[$modulo] = ['activo' => true, 'estado' => 'activo', 'fecha_fin' => null];
+            } elseif ($filas !== null && isset($filas[$modulo])) {
+                $mapa[$modulo] = self::estadoEfectivo($filas[$modulo], $hoy);
+            } else {
+                $mapa[$modulo] = ['activo' => false, 'estado' => 'apagado', 'fecha_fin' => null];
+            }
+        }
+        return $mapa;
+    }
+
+    /**
      * Mapa módulo => estado efectivo, para todos los módulos conocidos.
      * @param PDO|mysqli|null $conn
      */
@@ -49,17 +68,7 @@ class ModulosInstalacion {
             return self::$cache;
         }
 
-        $filas = self::cargarFilas($conn);
-        $mapa = [];
-        foreach (self::MODULOS as $modulo) {
-            if ($filas !== null && isset($filas[$modulo])) {
-                $mapa[$modulo] = self::estadoEfectivo($filas[$modulo], $hoy);
-            } elseif ($filas === null && $modulo === 'clinico') {
-                $mapa[$modulo] = ['activo' => true, 'estado' => 'activo', 'fecha_fin' => null];
-            } else {
-                $mapa[$modulo] = ['activo' => false, 'estado' => 'apagado', 'fecha_fin' => null];
-            }
-        }
+        $mapa = self::completarMapa(self::cargarFilas($conn), $hoy);
 
         if ($hoy === null) {
             self::$cache = $mapa;
@@ -104,10 +113,20 @@ class ModulosInstalacion {
 
     /** @return array<int,array> filas completas, incluye plan y precio. Solo para el panel Engineer. */
     public static function listarCompleto(PDO $pdo): array {
-        $res = [];
+        $porModulo = [];
         $stmt = $pdo->query('SELECT modulo, habilitado, estado, plan, precio, moneda, fecha_inicio, fecha_fin, notas, actualizado_por, updated_at FROM modulos_instalacion ORDER BY id');
         foreach ($stmt as $r) {
-            $efectivo = self::estadoEfectivo($r);
+            $porModulo[(string)$r['modulo']] = $r;
+        }
+        $res = [];
+        foreach (self::MODULOS as $modulo) {
+            // Un módulo sin fila (tabla creada por la herramienta de esquema, sin datos iniciales) se muestra con sus valores por defecto.
+            $r = $porModulo[$modulo] ?? [
+                'modulo' => $modulo, 'habilitado' => $modulo === 'clinico' ? 1 : 0, 'estado' => 'activo', 'plan' => null,
+                'precio' => null, 'moneda' => 'PEN', 'fecha_inicio' => null, 'fecha_fin' => null, 'notas' => null,
+                'actualizado_por' => null, 'updated_at' => null,
+            ];
+            $efectivo = $modulo === 'clinico' ? ['activo' => true, 'estado' => 'activo'] : self::estadoEfectivo($r);
             $r['habilitado'] = (int)$r['habilitado'];
             $r['estado_efectivo'] = $efectivo['estado'];
             $r['activo'] = $efectivo['activo'];
@@ -187,11 +206,14 @@ class ModulosInstalacion {
 
         $pdo->beginTransaction();
         try {
+            // Si la fila no existe (tabla sin datos iniciales) se crea apagada y luego se aplica el cambio.
+            $pdo->prepare("INSERT IGNORE INTO modulos_instalacion (modulo, habilitado, estado) VALUES (?, ?, 'activo')")
+                ->execute([$modulo, $modulo === 'clinico' ? 1 : 0]);
             $stmt = $pdo->prepare('SELECT habilitado, estado, plan, precio, moneda, fecha_inicio, fecha_fin, notas FROM modulos_instalacion WHERE modulo = ? FOR UPDATE');
             $stmt->execute([$modulo]);
             $antes = $stmt->fetch(PDO::FETCH_ASSOC);
             if (!$antes) {
-                throw new InvalidArgumentException('Modulo no inicializado: aplique sql/2026-11-22/005_modulos_instalacion_schema.sql');
+                throw new InvalidArgumentException('No se pudo inicializar el modulo');
             }
             $nuevo = self::validarCambio($modulo, array_merge($antes, $datos));
 
