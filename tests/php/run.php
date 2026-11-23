@@ -208,7 +208,14 @@ prueba('login: el límite global frena ataques desde muchas IP', function () {
 });
 
 prueba('login: sin configuración el panel está desactivado', function () {
-    iguales('desactivado', EngineerAuth::intentarLogin('x', '000000', '10.0.0.1', null, 1700000000)['codigo'] ?? 'desactivado');
+    // Aislar del acceso Engineer real que pueda existir en esta máquina (../clinica-config/engineer.php).
+    $previo = getenv('ENGINEER_CONFIG_FILE');
+    putenv('ENGINEER_CONFIG_FILE=' . sys_get_temp_dir() . '/no-existe-engineer.php');
+    try {
+        iguales('desactivado', EngineerAuth::intentarLogin('x', '000000', '10.0.0.1', null, 1700000000)['codigo'] ?? 'desactivado');
+    } finally {
+        putenv($previo === false ? 'ENGINEER_CONFIG_FILE' : 'ENGINEER_CONFIG_FILE=' . $previo);
+    }
     iguales(null, EngineerAuth::cargarConfig(sys_get_temp_dir() . '/no-existe-engineer.php'));
 });
 
