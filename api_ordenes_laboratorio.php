@@ -1666,19 +1666,9 @@ if (!function_exists('ol_cotizacion_examenes_laboratorio_activos')) {
         $map = [];
         foreach ($ids as $cid) {
             $map[$cid] = [];
-            $activosDirectos = $activosPorCotizacionDetalle[$cid] ?? [];
 
-            // Priorizar la cotización exacta de la orden: si existe detalle activo ahí,
-            // no mezclar con padre/hijas para evitar reintroducir exámenes eliminados.
-            if (!empty($activosDirectos)) {
-                foreach ($activosDirectos as $sid => $_ok) {
-                    $map[$cid][intval($sid)] = true;
-                }
-                continue;
-            }
-
-            // Fallback para órdenes históricas: usar cotizaciones relacionadas cuando la
-            // cotización exacta no tiene detalles activos de laboratorio.
+            // La orden de laboratorio se consolida por episodio (raíz + adendas):
+            // el panel debe considerar exámenes activos en toda la cadena relacionada.
             foreach ((array)($relacionadasPorSolicitada[$cid] ?? []) as $rid) {
                 $rid = intval($rid);
                 if ($rid <= 0 || !isset($activosPorCotizacionDetalle[$rid])) {
