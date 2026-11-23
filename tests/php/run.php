@@ -49,6 +49,33 @@ prueba('suscripción: al día, aviso, vence hoy, vencida y bloqueada según los 
     iguales(true, LicenciaSistema::calcularEstado(licFila(), '2027-02-01')['bloquea']);
 });
 
+prueba('suscripción: la caché de 60 s evita lecturas, se renueva al vencer, conserva el valor ante un error y se puede invalidar', function () {
+    $arch = sys_get_temp_dir() . '/lic_test_' . getmypid() . '.json';
+    LicenciaSistema::$archivoCache = $arch;
+    @unlink($arch);
+    $llamadas = 0;
+    $fila = licFila();
+    $lector = function () use (&$llamadas, $fila) { $llamadas++; return $fila; };
+    iguales('2026-12-31', LicenciaSistema::filaConCache($lector, 1000)['proximo_vencimiento']);
+    LicenciaSistema::filaConCache($lector, 1030);
+    iguales(1, $llamadas, 'dentro de los 60 s no vuelve a leer la BD');
+    LicenciaSistema::filaConCache($lector, 1061);
+    iguales(2, $llamadas, 'vencida la caché vuelve a leer');
+    $falla = function () use (&$llamadas) { $llamadas++; throw new RuntimeException('sin conexion'); };
+    iguales('2026-12-31', LicenciaSistema::filaConCache($falla, 1200)['proximo_vencimiento'], 'ante un error conserva el valor anterior');
+    iguales(3, $llamadas);
+    LicenciaSistema::filaConCache($falla, 1201);
+    iguales(3, $llamadas, 'el error también se cachea: no reintenta en cada petición');
+    LicenciaSistema::invalidarCache();
+    LicenciaSistema::filaConCache($lector, 1202);
+    iguales(4, $llamadas, 'invalidar fuerza una lectura nueva');
+    @unlink($arch);
+    iguales(null, LicenciaSistema::filaConCache(function () { throw new RuntimeException('x'); }, 5000), 'sin caché previa y con error: falla seguro (null)');
+    @unlink($arch);
+    @unlink($arch . '.lock');
+    LicenciaSistema::$archivoCache = null;
+});
+
 prueba('suscripción: desactivada, sin fecha o sin fila nunca avisa ni bloquea; la prórroga extiende el uso', function () {
     iguales('desactivada', LicenciaSistema::calcularEstado(null, '2030-01-01')['estado']);
     iguales('desactivada', LicenciaSistema::calcularEstado(licFila(['activa' => 0]), '2030-01-01')['estado']);

@@ -247,5 +247,11 @@ header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
+}
+// Suscripción del sistema: si el plazo de gracia terminó, toda API de la clínica responde 402 (ver modules/LicenciaSistema.php).
+// Vive aquí y no en config.php porque config.php no viaja en el deploy (cada servidor tiene el suyo).
+if (is_file(__DIR__ . '/modules/LicenciaSistema.php')) {
+    require_once __DIR__ . '/modules/LicenciaSistema.php';
+    LicenciaSistema::aplicarGuardiaConCache();
 }
 header('Content-Type: application/json');

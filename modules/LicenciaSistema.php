@@ -213,8 +213,76 @@ final class LicenciaSistema {
         return null;
     }
 
-    /** Corta con 402 toda API de la clínica si el plazo de gracia terminó. Ocultar pantallas no basta: esta es la guardia real. */
-    public static function aplicarGuardia($conn): void {
+    /** Se prueba cambiando la ruta; en producción es un archivo temporal único por instalación. */
+    public static ?string $archivoCache = null;
+    private const CACHE_TTL = 60;
+
+    private static function archivoCache(): string {
+        return self::$archivoCache ?? (rtrim(sys_get_temp_dir(), '/\\') . '/licencia_sistema_' . md5(__DIR__) . '.json');
+    }
+
+    /** Borra la caché para que un cambio hecho desde el panel Engineer se aplique al instante. */
+    public static function invalidarCache(): void {
+        @unlink(self::archivoCache());
+    }
+
+    /**
+     * Fila de la suscripción con caché de 60 s: así la guardia no abre una conexión extra por petición (el hosting limita
+     * las conexiones simultáneas). Un solo proceso refresca; los demás usan el valor anterior. Un error de lectura conserva
+     * el valor anterior (o ninguno: falla seguro) y también se cachea para no reintentar en cada petición.
+     * @param callable():?array $lector lee la fila de la BD (puede lanzar excepción)
+     */
+    public static function filaConCache(callable $lector, ?int $ahora = null): ?array {
+        $ahora = $ahora ?? time();
+        $archivo = self::archivoCache();
+        $cache = null;
+        $raw = @file_get_contents($archivo);
+        if ($raw !== false) {
+            $d = json_decode($raw, true);
+            if (is_array($d) && isset($d['t']) && array_key_exists('fila', $d)) {
+                $cache = $d;
+            }
+        }
+        if ($cache !== null && ($ahora - (int)$cache['t']) < self::CACHE_TTL) {
+            return is_array($cache['fila']) ? $cache['fila'] : null;
+        }
+        $anterior = $cache !== null && is_array($cache['fila']) ? $cache['fila'] : null;
+        $lock = @fopen($archivo . '.lock', 'c');
+        if ($lock && !flock($lock, LOCK_EX | LOCK_NB)) {
+            fclose($lock);
+            return $anterior;
+        }
+        try {
+            $fila = $lector();
+        } catch (Throwable $e) {
+            $fila = $anterior;
+        }
+        @file_put_contents($archivo, json_encode(['t' => $ahora, 'fila' => $fila]), LOCK_EX);
+        if ($lock) {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+        return is_array($fila) ? $fila : null;
+    }
+
+    /** Lectura real con una conexión propia y corta (solo cuando la caché venció). */
+    public static function leerFilaDeBd(): ?array {
+        require_once dirname(__DIR__) . '/config/db_resolver.php';
+        $c = resolve_db_runtime_config(dirname(__DIR__));
+        $m = new mysqli((string)$c['DB_HOST'], (string)$c['DB_USER'], (string)$c['DB_PASS'], (string)$c['DB_NAME']);
+        try {
+            $fila = self::leerFila($m);
+        } finally {
+            $m->close();
+        }
+        return $fila;
+    }
+
+    /**
+     * Corta con 402 toda API de la clínica si el plazo de gracia terminó. Ocultar pantallas no basta: esta es la guardia real.
+     * Se llama desde init_api.php (que sí viaja en el deploy; config.php no, es propio de cada servidor).
+     */
+    public static function aplicarGuardiaConCache(?callable $lector = null): void {
         if (PHP_SAPI === 'cli') {
             return;
         }
@@ -225,7 +293,11 @@ final class LicenciaSistema {
         if ($script === 'api_tema.php' && strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) === 'GET') {
             return;
         }
-        $estado = self::calcularEstado(self::leerFila($conn));
+        try {
+            $estado = self::calcularEstado(self::filaConCache($lector ?? [self::class, 'leerFilaDeBd']));
+        } catch (Throwable $e) {
+            return;
+        }
         if (!$estado['bloquea']) {
             return;
         }

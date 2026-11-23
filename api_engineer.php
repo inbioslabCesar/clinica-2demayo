@@ -114,6 +114,7 @@ if (in_array($accion, ['licencia_guardar', 'licencia_pago', 'licencia_prorroga']
             $hasta = isset($entrada['hasta']) && $entrada['hasta'] !== '' ? (string)$entrada['hasta'] : null;
             LicenciaSistema::prorrogar($pdo, $hasta, 'engineer', $ip);
         }
+        LicenciaSistema::invalidarCache();
         engineer_out(200, ['success' => true] + LicenciaSistema::obtenerAdmin($pdo));
     } catch (InvalidArgumentException $e) {
         engineer_out(422, ['success' => false, 'error' => $e->getMessage()]);
