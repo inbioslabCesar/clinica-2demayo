@@ -1491,7 +1491,7 @@ function App() {
                         rolesPermitidos={["administrador", "recepcionista"]}
                         permisosRequeridos={["ver_cotizaciones"]}
                       >
-                        <CotizacionesPage />
+                        <CotizacionesPage usuario={usuario} />
                       </ProtectedRoute>
                     }
                   />
@@ -1515,7 +1515,7 @@ function App() {
                         rolesPermitidos={["administrador", "recepcionista"]}
                         permisosRequeridos={["ver_cotizaciones"]}
                       >
-                        <DetalleCotizacionPage />
+                        <DetalleCotizacionPage usuario={usuario} />
                       </ProtectedRoute>
                     }
                   />

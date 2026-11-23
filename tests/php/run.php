@@ -28,6 +28,20 @@ require_once $root . '/modules/EngineerAuth.php';
 require_once $root . '/modules/OcupacionalSecretos.php';
 require_once $root . '/modules/OcupacionalSesion.php';
 require_once $root . '/modules/LimiteIntentos.php';
+require_once $root . '/modules/PermisoAnulacion.php';
+
+prueba('anular/eliminar: administrador sí; recepcionista solo con el privilegio; otros roles no', function () {
+    $clave = PermisoAnulacion::CLAVE;
+    iguales(true, PermisoAnulacion::permitido(['rol' => 'administrador']));
+    iguales(false, PermisoAnulacion::permitido(['rol' => 'recepcionista', 'permisos' => ['ver_cotizaciones']]));
+    iguales(false, PermisoAnulacion::permitido(['rol' => 'recepcionista', 'permisos' => []]));
+    iguales(true, PermisoAnulacion::permitido(['rol' => 'recepcionista', 'permisos' => [$clave]]));
+    iguales(true, PermisoAnulacion::permitido(['rol' => 'recepcionista', 'permisos' => json_encode([$clave])]));
+    iguales(false, PermisoAnulacion::permitido(['rol' => 'medico', 'permisos' => [$clave]]));
+    iguales(false, PermisoAnulacion::permitido(['rol' => 'laboratorista']));
+    $_SESSION = [];
+    iguales(false, PermisoAnulacion::permitido());
+});
 
 /* ───────── Unitarias: regla "qué servicios ocupan al médico" ───────── */
 

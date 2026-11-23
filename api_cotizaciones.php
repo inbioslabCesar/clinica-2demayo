@@ -14,6 +14,7 @@ require_once __DIR__ . '/modules/OrdenesClinicasModule.php';
 require_once __DIR__ . '/modules/PaqueteComercialModule.php';
 require_once __DIR__ . '/modules/HonorarioRecuperoModule.php';
 require_once __DIR__ . '/modules/AtencionModule.php';
+require_once __DIR__ . '/modules/PermisoAnulacion.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 
@@ -5632,6 +5633,9 @@ function anular_cotizacion($conn, $data) {
     if (!$cotizacionId || !$usuarioId || $motivo === '') {
         respond(['success' => false, 'error' => 'Cotización, usuario y motivo son obligatorios'], 400);
     }
+    if (!PermisoAnulacion::puedeSobreCotizacion($conn, $cotizacionId)) {
+        respond(['success' => false, 'error' => 'No tiene permiso para anular cotizaciones con pagos. Solicítelo al administrador.'], 403);
+    }
 
     HonorarioRecuperoModule::asegurarEsquema($conn);
     $conn->begin_transaction();
@@ -6273,6 +6277,9 @@ function eliminar_detalle_cotizacion($conn, $data) {
     if ($cotizacionId <= 0 || $detalleId <= 0) {
         echo json_encode(['success' => false, 'error' => 'Faltan cotizacion_id o detalle_id']);
         exit;
+    }
+    if (!PermisoAnulacion::puedeSobreCotizacion($conn, $cotizacionId)) {
+        respond(['success' => false, 'error' => 'No tiene permiso para eliminar ítems de cotizaciones con pagos. Solicítelo al administrador.'], 403);
     }
 
     $conn->begin_transaction();

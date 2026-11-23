@@ -8,6 +8,7 @@ import QuickAccessNav from "../components/comunes/QuickAccessNav";
 import CotizadorRapido from "../components/cotizaciones/CotizadorRapido";
 import { FiEye, FiSlash, FiDollarSign, FiEdit2, FiCamera, FiFileText, FiBookOpen, FiPrinter, FiMessageCircle, FiRepeat } from "react-icons/fi";
 import { authFetch } from "../utils/apiClient";
+import { puedeAnularEliminar } from "../config/recepcionPermisos";
 import { BASE_URL } from "../config/config";
 import { evaluarRegistroPaciente, textoMotivosRegistroIncompleto } from "../utils/pacienteRegistroEstado";
 
@@ -773,7 +774,7 @@ function badgeMetodoPago(row) {
 
 // ─── Fila de cotización memoizada ──────────────────────────────────────────────
 // Solo re-renderiza cuando cambian los datos de la fila o los callbacks
-const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, onQuitarLabUrgente, onMigrarPlan, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, eventosAgenda, relacionSolicitud }) {
+const CotizacionRow = memo(function CotizacionRow({ row, canAnular, onCobrar, onAnular, onNavigate, onPrintTicket, onSendWhatsApp, onToggleAnticipado, onQuitarLabUrgente, onMigrarPlan, badgeEstado, labelEstado, anticipadoInfo, canAutorizarAnticipado, correlativoFechaAtencion, correlativosServicios, eventosAgenda, relacionSolicitud }) {
   const hcProximaProgramada = useMemo(() => esCotizacionHcProximaProgramada(row), [row]);
   const saldoOperativo = useMemo(() => (
     Number.isFinite(Number(row?.saldo_pendiente_operativo))
@@ -1415,7 +1416,7 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
               <FiEdit2 className="text-sm" />
             </button>
           )}
-          {estadoRow !== "anulada" && (
+          {estadoRow !== "anulada" && canAnular && (
             <button
               onClick={() => onAnular(row)}
               className={`${ACTION_BTN_BASE} bg-red-100 text-red-700 border-red-200 hover:bg-red-200`}
@@ -1431,7 +1432,8 @@ const CotizacionRow = memo(function CotizacionRow({ row, onCobrar, onAnular, onN
   );
 });
 
-export default function CotizacionesPage() {
+export default function CotizacionesPage({ usuario }) {
+  const puedeAnular = puedeAnularEliminar(usuario);
   const navigate = useNavigate();
   const location = useLocation();
   const autoAnularRef = useRef(false);
@@ -2996,6 +2998,7 @@ export default function CotizacionesPage() {
                     labelEstado={labelEstado}
                     anticipadoInfo={anticipadoByCotizacion[String(row.id)] || anticipadoByCotizacion[row.id] || null}
                     canAutorizarAnticipado={canAutorizarAnticipado}
+                    canAnular={puedeAnular}
                     correlativoFechaAtencion={correlativoFechaAtencion}
                     correlativosServicios={correlativosServicios}
                     relacionSolicitud={relacionSolicitudByCotizacion[Number(row?.id || 0)] || null}

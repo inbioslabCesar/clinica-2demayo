@@ -25,6 +25,7 @@ export const RECEPCION_PERMISOS = [
   // tenga guardada no pierda su lista de permisos ni caiga en el acceso de compatibilidad.
   { key: "ver_tema", label: "Personalización", oculto: true },
   { key: "ver_reabrir_caja", label: "Reabrir Cajas" },
+  { key: "anular_eliminar_atenciones", label: "Anular cotizaciones y eliminar consumos cobrados" },
   { key: "access_salud_ocupacional", label: "Acceso Salud Ocupacional", modulo: "ocupacional" },
   { key: "gestionar_empresas_ocupacional", label: "Gestionar Empresas Ocupacional", modulo: "ocupacional" },
   { key: "registrar_trabajadores_ocupacional", label: "Registrar Trabajadores Ocupacional", modulo: "ocupacional" },
@@ -83,4 +84,11 @@ export function hasPermiso(usuario, permiso) {
   if (usuario.rol === "administrador") return true;
   if (usuario.rol !== "recepcionista") return true;
   return getPermisosRecepcionista(usuario).includes(permiso);
+}
+
+// Anular cotizaciones y eliminar consumos cobrados: solo administrador, o recepcionista con el privilegio marcado.
+export function puedeAnularEliminar(usuario) {
+  if (!usuario) return false;
+  if (usuario.rol === "administrador") return true;
+  return usuario.rol === "recepcionista" && getPermisosRecepcionista(usuario).includes("anular_eliminar_atenciones");
 }

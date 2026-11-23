@@ -28,6 +28,7 @@ function permisosPermitidosRecepcion() {
         'ver_plantillas_hc',
         'ver_tema',
         'ver_reabrir_caja',
+        'anular_eliminar_atenciones',
         // Salud ocupacional: solo surten efecto si el módulo 'ocupacional' está activo en la instalación.
         'access_salud_ocupacional',
         'gestionar_empresas_ocupacional',

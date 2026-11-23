@@ -4,6 +4,7 @@ import Swal from "sweetalert2";
 import Spinner from "../components/comunes/Spinner";
 import { BASE_URL } from "../config/config";
 import { authFetch } from "../utils/apiClient";
+import { puedeAnularEliminar } from "../config/recepcionPermisos";
 
 const BRAND_CACHE_KEY = "detalle_cotizacion_brand_cache_v1";
 const BRAND_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -290,7 +291,8 @@ function resolverEstadoGrupoCotizacion(items) {
   return "pendiente";
 }
 
-export default function DetalleCotizacionPage() {
+export default function DetalleCotizacionPage({ usuario }) {
+  const puedeAnular = puedeAnularEliminar(usuario);
   const navigate = useNavigate();
   const location = useLocation();
   const { cotizacionId } = useParams();
@@ -2242,7 +2244,7 @@ export default function DetalleCotizacionPage() {
                 className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
               >Cobrar</button>
             )}
-            {puedeEditar && (
+            {puedeEditar && puedeAnular && (
               <button onClick={abrirAnulacion} className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">Anular</button>
             )}
           </div>

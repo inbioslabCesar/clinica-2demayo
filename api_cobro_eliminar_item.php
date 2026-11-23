@@ -16,6 +16,12 @@ if (!$usuario || !in_array($rol, ['administrador', 'recepcionista'])) {
     echo json_encode(['success' => false, 'error' => 'Acceso denegado']);
     exit;
 }
+require_once __DIR__ . '/modules/PermisoAnulacion.php';
+if (!PermisoAnulacion::permitido($usuario)) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'error' => 'No tiene permiso para eliminar consumos ya cobrados. Solicítelo al administrador.']);
+    exit;
+}
 
 $input = json_decode(file_get_contents('php://input'), true);
 $cobro_id = isset($input['cobro_id']) ? intval($input['cobro_id']) : 0;

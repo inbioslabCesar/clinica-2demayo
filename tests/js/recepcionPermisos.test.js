@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { permisosDisponibles, getPermisosRecepcionista, hasPermiso } from "../../src/config/recepcionPermisos.js";
+import { permisosDisponibles, getPermisosRecepcionista, hasPermiso, puedeAnularEliminar } from "../../src/config/recepcionPermisos.js";
 
 const keys = (lista) => lista.map((p) => p.key);
 
@@ -15,6 +15,15 @@ test("la personalización ya no se ofrece en el formulario de usuarios pero su c
   assert.ok(!keys(permisosDisponibles(() => true)).includes("ver_tema"));
   const u = { rol: "recepcionista", permisos: ["ver_tema"] };
   assert.deepEqual(getPermisosRecepcionista(u), ["ver_tema"], "no debe caer en el acceso de compatibilidad");
+});
+
+test("anular/eliminar es solo del administrador salvo que se marque a la recepcionista", () => {
+  assert.equal(puedeAnularEliminar({ rol: "administrador" }), true);
+  assert.equal(puedeAnularEliminar({ rol: "recepcionista", permisos: ["ver_cotizaciones"] }), false);
+  assert.equal(puedeAnularEliminar({ rol: "recepcionista", permisos: [] }), false, "el acceso de compatibilidad no lo concede");
+  assert.equal(puedeAnularEliminar({ rol: "recepcionista", permisos: ["anular_eliminar_atenciones"] }), true);
+  assert.equal(puedeAnularEliminar({ rol: "medico" }), false);
+  assert.equal(puedeAnularEliminar(null), false);
 });
 
 test("una recepcionista antigua sin permisos nunca recibe acceso ocupacional", () => {
