@@ -4,6 +4,7 @@ require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db_ocupacional.php';
 require_once __DIR__ . '/modules/OcupacionalSesion.php';
+require_once __DIR__ . '/modules/OcupacionalEsquema.php';
 
 function out_orden($code, $payload)
 {
@@ -540,7 +541,7 @@ function require_medico_responsable_orden($mysqliCore, $medicoId)
         out_orden(422, ['success' => false, 'error' => 'medico_responsable_id es obligatorio']);
     }
 
-    $stmt = $mysqliCore->prepare('SELECT id, nombre, apellido, especialidad, cmp, rne, rna, firma,
+    $stmt = $mysqliCore->prepare('SELECT id, nombre, apellido, especialidad, cmp, rne, ' . OcupacionalEsquema::exprMedicosRna($mysqliCore) . ', firma,
                                          tipo_profesional, abreviatura_profesional, nro_colegiatura
                                   FROM medicos
                                   WHERE id = ? LIMIT 1');
@@ -2079,7 +2080,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $medicoRnaVigente = '';
         $medicoResponsableId = (int)($cab['medico_responsable_id'] ?? 0);
         if (trim((string)($cab['medico_rna_snapshot'] ?? '')) === '' && $medicoResponsableId > 0) {
-            $stmtMedicoRna = $mysqli->prepare('SELECT rna FROM medicos WHERE id = ? LIMIT 1');
+            $stmtMedicoRna = $mysqli->prepare('SELECT ' . OcupacionalEsquema::exprMedicosRna($mysqli) . ' FROM medicos WHERE id = ? LIMIT 1');
             if ($stmtMedicoRna) {
                 $stmtMedicoRna->bind_param('i', $medicoResponsableId);
                 $stmtMedicoRna->execute();

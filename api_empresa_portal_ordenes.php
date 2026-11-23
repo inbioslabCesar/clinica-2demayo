@@ -2,6 +2,7 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db_ocupacional.php';
+require_once __DIR__ . '/modules/OcupacionalEsquema.php';
 // El portal exige además su propio módulo (db_ocupacional.php ya exigió 'ocupacional').
 ModulosInstalacion::exigir($mysqli ?? ($pdo ?? null), 'portal_empresas');
 
@@ -673,7 +674,7 @@ if ($accion === 'certificado_data') {
 
     $medicoResponsableId = (int)($cab['medico_responsable_id'] ?? 0);
     if ($medicoResponsableId > 0) {
-        $stmtMedico = $mysqli->prepare('SELECT nombre, apellido, especialidad, cmp, rne, rna, firma FROM medicos WHERE id = ? LIMIT 1');
+        $stmtMedico = $mysqli->prepare('SELECT nombre, apellido, especialidad, cmp, rne, ' . OcupacionalEsquema::exprMedicosRna($mysqli) . ', firma FROM medicos WHERE id = ? LIMIT 1');
         if ($stmtMedico) {
             $stmtMedico->bind_param('i', $medicoResponsableId);
             $stmtMedico->execute();
