@@ -1,7 +1,9 @@
 import { Link } from "react-router-dom";
 import { Icon } from '@fluentui/react';
+import useModulos from "../../hooks/useModulos";
 
 export default function SidebarMedico({ onClose }) {
+  const { tiene } = useModulos();
   const itemStyle = {
     color: "var(--color-secondary)",
   };
@@ -24,6 +26,12 @@ export default function SidebarMedico({ onClose }) {
         <Icon iconName="Processing" className="text-xl" />
         Mis Procedimientos
       </Link>
+      {tiene("ocupacional") && (
+        <Link to="/mis-evaluaciones-ocupacionales" className="py-2 px-3 rounded-lg hover:bg-white/70 font-medium flex items-center gap-2" style={itemStyle} onClick={onClose}>
+          <Icon iconName="ClipboardList" className="text-xl" />
+          Eval. Ocupacionales
+        </Link>
+      )}
       <Link to="/panel-medico" className="py-2 px-3 rounded-lg hover:bg-white/70 font-medium flex items-center gap-2" style={itemStyle} onClick={onClose}>
         <Icon iconName="Calendar" className="text-xl" />
         Disponibilidad

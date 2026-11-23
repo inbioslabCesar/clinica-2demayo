@@ -28,3 +28,7 @@ Esta carpeta agrupa tres cosas independientes del día:
 - Solo lo usa `api_ubigeo.php` (formulario de empresas) y solo con el módulo `ocupacional` activo. **Aplicar solo donde se vaya a activar el módulo (2 de Mayo).**
 - Estas tablas **no** están en `esquema_referencia.json` (la referencia sale de la BD de desarrollo): el actualizador de esquema no las crea.
 
+## 5) Logo ocupacional (opcional, solo donde se active el módulo)
+- `010_logo_ocupacional.sql`: agrega `configuracion_clinica.logo_ocupacional_url VARCHAR(500) NULL` si no existe (idempotente) y se verifica a sí mismo.
+- Sin la columna todo funciona igual: `api_configuracion.php` ignora el campo y los documentos ocupacionales usan `logo_url`.
+

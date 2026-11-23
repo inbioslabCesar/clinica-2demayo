@@ -9,15 +9,23 @@ ModulosInstalacion::exigir($mysqli ?? ($pdo ?? null), 'portal_empresas');
 
 const EMPRESA_LOGIN_MAX_FALLOS = 8;
 
-const EMPRESA_LOGIN_DOMAIN = 'clinica2demayo.com';
-const EMPRESA_LOGIN_ALLOWED_DOMAINS = [
+// Dominio del login empresarial (nombre_empresa@dominio). Por defecto el de 2 de Mayo; otra clínica con portal lo define
+// con PORTAL_EMPRESAS_DOMINIO (variable de entorno o config de la instancia). Los alias heredados siguen aceptándose.
+$portalDominioCfg = getenv('PORTAL_EMPRESAS_DOMINIO');
+if ($portalDominioCfg === false || trim((string) $portalDominioCfg) === '') {
+    $portalDominioCfg = isset($runtimeConfig['PORTAL_EMPRESAS_DOMINIO']) ? (string) $runtimeConfig['PORTAL_EMPRESAS_DOMINIO'] : '';
+}
+$portalDominioCfg = strtolower(trim((string) $portalDominioCfg));
+define('EMPRESA_LOGIN_DOMAIN', preg_match('/^[a-z0-9.-]+$/', $portalDominioCfg) ? $portalDominioCfg : 'clinica2demayo.com');
+define('EMPRESA_LOGIN_ALLOWED_DOMAINS', array_values(array_unique([
+    EMPRESA_LOGIN_DOMAIN,
     'clinica2demayo.com',
     'clinica2demayo.co',
     'clinica2demayo',
     'clinicadosdemayo.com',
     'clinicadosdemayo.co',
     'clinicadosdemayo',
-];
+])));
 
 function out_empresa_login($code, $payload)
 {
@@ -214,7 +222,7 @@ if (trim($usuario) === '' || trim($password) === '') {
 
 $parsedEmail = parse_empresa_login_email($usuario);
 if (!$parsedEmail) {
-    out_empresa_login(422, ['success' => false, 'error' => 'Use un login empresarial valido (nombre_empresa@clinica2demayo.com)']);
+    out_empresa_login(422, ['success' => false, 'error' => 'Use un login empresarial valido (nombre_empresa@' . EMPRESA_LOGIN_DOMAIN . ')']);
 }
 
 $loginIp = (string)($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');

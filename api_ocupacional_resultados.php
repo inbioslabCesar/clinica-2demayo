@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/db_ocupacional.php';
+require_once __DIR__ . '/modules/OcupacionalSesion.php';
 
 function out_result_ocup($code, $payload)
 {
@@ -29,7 +30,7 @@ function parse_session_permisos_result_ocup()
 
 function resolve_medico_sesion_id_result_ocup()
 {
-    $usuario = $_SESSION['usuario'] ?? null;
+    $usuario = OcupacionalSesion::usuario();
     if (!is_array($usuario)) {
         return 0;
     }
@@ -39,7 +40,7 @@ function resolve_medico_sesion_id_result_ocup()
 
 function es_sesion_medico_result_ocup()
 {
-    $usuario = $_SESSION['usuario'] ?? null;
+    $usuario = OcupacionalSesion::usuario();
     if (!is_array($usuario)) {
         return false;
     }
@@ -49,7 +50,7 @@ function es_sesion_medico_result_ocup()
 
 function es_sesion_enfermero_result_ocup()
 {
-    $usuario = $_SESSION['usuario'] ?? null;
+    $usuario = OcupacionalSesion::usuario();
     if (!is_array($usuario)) {
         return false;
     }
@@ -59,7 +60,7 @@ function es_sesion_enfermero_result_ocup()
 
 function es_sesion_laboratorista_result_ocup()
 {
-    $usuario = $_SESSION['usuario'] ?? null;
+    $usuario = OcupacionalSesion::usuario();
     if (!is_array($usuario)) {
         return false;
     }
@@ -279,7 +280,7 @@ function require_owner_medico_by_detalle_result_ocup($mysqliOcup, $ordenDetalleI
 
 function require_ocup_permiso_any_result($permisosValidos, $fallback = 'ejecutar_ordenes_ocupacional')
 {
-    $usuario = $_SESSION['usuario'] ?? null;
+    $usuario = OcupacionalSesion::usuario();
     if (!is_array($usuario)) {
         out_result_ocup(401, ['success' => false, 'error' => 'No autenticado']);
     }
@@ -1610,7 +1611,7 @@ if ($accion === 'guardar_plantilla') {
         // allow empty object as valid template body.
     }
 
-    $usuarioId = isset($_SESSION['usuario']['id']) ? (int)$_SESSION['usuario']['id'] : null;
+    $usuarioId = (int) (OcupacionalSesion::usuario()['id'] ?? 0) ?: null;
     $plantillaId = (int)($payload['id'] ?? 0);
     $ordenDetalleId = (int)($payload['orden_detalle_id'] ?? 0);
     require_owner_medico_by_detalle_result_ocup($mysqliOcup, $ordenDetalleId, $sqlExprOrdenMedicoResponsable, 'plantilla clinica');
@@ -1715,7 +1716,7 @@ if ($accion === 'eliminar_plantilla') {
     if ($id <= 0) {
         out_result_ocup(422, ['success' => false, 'error' => 'id es obligatorio']);
     }
-    $usuarioId = isset($_SESSION['usuario']['id']) ? (int)$_SESSION['usuario']['id'] : null;
+    $usuarioId = (int) (OcupacionalSesion::usuario()['id'] ?? 0) ?: null;
     $ordenDetalleId = (int)($payload['orden_detalle_id'] ?? 0);
     require_owner_medico_by_detalle_result_ocup($mysqliOcup, $ordenDetalleId, $sqlExprOrdenMedicoResponsable, 'plantilla clinica');
     $ordenIdEvento = resolve_orden_id_by_detalle_result_ocup($mysqliOcup, $ordenDetalleId);
@@ -1848,7 +1849,7 @@ if ($accion === 'actualizar_examen_detalle') {
     $stmtUpd->execute();
     $stmtUpd->close();
 
-    $usuarioId = isset($_SESSION['usuario']['id']) ? (int)$_SESSION['usuario']['id'] : null;
+    $usuarioId = (int) (OcupacionalSesion::usuario()['id'] ?? 0) ?: null;
     registrar_evento_result_ocup(
         $mysqliOcup,
         (int)$detalle['orden_id'],
@@ -1929,7 +1930,7 @@ if ($accion === 'registrar_emision_pdf') {
         out_result_ocup(422, ['success' => false, 'error' => 'Solo se puede emitir PDF de un resultado finalizado']);
     }
 
-    $usuarioId = isset($_SESSION['usuario']['id']) ? (int)$_SESSION['usuario']['id'] : null;
+    $usuarioId = (int) (OcupacionalSesion::usuario()['id'] ?? 0) ?: null;
     registrar_evento_result_ocup(
         $mysqliOcup,
         (int)$resultadoPdf['orden_id'],
@@ -2034,7 +2035,7 @@ if ($estado === 'finalizado') {
 }
 
 $observacion = trim((string)($payload['observacion'] ?? ''));
-$usuarioId = isset($_SESSION['usuario']['id']) ? (int)$_SESSION['usuario']['id'] : null;
+$usuarioId = (int) (OcupacionalSesion::usuario()['id'] ?? 0) ?: null;
 
 $stmtFind = $mysqliOcup->prepare('SELECT id FROM ocupacional_resultados_clinicos WHERE orden_detalle_id = ? AND formato_codigo = ? LIMIT 1');
 if (!$stmtFind) {

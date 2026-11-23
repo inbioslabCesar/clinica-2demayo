@@ -3,6 +3,7 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db_ocupacional.php';
+require_once __DIR__ . '/modules/OcupacionalSesion.php';
 
 function out_orden($code, $payload)
 {
@@ -54,7 +55,7 @@ function parse_session_permisos_orden()
 
 function resolve_medico_sesion_id_orden()
 {
-    $usuario = $_SESSION['usuario'] ?? null;
+    $usuario = OcupacionalSesion::usuario();
     if (!is_array($usuario)) {
         return 0;
     }
@@ -64,7 +65,7 @@ function resolve_medico_sesion_id_orden()
 
 function es_sesion_medico_orden()
 {
-    $usuario = $_SESSION['usuario'] ?? null;
+    $usuario = OcupacionalSesion::usuario();
     if (!is_array($usuario)) {
         return false;
     }
@@ -74,7 +75,7 @@ function es_sesion_medico_orden()
 
 function es_sesion_enfermero_orden()
 {
-    $usuario = $_SESSION['usuario'] ?? null;
+    $usuario = OcupacionalSesion::usuario();
     if (!is_array($usuario)) {
         return false;
     }
@@ -84,7 +85,7 @@ function es_sesion_enfermero_orden()
 
 function es_sesion_laboratorista_orden()
 {
-    $usuario = $_SESSION['usuario'] ?? null;
+    $usuario = OcupacionalSesion::usuario();
     if (!is_array($usuario)) {
         return false;
     }
@@ -231,7 +232,7 @@ function require_owner_medico_by_orden_id_orden($mysqliOcup, $ordenId, $ordenExt
 
 function require_ocup_permiso_orden($permiso)
 {
-    $usuario = $_SESSION['usuario'] ?? null;
+    $usuario = OcupacionalSesion::usuario();
     if (!is_array($usuario)) {
         out_orden(401, ['success' => false, 'error' => 'No autenticado']);
     }
@@ -249,7 +250,7 @@ function require_ocup_permiso_orden($permiso)
 
 function require_ocup_access_orden()
 {
-    $usuario = $_SESSION['usuario'] ?? null;
+    $usuario = OcupacionalSesion::usuario();
     if (!is_array($usuario)) {
         out_orden(401, ['success' => false, 'error' => 'No autenticado']);
     }
@@ -276,7 +277,7 @@ function require_ocup_access_orden()
 
 function require_ocup_permiso_any_orden($permisosValidos, $fallback = 'registrar_trabajadores_ocupacional')
 {
-    $usuario = $_SESSION['usuario'] ?? null;
+    $usuario = OcupacionalSesion::usuario();
     if (!is_array($usuario)) {
         out_orden(401, ['success' => false, 'error' => 'No autenticado']);
     }
@@ -2453,7 +2454,7 @@ if (!is_array($payload)) {
 }
 
 $accion = trim((string)($payload['accion'] ?? ''));
-$usuarioId = isset($_SESSION['usuario']['id']) ? (int)$_SESSION['usuario']['id'] : null;
+$usuarioId = (int) (OcupacionalSesion::usuario()['id'] ?? 0) ?: null;
 
 if ($esSesionEnfermero) {
     out_orden(403, ['success' => false, 'error' => 'No autorizado para acciones POST en ordenes ocupacionales']);

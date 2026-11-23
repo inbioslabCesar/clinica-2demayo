@@ -26,6 +26,7 @@ require_once $root . '/modules/ConsultaClinicaModule.php';
 require_once $root . '/modules/ModulosInstalacion.php';
 require_once $root . '/modules/EngineerAuth.php';
 require_once $root . '/modules/OcupacionalSecretos.php';
+require_once $root . '/modules/OcupacionalSesion.php';
 require_once $root . '/modules/LimiteIntentos.php';
 
 /* ───────── Unitarias: regla "qué servicios ocupan al médico" ───────── */
@@ -290,6 +291,24 @@ prueba('secretos ocupacionales: modo visibles guarda texto plano, no convierte a
     iguales('', OcupacionalSecretos::paraMostrar('clave-1', true, false), 'modo seguro nunca la devuelve');
     iguales('', OcupacionalSecretos::paraMostrar(OcupacionalSecretos::hashear('x-clave-9'), true, true), 'un hash no se muestra');
     verdadero(!OcupacionalSecretos::visibles(), 'por defecto es modo seguro');
+});
+
+prueba('sesion ocupacional: el medico (sesion separada) se ve como usuario de rol medico sin escribir en $_SESSION', function () {
+    $antes = $_SESSION ?? null;
+    $_SESSION = ['medico_id' => 7, 'medico' => ['id' => 7, 'nombre' => 'Ana', 'apellido' => 'Paz', 'email' => 'ana@x.pe']];
+    $u = OcupacionalSesion::usuario();
+    iguales('medico', $u['rol']);
+    iguales(7, $u['id']);
+    iguales(7, $u['medico_id']);
+    iguales([], $u['permisos']);
+    verdadero(!isset($_SESSION['usuario']), 'no debe crear $_SESSION[usuario]');
+    $_SESSION = ['usuario' => ['id' => 3, 'rol' => 'administrador'], 'medico_id' => 7, 'medico' => ['id' => 7]];
+    iguales('administrador', OcupacionalSesion::usuario()['rol'], 'si hay usuario, manda el usuario');
+    $_SESSION = [];
+    iguales(null, OcupacionalSesion::usuario());
+    $_SESSION = ['medico_id' => 7];
+    iguales(null, OcupacionalSesion::usuario(), 'medico_id sin datos de medico no autentica');
+    if ($antes === null) { unset($_SESSION); } else { $_SESSION = $antes; }
 });
 
 prueba('límite de intentos: bloquea al llegar al máximo, por clave, y se libera pasada la ventana', function () {

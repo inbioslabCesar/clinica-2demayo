@@ -140,6 +140,11 @@ switch ($method) {
     case 'GET':
         // Catálogo de médicos que pueden certificar (usado por salud ocupacional). RNA no existe en este esquema.
         if (($_GET['accion'] ?? '') === 'catalogo_certificadores') {
+            if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
+                http_response_code(401);
+                echo json_encode(['success' => false, 'error' => 'No autenticado']);
+                exit;
+            }
             $sql = "SELECT id, nombre, apellido, especialidad, cmp, rne, '' AS rna,
                            tipo_profesional, nro_colegiatura,
                            CASE WHEN firma IS NOT NULL AND TRIM(firma) <> '' THEN 1 ELSE 0 END AS tiene_firma

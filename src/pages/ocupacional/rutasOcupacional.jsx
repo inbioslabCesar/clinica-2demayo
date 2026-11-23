@@ -13,6 +13,8 @@ const ProtocolosOcupacionalesPage = lazy(() => import("./ProtocolosOcupacionales
 const OrdenesOcupacionalesPage = lazy(() => import("./OrdenesOcupacionalesPage.jsx"));
 const EvaluacionMedicaOcupacionalPage = lazy(() => import("./EvaluacionMedicaOcupacionalPage.jsx"));
 const FormatoClinicoExamenPage = lazy(() => import("./FormatoClinicoExamenPage.jsx"));
+const MisEvaluacionesOcupacionalesPage = lazy(() => import("./MisEvaluacionesOcupacionalesPage.jsx"));
+const MisTriajesOcupacionalesPage = lazy(() => import("./MisTriajesOcupacionalesPage.jsx"));
 
 const GESTION = "gestionar_empresas_ocupacional";
 const REGISTRO = "registrar_trabajadores_ocupacional";
@@ -51,6 +53,29 @@ export function rutasOcupacional(usuario) {
       key={ruta}
       path={`/salud-ocupacional/${ruta}`}
       element={elementoProtegido(usuario, permiso, createElement(Pagina))}
+    />
+  ));
+}
+
+// Pantallas del personal clínico: el médico atiende sus evaluaciones y enfermería los triajes.
+// Aquí no hay permisos de recepción; el backend limita cada rol (y al médico a sus propias órdenes).
+const PROFESIONALES = [
+  ["/mis-evaluaciones-ocupacionales", ["medico"], MisEvaluacionesOcupacionalesPage],
+  ["/mis-evaluaciones-ocupacionales/:ordenId/examen/:detalleId", ["medico"], FormatoClinicoExamenPage],
+  ["/mis-triajes-ocupacionales", ["enfermero", "administrador"], MisTriajesOcupacionalesPage],
+  ["/mis-triajes-ocupacionales/:ordenId/examen/:detalleId", ["enfermero", "administrador"], FormatoClinicoExamenPage],
+];
+
+export function rutasOcupacionalProfesionales(usuario) {
+  return PROFESIONALES.map(([ruta, roles, Pagina]) => (
+    <Route
+      key={ruta}
+      path={ruta}
+      element={
+        <ProtectedRoute usuario={usuario} rolesPermitidos={roles}>
+          {createElement(Pagina)}
+        </ProtectedRoute>
+      }
     />
   ));
 }

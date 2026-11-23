@@ -257,7 +257,7 @@ export default function EvaluacionMedicaOcupacionalPage() {
       if (target) {
         const ordenId = Number(selectedRow?.id || 0);
         const labPanelHref = ordenId > 0
-          ? basePath(`/panel-laboratorio?orden_id=${ordenId}`)
+          ? basePath(`/panel-laboratorio?tab=ocupacional_lab&orden_id=${ordenId}`)
           : basePath("/panel-laboratorio");
         output.push({
           key: "grupo-lab",

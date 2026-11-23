@@ -70,17 +70,38 @@ Los 18 PHP del repo `2demayo-ocupacional` (`api_ocupacional_*`, `api_login_empre
     siguen sirviendo y se convierten al primer uso (las que no se usen quedan en texto plano hasta entonces).
   - En ambos modos el formulario del frontend debe precargar `rrhh_password` solo si viene en la respuesta, y dejar vacío = no cambiar.
 - **Portal de empresas:** límite de 8 intentos fallidos por IP o por cuenta (15 min), con el mismo mensaje para cualquier fallo.
-- Pendiente de revisar en el portal: el dominio de acceso está fijo (`@clinica2demayo.com`).
+  El dominio del login (`nombre_empresa@dominio`) es `clinica2demayo.com` por defecto; otra clínica con portal define `PORTAL_EMPRESAS_DOMINIO`
+  (variable de entorno o config de la instancia). Los alias heredados de 2 de Mayo se siguen aceptando.
 
-## Frontend de salud ocupacional (ya portado)
+## Frontend de salud ocupacional (completo)
+Todo queda **detrás del módulo**: una clínica con `ocupacional` apagado no ve menús, rutas, permisos ni pestañas nuevas y sus APIs ocupacionales dan 403
+(se activa por clínica desde el panel Engineer). Lo único que corre siempre es una consulta a `api_modulos.php` (falla seguro: solo `clinico`).
 - Páginas en `src/pages/ocupacional/`, API en `src/api/ocupacionalApi.js` (usa `authFetch`; un 403 no cierra la sesión clínica, un 401 sí).
-- Rutas `/salud-ocupacional/*` (`rutasOcupacional.jsx`) y menú (`SidebarSaludOcupacional.jsx`) solo existen si `useModulos().tiene("ocupacional")`.
-  Cada ruta exige `access_salud_ocupacional` **y** el permiso específico (el backend lo vuelve a validar). Administrador siempre.
-- Los permisos ocupacionales solo se ofrecen en el formulario de usuarios si el módulo está activo, y **nunca se conceden por compatibilidad** a recepcionistas antiguas.
+- Rutas `/salud-ocupacional/*` y menú (`SidebarSaludOcupacional.jsx`): recepción y administrador. Cada ruta exige `access_salud_ocupacional` **y** el permiso
+  específico (el backend lo revalida). Los permisos solo se ofrecen en el formulario de usuarios con el módulo activo y **nunca se conceden por compatibilidad**.
+- **Médico:** `/mis-evaluaciones-ocupacionales` (+ examen). **Enfermería:** `/mis-triajes-ocupacionales` (+ examen). El médico inicia sesión por
+  `api_login_medico.php` (sesión separada, sin `$_SESSION['usuario']`): `modules/OcupacionalSesion.php` lo presenta a las APIs ocupacionales como usuario de rol
+  `medico` **sin escribir en la sesión**, así el login clínico no cambia. Las reglas por rol (propias órdenes, triaje, etc.) siguen en `api_ocupacional_ordenes.php`
+  y `api_ocupacional_resultados.php`.
+- **Portal de empresas** (`portal_empresas`, además de `ocupacional`): el login normal intenta primero `api_login_empresa.php` solo si el correo es del dominio de la clínica;
+  si el módulo está apagado o no son credenciales de empresa, continúa el login habitual sin cambios. Sesión `empresa_portal` independiente de usuarios y médicos
+  (cada login clínico la descarta; `api_auth_status.php` la reconoce solo si no hay otra sesión). La empresa solo ve `/empresa/panel`.
+- **Laboratorio:** pestaña "Ocupacional Lab" en `LaboratorioPanelPage` (solo con el módulo activo; enlace contextual `?tab=ocupacional_lab&orden_id=`).
+- **Configuración:** "Logo horizontal para certificados ocupacionales" (solo con el módulo; columna opcional `configuracion_clinica.logo_ocupacional_url`,
+  `sql/2026-11-22/010`). Sin la columna, `api_configuracion.php` ignora el campo y los documentos usan `logo_url`.
 - Necesita el catálogo de ubigeo: `sql/2026-11-22/007`–`009`.
 - `api_ocupacional_empresas.php?accion=catalogo` (id, RUC, razón social) también lo puede leer quien tiene `registrar_trabajadores_ocupacional`.
-- **No portado todavía:** portal de empresas (`EmpresaPortalPanelPage`, login `empresa`), pantallas de médico/enfermero (`/mis-evaluaciones-ocupacionales`,
-  `/mis-triajes-ocupacionales`: el backend hoy solo autoriza a administrador o a quien tenga los permisos ocupacionales, y médicos/enfermeros no los reciben),
-  biometría del trabajador (`api_pacientes_biometria.php`, columnas `firma_digital`/`huella_digital`/`fotografia` que no existen en producción)
-  y `logo_ocupacional_url` (las pantallas usan `logo_url` si no existe).
+- **No portado (decisión):** biometría del trabajador (`api_pacientes_biometria.php`): captura firma/huella/foto del paciente, pero ninguna pantalla ni PDF portado la
+  consume y requeriría 3 columnas nuevas en `pacientes`; se porta si se pide un uso concreto.
+
+## Despliegue de salud ocupacional en 2 de Mayo (único cliente por ahora)
+Orden recomendado, con **respaldo previo** de `u330560936_bd2DeMayo` y `u330560936_so2demayo`:
+1. Subir el release (`scripts/prepare_hostinger_release.ps1`; no incluye `sql/`, `scripts/esquema_bd`, `scripts/engineer_setup.php` ni el script de hash).
+2. BD clínica (`bd2DeMayo`): `sql/2026-11-22/005` (módulos), `007` + `008` (ubigeo, importar en UTF-8), `009` (verificación) y `010` (logo).
+3. BD ocupacional (`so2demayo`): alinear con `esquema_referencia_ocupacional.json` usando la herramienta (simulacro primero, luego `--aplicar`).
+4. Configuración de la instancia (no viaja en el build): `DB_OCUP_HOST/NAME/USER/PASS` y `OCUP_PASSWORDS_VISIBLES=1`.
+5. Crear el acceso Engineer (`php scripts/engineer_setup.php --salida=../clinica-config/engineer.php`) y activar `ocupacional` (y `portal_empresas` cuando corresponda) solo allí.
+6. Asignar los permisos ocupacionales a las recepcionistas y probar con un usuario de cada rol.
+Más adelante, para pasar a contraseñas con hash: `OCUP_PASSWORDS_VISIBLES=0` y `php scripts/ocupacional_hashear_contrasenas.php` (simulacro) / `--aplicar`.
+Las demás clínicas no requieren ningún paso: el módulo viene apagado y se activa desde Engineer cuando lo pidan (ahí sí aplican 007–010 y la BD ocupacional).
 

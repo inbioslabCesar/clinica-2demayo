@@ -46,7 +46,7 @@ New-Item -ItemType Directory -Force -Path $landingDir | Out-Null
 Write-Host '==> Copiando backend (sin archivos sensibles)...' -ForegroundColor Yellow
 $excludeDirs = @(
   '.git','.github','.vscode','node_modules','src','public-site','dist','dist-public',
-  'docs','tmp','uploads','vendor/bin','deploy','tests'
+  'docs','tmp','uploads','vendor/bin','deploy','tests','sql'
 )
 $excludeFiles = @(
   '.env','.env.local','.env.production','config.php','package-lock.json'
@@ -66,8 +66,8 @@ Get-ChildItem -Force $root | ForEach-Object {
   }
 }
 
-# El actualizador de esquema de BD es solo CLI y se sube a mano, fuera de public_html.
-foreach ($rel in @('scripts\esquema_bd', 'db\esquema_referencia', 'scripts\engineer_setup.php')) {
+# Herramientas solo CLI: se suben a mano, fuera de public_html (el SQL de migraciones tampoco se publica: carpeta sql/ excluida arriba).
+foreach ($rel in @('scripts\esquema_bd', 'db\esquema_referencia', 'scripts\engineer_setup.php', 'scripts\ocupacional_hashear_contrasenas.php')) {
   $p = Join-Path $backendDir $rel
   if (Test-Path $p) { Remove-Item -Recurse -Force $p }
 }
