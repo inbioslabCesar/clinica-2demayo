@@ -1,6 +1,6 @@
 {
     "formato": 1,
-    "generado_en": "2026-11-22 20:50",
+    "generado_en": "2026-11-23 01:13",
     "origen_motor": "8.4.3",
     "tablas": {
         "agenda_contrato": {
@@ -22388,6 +22388,318 @@
                     "columnas": [
                         {
                             "c": "nombre",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "modulos_instalacion": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "modulo": {
+                    "orden": 2,
+                    "tipo": "varchar(40)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "habilitado": {
+                    "orden": 3,
+                    "tipo": "tinyint(1)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 4,
+                    "tipo": "enum('activo','gracia','suspendido')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "activo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "plan": {
+                    "orden": 5,
+                    "tipo": "varchar(40)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "precio": {
+                    "orden": 6,
+                    "tipo": "decimal(10,2)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "moneda": {
+                    "orden": 7,
+                    "tipo": "char(3)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "PEN"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "fecha_inicio": {
+                    "orden": 8,
+                    "tipo": "date",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "fecha_fin": {
+                    "orden": 9,
+                    "tipo": "date",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "notas": {
+                    "orden": 10,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "actualizado_por": {
+                    "orden": 11,
+                    "tipo": "varchar(80)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 12,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 13,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uk_modulos_instalacion_modulo": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "modulo",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "modulos_instalacion_historial": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "bigint unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "modulo": {
+                    "orden": 2,
+                    "tipo": "varchar(40)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "accion": {
+                    "orden": 3,
+                    "tipo": "varchar(30)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "detalle": {
+                    "orden": 4,
+                    "tipo": "text",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "actor": {
+                    "orden": 5,
+                    "tipo": "varchar(80)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "ip": {
+                    "orden": 6,
+                    "tipo": "varchar(45)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 7,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_modulos_historial_modulo_fecha": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "modulo",
+                            "sub": null
+                        },
+                        {
+                            "c": "created_at",
                             "sub": null
                         }
                     ]

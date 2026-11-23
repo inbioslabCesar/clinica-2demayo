@@ -23,6 +23,7 @@ function verdadero($cond, string $msg = 'se esperaba true'): void {
 require_once $root . '/modules/AgendaMedicoRegla.php';
 require_once $root . '/modules/EpisodioAtencionModule.php';
 require_once $root . '/modules/ConsultaClinicaModule.php';
+require_once $root . '/modules/ModulosInstalacion.php';
 
 /* ───────── Unitarias: regla "qué servicios ocupan al médico" ───────── */
 
@@ -61,6 +62,45 @@ prueba('estados que liberan el turno: cancelado/anulado/completado/atendido no o
     foreach (['pendiente', 'falta_cancelar'] as $e) {
         verdadero(!in_array($e, agenda_estados_consulta_liberan(), true), "consulta $e ocupa");
     }
+});
+
+/* ───────── Unitarias: módulos y licencias por instalación ───────── */
+
+prueba('módulo apagado o sin fila no está activo', function () {
+    iguales(false, ModulosInstalacion::estadoEfectivo(['habilitado' => 0, 'estado' => 'activo'])['activo']);
+    iguales('apagado', ModulosInstalacion::estadoEfectivo(['habilitado' => 0])['estado']);
+    iguales(false, ModulosInstalacion::estadoEfectivo([])['activo']);
+});
+
+prueba('módulo habilitado sin fecha_fin está activo', function () {
+    $e = ModulosInstalacion::estadoEfectivo(['habilitado' => 1, 'estado' => 'activo', 'fecha_fin' => null], '2026-11-22');
+    iguales(true, $e['activo']);
+    iguales('activo', $e['estado']);
+});
+
+prueba('licencia vencida entra en gracia y luego se suspende', function () {
+    $fila = ['habilitado' => 1, 'estado' => 'activo', 'fecha_fin' => '2026-11-10'];
+    iguales('activo', ModulosInstalacion::estadoEfectivo($fila, '2026-11-10')['estado'], 'el último día aún está vigente');
+    $gracia = ModulosInstalacion::estadoEfectivo($fila, '2026-11-17');
+    iguales('gracia', $gracia['estado']);
+    iguales(true, $gracia['activo']);
+    $susp = ModulosInstalacion::estadoEfectivo($fila, '2026-11-18');
+    iguales('suspendido', $susp['estado']);
+    iguales(false, $susp['activo']);
+});
+
+prueba('estado suspendido manual apaga el módulo aunque esté habilitado', function () {
+    iguales(false, ModulosInstalacion::estadoEfectivo(['habilitado' => 1, 'estado' => 'suspendido'])['activo']);
+});
+
+prueba('sin conexión o sin tabla solo el módulo clínico queda activo', function () {
+    ModulosInstalacion::reiniciarCache();
+    $mapa = ModulosInstalacion::mapa(null, '2026-11-22');
+    iguales(true, $mapa['clinico']['activo']);
+    iguales(false, $mapa['ocupacional']['activo']);
+    iguales(false, $mapa['portal_empresas']['activo']);
+    iguales(false, ModulosInstalacion::habilitado(null, 'modulo_inexistente'));
+    ModulosInstalacion::reiniciarCache();
 });
 
 /* ───────── Con BD: ejecuta el SQL real y los endpoints ───────── */
