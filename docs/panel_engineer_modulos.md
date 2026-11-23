@@ -61,8 +61,13 @@ Los 18 PHP del repo `2demayo-ocupacional` (`api_ocupacional_*`, `api_login_empre
 - **Esquema:** `db/esquema_referencia/esquema_referencia_ocupacional.json`. Aplicarlo con
   `php scripts/esquema_bd/actualizar_esquema_bd.php --empresa=... --ref=db/esquema_referencia/esquema_referencia_ocupacional.json`
   (en una BD separada hay que apuntar la herramienta a esa BD). Ya no se crean tablas durante una petición.
-- **Contraseñas de empresa (RRHH y médico):** se guardan con hash, la API **ya no las devuelve** (solo `rrhh_password_definida` /
-  `doctor_password_definida`) y editar una empresa con la contraseña vacía **la conserva**. Las antiguas en texto plano siguen sirviendo y se
-  convierten en hash al primer acceso al portal. **El formulario de empresas del frontend no debe mostrar la contraseña actual.**
+- **Contraseñas de empresa (RRHH y médico)** — dos modos por instalación, interruptor `OCUP_PASSWORDS_VISIBLES` (variable de entorno o
+  `config/instances/*.php`; **no viaja en el build**, hay que definirlo en cada instancia):
+  - `0` o ausente (**seguro**, por defecto): se guardan con hash, la API **no las devuelve** (solo `rrhh_password_definida` /
+    `doctor_password_definida`), vacío al editar **conserva** la actual y las antiguas en texto plano pasan a hash al primer acceso al portal.
+  - `1` (**visibles**, transición — decisión para 2 de Mayo): se guardan en texto plano, **solo administradores** reciben `rrhh_password` /
+    `doctor_password` en el listado (otros roles, vacío) y no se convierte nada a hash. Para pasar a seguro basta poner `0`: las existentes
+    siguen sirviendo y se convierten al primer uso (las que no se usen quedan en texto plano hasta entonces).
+  - En ambos modos el formulario del frontend debe precargar `rrhh_password` solo si viene en la respuesta, y dejar vacío = no cambiar.
 - **Portal de empresas:** límite de 8 intentos fallidos por IP o por cuenta (15 min), con el mismo mensaje para cualquier fallo.
 - Pendiente de revisar en el portal: el dominio de acceso está fijo (`@clinica2demayo.com`).

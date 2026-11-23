@@ -281,6 +281,17 @@ prueba('secretos ocupacionales: al editar, vacío conserva la actual y un valor 
     iguales('', OcupacionalSecretos::valorParaGuardar('', ''), 'sin contraseña definida sigue vacía');
 });
 
+prueba('secretos ocupacionales: modo visibles guarda texto plano, no convierte a hash y solo lo muestra a administradores', function () {
+    iguales('clave-1', OcupacionalSecretos::valorParaGuardar(' clave-1 ', '', true));
+    iguales('vieja', OcupacionalSecretos::valorParaGuardar('', 'vieja', true), 'vacío conserva');
+    verdadero(!OcupacionalSecretos::requiereActualizar('texto-plano', true), 'en modo visibles no se convierte a hash');
+    iguales('clave-1', OcupacionalSecretos::paraMostrar('clave-1', true, true));
+    iguales('', OcupacionalSecretos::paraMostrar('clave-1', false, true), 'no administrador no la ve');
+    iguales('', OcupacionalSecretos::paraMostrar('clave-1', true, false), 'modo seguro nunca la devuelve');
+    iguales('', OcupacionalSecretos::paraMostrar(OcupacionalSecretos::hashear('x-clave-9'), true, true), 'un hash no se muestra');
+    verdadero(!OcupacionalSecretos::visibles(), 'por defecto es modo seguro');
+});
+
 prueba('límite de intentos: bloquea al llegar al máximo, por clave, y se libera pasada la ventana', function () {
     $d = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'limite_test_' . bin2hex(random_bytes(4));
     mkdir($d);

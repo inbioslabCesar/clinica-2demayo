@@ -358,6 +358,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $stmt->execute();
     $res = $stmt->get_result();
     $rows = [];
+    $esAdminListado = strtolower(trim((string) ($_SESSION['usuario']['rol'] ?? ''))) === 'administrador';
     while ($row = $res->fetch_assoc()) {
         $rows[] = [
             'id' => (int) $row['id'],
@@ -378,10 +379,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             'correo_1' => (string) ($row['correo_1'] ?? ''),
             'correo_2' => (string) ($row['correo_2'] ?? ''),
             'rrhh_usuario' => (string) ($row['rrhh_usuario'] ?? ''),
-            // Las contraseñas nunca salen del servidor: solo se informa si hay una definida.
+            // El navegador solo sabe si hay una contraseña definida; el valor se agrega abajo únicamente en modo VISIBLES para administradores.
             'rrhh_password_definida' => ((string) ($row['rrhh_password'] ?? '')) !== '',
+            'rrhh_password' => OcupacionalSecretos::paraMostrar((string) ($row['rrhh_password'] ?? ''), $esAdminListado),
             'doctor_usuario' => (string) ($row['doctor_usuario'] ?? ''),
             'doctor_password_definida' => ((string) ($row['doctor_password'] ?? '')) !== '',
+            'doctor_password' => OcupacionalSecretos::paraMostrar((string) ($row['doctor_password'] ?? ''), $esAdminListado),
             'formato_principal' => (string) ($row['formato_principal'] ?? ''),
             'formato_certificado' => (string) ($row['formato_certificado'] ?? ''),
             'observacion' => (string) ($row['observacion'] ?? ''),

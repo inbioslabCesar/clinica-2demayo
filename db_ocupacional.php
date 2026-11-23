@@ -17,6 +17,16 @@ if ($ocupHost === false || $ocupHost === '') {
     $ocupHost = $ocupRuntimeHost !== '' ? $ocupRuntimeHost : DB_HOST;
 }
 
+// Interruptor de las contraseñas de empresa (ver modules/OcupacionalSecretos.php):
+// 1 = visibles solo para administradores (transición); 0 o ausente = con hash y nunca devueltas.
+if (!defined('OCUP_PASSWORDS_VISIBLES')) {
+    $ocupVisiblesRaw = getenv('OCUP_PASSWORDS_VISIBLES');
+    if ($ocupVisiblesRaw === false || $ocupVisiblesRaw === '') {
+        $ocupVisiblesRaw = isset($runtimeConfig['OCUP_PASSWORDS_VISIBLES']) ? (string) $runtimeConfig['OCUP_PASSWORDS_VISIBLES'] : '0';
+    }
+    define('OCUP_PASSWORDS_VISIBLES', in_array(strtolower(trim((string) $ocupVisiblesRaw)), ['1', 'true', 'si', 'yes', 'on'], true));
+}
+
 // Por defecto los datos ocupacionales viven en la misma BD. Para separarlos (confidencialidad) basta
 // definir DB_OCUP_NAME (y su usuario) en la configuración de la instancia.
 $ocupName = getenv('DB_OCUP_NAME');
