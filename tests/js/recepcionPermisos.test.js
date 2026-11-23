@@ -11,6 +11,12 @@ test("los permisos ocupacionales solo se ofrecen con el módulo activo", () => {
   assert.ok(keys(permisosDisponibles(() => false)).includes("ver_pacientes"));
 });
 
+test("la personalización ya no se ofrece en el formulario de usuarios pero su clave se conserva", () => {
+  assert.ok(!keys(permisosDisponibles(() => true)).includes("ver_tema"));
+  const u = { rol: "recepcionista", permisos: ["ver_tema"] };
+  assert.deepEqual(getPermisosRecepcionista(u), ["ver_tema"], "no debe caer en el acceso de compatibilidad");
+});
+
 test("una recepcionista antigua sin permisos nunca recibe acceso ocupacional", () => {
   const antigua = { rol: "recepcionista", permisos: [] };
   assert.ok(!getPermisosRecepcionista(antigua).includes("access_salud_ocupacional"));

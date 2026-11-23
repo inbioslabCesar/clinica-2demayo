@@ -103,9 +103,7 @@ const ReporteFinanzasPage = lazy(() =>
 const ConfiguracionPage = lazy(() => import("./pages/ConfiguracionPage.jsx"));
 const PlantillasHCPage = lazy(() => import("./pages/PlantillasHCPage.jsx"));
 const PlantillasImagenologiaPage = lazy(() => import("./pages/PlantillasImagenologiaPage.jsx"));
-const TemaPage = lazy(() => import("./pages/TemaPage.jsx"));
-const GestionTarifasPage = lazy(() => import("./pages/GestionTarifasPage.jsx"));
-const PaquetesPerfilesPage = lazy(() => import("./pages/PaquetesPerfilesPage.jsx"));
+const GestionTarifasPage = lazy(() => import("./pages/GestionTarifasPage.jsx"));const PaquetesPerfilesPage = lazy(() => import("./pages/PaquetesPerfilesPage.jsx"));
 const ProtectedRoute = lazy(() => import("./components/comunes/ProtectedRoute.jsx"));
 const MedicamentosList = lazy(() => import("./farmacia/MedicamentosList.jsx"));
 const FarmaciaCotizadorPage = lazy(() => import("./pages/FarmaciaCotizadorPage.jsx"));
@@ -827,7 +825,6 @@ function App() {
         if (hasPermiso(usuario, "ver_inventario_laboratorio")) return "/laboratorio/inventario";
         if (hasPermiso(usuario, "ver_configuracion")) return "/configuracion";
         if (hasPermiso(usuario, "ver_plantillas_hc")) return "/configuracion/plantillas-hc";
-        if (hasPermiso(usuario, "ver_tema")) return "/tema";
         if (hasPermiso(usuario, "ver_web_servicios")) return "/web-servicios";
         if (hasPermiso(usuario, "ver_web_ofertas")) return "/web-ofertas";
         if (hasPermiso(usuario, "ver_web_banners")) return "/web-banners";
@@ -1277,18 +1274,6 @@ function App() {
                         permisosRequeridos={["ver_plantillas_imagen"]}
                       >
                         <PlantillasImagenologiaPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/tema"
-                    element={
-                      <ProtectedRoute
-                        usuario={usuario}
-                        rolesPermitidos={["administrador", "recepcionista"]}
-                        permisosRequeridos={["ver_tema"]}
-                      >
-                        <TemaPage />
                       </ProtectedRoute>
                     }
                   />

@@ -6,7 +6,7 @@
  * Separado de api_configuracion.php para cumplir Interface Segregation.
  *
  * GET  → devuelve tema activo (público, sin auth requerido para hidratar rápido)
- * POST → guarda tema (solo administrador)
+ * POST → guarda tema (solo panel Engineer: sesión Engineer + CSRF)
  */
 require_once __DIR__ . '/init_api.php';
 if (!defined('SKIP_MYSQLI_INIT')) {
@@ -236,9 +236,14 @@ try {
     }
 
     if ($method === 'POST') {
-        // Solo administradores pueden cambiar el tema
-        if (!isset($_SESSION['usuario']) || ($_SESSION['usuario']['rol'] ?? '') !== 'administrador') {
+        // Solo el panel Engineer puede cambiar el tema (sesión Engineer vigente + token CSRF). Ni los administradores
+        // ni el resto de usuarios de la clínica: la personalización es parte de la configuración de la instalación.
+        require_once __DIR__ . '/modules/EngineerAuth.php';
+        if (!EngineerAuth::sesionActiva()) {
             respond_tema(['success' => false, 'error' => 'Acceso denegado'], 403);
+        }
+        if (!EngineerAuth::csrfValido((string)($_SERVER['HTTP_X_ENGINEER_CSRF'] ?? ''))) {
+            respond_tema(['success' => false, 'error' => 'Token invalido'], 403);
         }
 
         $input = json_decode(file_get_contents('php://input'), true);

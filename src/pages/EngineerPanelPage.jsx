@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import {
   engineerActualizar,
   engineerEstado,
@@ -6,6 +6,9 @@ import {
   engineerLogin,
   engineerLogout,
 } from "../api/modulosApi";
+import { ThemeProvider } from "../context/ThemeContext";
+
+const PersonalizacionVisual = lazy(() => import("../components/engineer/PersonalizacionVisual.jsx"));
 
 const NOMBRES = {
   clinico: "Sistema clínico",
@@ -134,6 +137,7 @@ export default function EngineerPanelPage() {
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [mensajes, setMensajes] = useState({});
+  const [vista, setVista] = useState("modulos");
   const [datos, setDatos] = useState({ modulos: [], historial: [], gracia_dias: 7 });
   const registrarMensaje = useCallback((modulo, mensaje) => {
     setMensajes((m) => ({ ...m, [modulo]: mensaje }));
@@ -266,13 +270,38 @@ export default function EngineerPanelPage() {
 
   return (
     <main className="min-h-screen bg-gray-100 p-4">
-      <div className="mx-auto max-w-4xl space-y-4">
+      <div className="mx-auto max-w-5xl space-y-4">
         <header className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">Módulos de esta instalación</h1>
+          <h1 className="text-2xl font-semibold">Panel de la instalación</h1>
           <button type="button" onClick={salir} className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50">
             Cerrar sesión
           </button>
         </header>
+        <nav className="flex gap-2 border-b border-gray-300" aria-label="Secciones">
+          {[
+            ["modulos", "Módulos y licencias"],
+            ["personalizacion", "Personalización"],
+          ].map(([id, texto]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setVista(id)}
+              className={`-mb-px rounded-t border px-4 py-2 text-sm font-medium ${
+                vista === id ? "border-gray-300 border-b-gray-100 bg-gray-100 text-blue-700" : "border-transparent text-gray-600 hover:text-gray-900"
+              }`}
+            >
+              {texto}
+            </button>
+          ))}
+        </nav>
+        {vista === "personalizacion" ? (
+          <Suspense fallback={<div className="p-6 text-center text-gray-600">Cargando...</div>}>
+            <ThemeProvider>
+              <PersonalizacionVisual csrf={csrf} onSesionExpirada={() => setFase("login")} />
+            </ThemeProvider>
+          </Suspense>
+        ) : (
+          <>
         <p className="text-sm text-gray-600">
           Al vencer la fecha, el módulo pasa {datos.gracia_dias} días en gracia y luego se suspende. Nunca se borran datos.
         </p>
@@ -315,6 +344,8 @@ export default function EngineerPanelPage() {
             </table>
           )}
         </section>
+          </>
+        )}
       </div>
     </main>
   );

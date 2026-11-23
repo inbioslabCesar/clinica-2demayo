@@ -227,14 +227,6 @@ export default function SidebarAdmin({ onClose }) {
           <Icon iconName="ImageSearch" className="text-lg text-purple-600" />
           <span>Plantillas Imagen</span>
         </Link>
-        <Link
-          to="/tema"
-          className="py-2.5 px-3 rounded-lg text-purple-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-indigo-100 font-medium flex items-center gap-3 transition-all duration-300"
-          onClick={onClose}
-        >
-          <Icon iconName="Color" className="text-lg text-purple-600" />
-          <span>Personalización</span>
-        </Link>
       </SidebarSection>
 
       <SidebarSection

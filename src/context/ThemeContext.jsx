@@ -75,7 +75,7 @@ export function ThemeProvider({ children }) {
     fetchTheme();
   }, [fetchTheme]);
 
-  // Listen for theme updates from TemaPage
+  // Listen for theme updates from PersonalizacionVisual (panel Engineer)
   useEffect(() => {
     const handler = (e) => {
       const newTheme = e?.detail;

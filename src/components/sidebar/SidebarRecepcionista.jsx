@@ -12,7 +12,7 @@ export default function SidebarRecepcionista({ onClose, usuario }) {
   const showPacientes = can("ver_pacientes") || can("ver_lista_consultas") || can("ver_recordatorios_citas");
   const showPersonal = can("ver_medicos") || can("ver_panel_enfermeria") || can("ver_panel_laboratorio") || can("ver_modulo_quimico");
   const showInventario = can("ver_inventario_general") || can("ver_inventario_laboratorio");
-  const showAdministracion = can("ver_usuarios") || can("ver_configuracion") || can("ver_plantillas_hc") || can("ver_tema");
+  const showAdministracion = can("ver_usuarios") || can("ver_configuracion") || can("ver_plantillas_hc");
   const showWeb = can("ver_web_servicios") || can("ver_web_ofertas") || can("ver_web_banners");
 
   const handleToggleSection = (sectionKey) => {
@@ -262,16 +262,6 @@ export default function SidebarRecepcionista({ onClose, usuario }) {
             >
               <Icon iconName="EditCreate" className="text-lg text-cyan-600" />
               <span>Plantillas HC</span>
-            </Link>
-          )}
-          {can("ver_tema") && (
-            <Link
-              to="/tema"
-              className="py-2.5 px-3 rounded-lg text-purple-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-indigo-100 font-medium flex items-center gap-3 transition-all duration-300"
-              onClick={onClose}
-            >
-              <Icon iconName="Color" className="text-lg text-purple-600" />
-              <span>Personalización</span>
             </Link>
           )}
         </SidebarSection>

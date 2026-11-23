@@ -41,6 +41,11 @@ a `domains/<dominio>/clinica-config/engineer.php` con permisos 600).
 3. Abrir `https://<dominio>/panel-engineer`, entrar y activar el módulo (o `UPDATE modulos_instalacion SET habilitado = 1 WHERE modulo = 'ocupacional';`).
 4. Verificación: `SELECT modulo, habilitado, estado FROM modulos_instalacion;`
 
+## Personalización visual (colores y diseño de la página pública)
+Vive **solo** en el panel Engineer, pestaña "Personalización" (`/panel-engineer`; en Hostinger `/sistema/panel-engineer`). Ya no existe la ruta `/tema` ni el menú dentro del sistema de la clínica.
+`api_tema.php`: GET sigue público (la clínica lo lee para pintar sus colores); POST exige sesión Engineer vigente + cabecera `X-Engineer-Csrf`, aunque el usuario sea administrador.
+No hay cambios de BD: las columnas `tema_*` se siguen creando solas. El permiso `ver_tema` ya no se ofrece en el formulario de usuarios, pero su clave se conserva en los usuarios que ya la tenían.
+
 ## Licencia vencida
 Al pasar `fecha_fin`: 7 días en **gracia** (sigue funcionando) y luego **suspendido** (los endpoints del módulo responden 403).
 Los datos nunca se borran. Si la tabla no existe, solo `clinico` queda activo.

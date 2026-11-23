@@ -21,7 +21,9 @@ export const RECEPCION_PERMISOS = [
   { key: "ver_configuracion", label: "Configuración" },
   { key: "ver_plantillas_hc", label: "Plantillas HC" },
   { key: "ver_plantillas_imagen", label: "Plantillas Imagenología" },
-  { key: "ver_tema", label: "Personalización" },
+  // Personalización visual: ahora es exclusiva del panel Engineer. La clave se conserva (oculta) para que un usuario que ya la
+  // tenga guardada no pierda su lista de permisos ni caiga en el acceso de compatibilidad.
+  { key: "ver_tema", label: "Personalización", oculto: true },
   { key: "ver_reabrir_caja", label: "Reabrir Cajas" },
   { key: "access_salud_ocupacional", label: "Acceso Salud Ocupacional", modulo: "ocupacional" },
   { key: "gestionar_empresas_ocupacional", label: "Gestionar Empresas Ocupacional", modulo: "ocupacional" },
@@ -31,7 +33,7 @@ export const RECEPCION_PERMISOS = [
 
 // Los permisos de un módulo solo se ofrecen si la instalación lo tiene activo.
 export function permisosDisponibles(tieneModulo) {
-  return RECEPCION_PERMISOS.filter((p) => !p.modulo || tieneModulo(p.modulo));
+  return RECEPCION_PERMISOS.filter((p) => !p.oculto && (!p.modulo || tieneModulo(p.modulo)));
 }
 
 // Compatibilidad para recepcionistas antiguos (sin permisos persistidos):

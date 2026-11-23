@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { useTheme } from "../context/useTheme";
-import { authFetch } from "../utils/apiClient";
+import { useTheme } from "../../context/useTheme";
+import { authFetch } from "../../utils/apiClient";
 import { Icon } from "@fluentui/react";
 
 function ColorSwatch({ color, label, onChange, name }) {
@@ -123,7 +123,9 @@ function LivePreview({ colors }) {
   );
 }
 
-export default function TemaPage() {
+// Personalización visual de la instalación (colores, login y diseño de la página pública).
+// Solo se usa dentro del panel Engineer: guardar exige su sesión y su token CSRF (`csrf`).
+export default function PersonalizacionVisual({ csrf, onSesionExpirada }) {
   const { theme, presets, refreshTheme } = useTheme();
   const [activePreset, setActivePreset] = useState(theme.tema_preset || "purple");
   const [colors, setColors] = useState({ ...theme });
@@ -195,8 +197,9 @@ export default function TemaPage() {
 
       const res = await authFetch(`api_tema.php`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+        headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest", "X-Engineer-Csrf": csrf },
         body: JSON.stringify(payload),
+        __skipAuthEvent: true,
       });
       const data = await res.json();
       if (data?.success) {
@@ -204,6 +207,7 @@ export default function TemaPage() {
         window.dispatchEvent(new CustomEvent("clinica-theme-updated", { detail: data.tema }));
         refreshTheme();
       } else {
+        if (res.status === 403 && onSesionExpirada) onSesionExpirada();
         setMessage({ type: "error", text: data?.error || "Error al guardar" });
       }
     } catch {
