@@ -219,6 +219,29 @@ prueba('login: sin configuración el panel está desactivado', function () {
     iguales(null, EngineerAuth::cargarConfig(sys_get_temp_dir() . '/no-existe-engineer.php'));
 });
 
+prueba('panel Engineer: la configuración se busca primero fuera de public_html y luego un nivel arriba', function () {
+    $previo = getenv('ENGINEER_CONFIG_FILE');
+    putenv('ENGINEER_CONFIG_FILE');
+    $raiz = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'eng_ruta_' . bin2hex(random_bytes(4));
+    $app = $raiz . '/domains/x.com/public_html/sistema';
+    mkdir($app, 0777, true);
+    try {
+        iguales(null, EngineerAuth::rutaConfig($app), 'sin archivo no hay ruta');
+        mkdir($raiz . '/domains/x.com/public_html/clinica-config', 0777, true);
+        file_put_contents($raiz . '/domains/x.com/public_html/clinica-config/engineer.php', '<?php return [];');
+        verdadero(str_contains((string)EngineerAuth::rutaConfig($app), 'public_html' . DIRECTORY_SEPARATOR . 'clinica-config'), 'un nivel arriba (desarrollo)');
+        mkdir($raiz . '/domains/x.com/clinica-config', 0777, true);
+        file_put_contents($raiz . '/domains/x.com/clinica-config/engineer.php', '<?php return [];');
+        $ruta = (string)EngineerAuth::rutaConfig($app);
+        verdadero(!str_contains($ruta, 'public_html' . DIRECTORY_SEPARATOR . 'clinica-config'), 'si existe fuera de public_html, manda ese');
+        verdadero(str_ends_with($ruta, 'x.com' . DIRECTORY_SEPARATOR . 'clinica-config' . DIRECTORY_SEPARATOR . 'engineer.php'));
+    } finally {
+        if ($previo !== false) { putenv('ENGINEER_CONFIG_FILE=' . $previo); }
+        foreach ([$raiz . '/domains/x.com/clinica-config/engineer.php', $raiz . '/domains/x.com/public_html/clinica-config/engineer.php'] as $f) { @unlink($f); }
+        foreach ([$raiz . '/domains/x.com/clinica-config', $raiz . '/domains/x.com/public_html/clinica-config', $app, $raiz . '/domains/x.com/public_html', $raiz . '/domains/x.com', $raiz . '/domains', $raiz] as $d) { @rmdir($d); }
+    }
+});
+
 prueba('sesión del panel: caduca por inactividad y valida CSRF', function () {
     $_SESSION = [];
     iguales(false, EngineerAuth::sesionActiva(1000));

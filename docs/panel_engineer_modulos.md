@@ -16,7 +16,9 @@ historial de cambios. El módulo `clinico` siempre está activo. Todo lo existen
 
 ## Seguridad
 - **Desactivado por defecto:** sin el archivo de credenciales, `api_engineer.php` responde 404 y la página muestra «No encontrado».
-- Las credenciales viven **fuera de `public_html`**: `../clinica-config/engineer.php` (o la ruta de la variable `ENGINEER_CONFIG_FILE`).
+- Las credenciales viven **fuera de `public_html`**. Se busca, en este orden: la variable `ENGINEER_CONFIG_FILE`; `../../clinica-config/engineer.php`
+  (en Hostinger: `domains/<dominio>/clinica-config/engineer.php`, fuera de `public_html`); y `../clinica-config/engineer.php` (desarrollo local).
+  **En producción use la segunda ruta** (la tercera caería dentro de `public_html`).
   Contiene solo el hash de la contraseña y el secreto del código; nunca la contraseña.
 - Login = contraseña **y** código de una app de autenticación (TOTP). No se indica cuál de los dos falló.
 - 5 fallos por IP o 30 en total bloquean 15 minutos. Un código usado no se puede reutilizar. La sesión caduca a los 30 min sin uso.
@@ -26,10 +28,12 @@ historial de cambios. El módulo `clinico` siempre está activo. Todo lo existen
 
 ## Alta del acceso (lo ejecuta usted, el asistente nunca ve la contraseña)
 ```
-php scripts/engineer_setup.php --salida=../clinica-config/engineer.php
+php scripts/engineer_setup.php --salida=../clinica-config/engineer.php        # desarrollo
+php scripts/engineer_setup.php --salida=../../clinica-config/engineer.php     # Hostinger (desde public_html/sistema): queda fuera de public_html
 ```
 Pide la contraseña dos veces (mínimo 12 caracteres) y muestra el secreto para su app de autenticación. Anótelo: si se pierde, se repite
-el comando con `--forzar`. En producción ejecútelo por SSH en la carpeta del sistema.
+el comando con `--forzar`. `scripts/` no se despliega: en producción suba `scripts/engineer_setup.php` a mano (o genere el archivo en su PC y súbalo
+a `domains/<dominio>/clinica-config/engineer.php` con permisos 600).
 
 ## Activar un módulo en una clínica
 1. Aplicar `005_modulos_instalacion_schema.sql` en la BD de esa clínica (con respaldo). **No viaja en el build.**

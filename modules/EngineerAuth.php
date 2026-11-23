@@ -1,8 +1,9 @@
 <?php
 // Autenticación del panel Engineer. Independiente de la tabla `usuarios` y de la sesión de la clínica.
 //
-// Credenciales: un archivo FUERA de public_html (por defecto ../clinica-config/engineer.php, o la ruta
-// de la variable de entorno ENGINEER_CONFIG_FILE) que devuelve:
+// Credenciales: un archivo FUERA de public_html (se busca en ../../clinica-config/engineer.php, es decir fuera de
+// public_html en Hostinger, y luego en ../clinica-config/engineer.php para desarrollo; o la ruta de la variable de entorno
+// ENGINEER_CONFIG_FILE) que devuelve:
 //   ['password_hash' => '<password_hash()>', 'totp_secret' => '<base32>']
 // Si el archivo no existe el panel está DESACTIVADO (la API responde 404, como si no existiera).
 // Se genera con: php scripts/engineer_setup.php   (la contraseña nunca se imprime ni se guarda en claro).
@@ -19,8 +20,18 @@ class EngineerAuth {
             return is_file($forzado) ? $forzado : null;
         }
         $baseDir = $baseDir ?? dirname(__DIR__);
-        $ruta = dirname($baseDir) . DIRECTORY_SEPARATOR . 'clinica-config' . DIRECTORY_SEPARATOR . 'engineer.php';
-        return is_file($ruta) ? $ruta : null;
+        // Orden de búsqueda: primero FUERA de public_html (en Hostinger la app está en .../public_html/sistema, así que
+        // dos niveles arriba es .../domains/<dominio>/clinica-config) y luego un nivel arriba (desarrollo local).
+        $candidatas = [
+            dirname($baseDir, 2) . DIRECTORY_SEPARATOR . 'clinica-config' . DIRECTORY_SEPARATOR . 'engineer.php',
+            dirname($baseDir) . DIRECTORY_SEPARATOR . 'clinica-config' . DIRECTORY_SEPARATOR . 'engineer.php',
+        ];
+        foreach ($candidatas as $ruta) {
+            if (is_file($ruta)) {
+                return $ruta;
+            }
+        }
+        return null;
     }
 
     /** @return array{password_hash:string,totp_secret:string}|null */
