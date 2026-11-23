@@ -138,6 +138,25 @@ $method = $_SERVER['REQUEST_METHOD'];
 
 switch ($method) {
     case 'GET':
+        // Catálogo de médicos que pueden certificar (usado por salud ocupacional). RNA no existe en este esquema.
+        if (($_GET['accion'] ?? '') === 'catalogo_certificadores') {
+            $sql = "SELECT id, nombre, apellido, especialidad, cmp, rne, '' AS rna,
+                           tipo_profesional, nro_colegiatura,
+                           CASE WHEN firma IS NOT NULL AND TRIM(firma) <> '' THEN 1 ELSE 0 END AS tiene_firma
+                    FROM medicos
+                    WHERE tipo_profesional = 'medico'
+                    ORDER BY apellido ASC, nombre ASC";
+            $res = $conn->query($sql);
+            $rows = [];
+            while ($res && ($row = $res->fetch_assoc())) {
+                $row['id'] = intval($row['id']);
+                $row['tiene_firma'] = intval($row['tiene_firma']);
+                $rows[] = $row;
+            }
+            echo json_encode(['success' => true, 'medicos' => $rows]);
+            exit;
+        }
+
         // Listar médicos
         $sql = "SELECT m.*, c.modalidad_pago, c.monto_hora, c.frecuencia_pago, c.permite_adelanto,
                        c.tope_adelanto_periodo, c.vigencia_desde, c.vigencia_hasta

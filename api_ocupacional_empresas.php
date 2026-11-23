@@ -223,7 +223,19 @@ function requireEmpresaLegacySchema($conn)
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    requireOcupPermiso('gestionar_empresas_ocupacional');
+    // El catálogo (id, RUC, razón social) alimenta los selectores de trabajadores y órdenes, así que también lo puede leer
+    // quien registra trabajadores. El listado completo sigue exigiendo gestionar empresas.
+    if (trim((string) ($_GET['accion'] ?? 'listar')) === 'catalogo') {
+        $esAdminCat = strtolower(trim((string) ($_SESSION['usuario']['rol'] ?? ''))) === 'administrador';
+        $permisosCat = parseSessionPermisos();
+        if (!$esAdminCat && in_array('registrar_trabajadores_ocupacional', $permisosCat, true)) {
+            requireOcupPermiso('registrar_trabajadores_ocupacional');
+        } else {
+            requireOcupPermiso('gestionar_empresas_ocupacional');
+        }
+    } else {
+        requireOcupPermiso('gestionar_empresas_ocupacional');
+    }
 
     $accion = trim((string) ($_GET['accion'] ?? 'listar'));
     $estado = trim((string) ($_GET['estado'] ?? 'activo'));

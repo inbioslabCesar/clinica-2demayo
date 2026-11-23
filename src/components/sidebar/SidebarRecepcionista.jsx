@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Icon } from "@fluentui/react";
 import { hasPermiso } from "../../config/recepcionPermisos";
 import SidebarSection from "./SidebarSection";
+import SidebarSaludOcupacional from "./SidebarSaludOcupacional";
 
 export default function SidebarRecepcionista({ onClose, usuario }) {
   const [openSection, setOpenSection] = useState("finanzas");
@@ -218,6 +219,13 @@ export default function SidebarRecepcionista({ onClose, usuario }) {
           )}
         </SidebarSection>
       )}
+
+      <SidebarSaludOcupacional
+        can={can}
+        isOpen={openSection === "ocupacional"}
+        onToggle={() => handleToggleSection("ocupacional")}
+        onClose={onClose}
+      />
 
       {showAdministracion && (
         <SidebarSection

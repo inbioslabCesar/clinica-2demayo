@@ -71,3 +71,16 @@ Los 18 PHP del repo `2demayo-ocupacional` (`api_ocupacional_*`, `api_login_empre
   - En ambos modos el formulario del frontend debe precargar `rrhh_password` solo si viene en la respuesta, y dejar vacío = no cambiar.
 - **Portal de empresas:** límite de 8 intentos fallidos por IP o por cuenta (15 min), con el mismo mensaje para cualquier fallo.
 - Pendiente de revisar en el portal: el dominio de acceso está fijo (`@clinica2demayo.com`).
+
+## Frontend de salud ocupacional (ya portado)
+- Páginas en `src/pages/ocupacional/`, API en `src/api/ocupacionalApi.js` (usa `authFetch`; un 403 no cierra la sesión clínica, un 401 sí).
+- Rutas `/salud-ocupacional/*` (`rutasOcupacional.jsx`) y menú (`SidebarSaludOcupacional.jsx`) solo existen si `useModulos().tiene("ocupacional")`.
+  Cada ruta exige `access_salud_ocupacional` **y** el permiso específico (el backend lo vuelve a validar). Administrador siempre.
+- Los permisos ocupacionales solo se ofrecen en el formulario de usuarios si el módulo está activo, y **nunca se conceden por compatibilidad** a recepcionistas antiguas.
+- Necesita el catálogo de ubigeo: `sql/2026-11-22/007`–`009`.
+- `api_ocupacional_empresas.php?accion=catalogo` (id, RUC, razón social) también lo puede leer quien tiene `registrar_trabajadores_ocupacional`.
+- **No portado todavía:** portal de empresas (`EmpresaPortalPanelPage`, login `empresa`), pantallas de médico/enfermero (`/mis-evaluaciones-ocupacionales`,
+  `/mis-triajes-ocupacionales`: el backend hoy solo autoriza a administrador o a quien tenga los permisos ocupacionales, y médicos/enfermeros no los reciben),
+  biometría del trabajador (`api_pacientes_biometria.php`, columnas `firma_digital`/`huella_digital`/`fotografia` que no existen en producción)
+  y `logo_ocupacional_url` (las pantallas usan `logo_url` si no existe).
+

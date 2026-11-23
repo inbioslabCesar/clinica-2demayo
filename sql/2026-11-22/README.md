@@ -19,3 +19,12 @@ Esta carpeta agrupa tres cosas independientes del día:
 - `006_verify_modulos_instalacion.sql`: verificación de solo lectura (debe dar 3 filas).
 - **No viaja en el build:** activar un módulo en una clínica es un cambio en SU BD. Sin la tabla, el sistema falla seguro (solo `clinico` activo).
 - Se aplica con el actualizador de esquema (la tabla ya está en `db/esquema_referencia/esquema_referencia.json`) o pegando el `005` en phpMyAdmin.
+
+## 4) Catálogo de ubigeo para salud ocupacional — **cambia schema y datos, solo aditivo**
+- `007_ubigeo_schema.sql`: crea `departamento`, `provincia`, `distrito` (idempotente, `CREATE TABLE IF NOT EXISTS`) en la BD **clínica**.
+- `008_ubigeo_data.sql`: 25 departamentos, 196 provincias, 1862 distritos con `INSERT IGNORE` y ids fijos (sin `TRUNCATE`). **Debe importarse en UTF-8**
+  (phpMyAdmin: juego de caracteres del archivo `utf8`; con la consola, `--default-character-set=utf8mb4` y `source`, no con `Get-Content | mysql`, que daña las tildes).
+- `009_verify_ubigeo.sql`: debe dar `25 | 196 | 1862 | 0 | 0`.
+- Solo lo usa `api_ubigeo.php` (formulario de empresas) y solo con el módulo `ocupacional` activo. **Aplicar solo donde se vaya a activar el módulo (2 de Mayo).**
+- Estas tablas **no** están en `esquema_referencia.json` (la referencia sale de la BD de desarrollo): el actualizador de esquema no las crea.
+

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Icon } from "@fluentui/react";
 import SidebarSection from "./SidebarSection";
+import SidebarSaludOcupacional from "./SidebarSaludOcupacional";
 
 export default function SidebarAdmin({ onClose }) {
   const [openSection, setOpenSection] = useState("finanzas");
@@ -180,6 +181,13 @@ export default function SidebarAdmin({ onClose }) {
           <span>Inventario General</span>
         </Link>
       </SidebarSection>
+
+      <SidebarSaludOcupacional
+        can={() => true}
+        isOpen={openSection === "ocupacional"}
+        onToggle={() => handleToggleSection("ocupacional")}
+        onClose={onClose}
+      />
 
       <SidebarSection
         title="Administración"
