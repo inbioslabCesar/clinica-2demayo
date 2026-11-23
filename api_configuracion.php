@@ -156,6 +156,30 @@ function cfg_pin_existing_hc_templates($pdo, $conn, $actorLabel) {
     return $summary;
 }
 
+// Logo horizontal de documentos ocupacionales (columna opcional logo_ocupacional_url). Sin la columna, o si el campo
+// no llega, no hace nada: las clínicas sin salud ocupacional no se ven afectadas.
+function cfg_guardar_logo_ocupacional($pdo, $input) {
+    if (!is_array($input) || !array_key_exists('logo_ocupacional_url', $input)) {
+        return;
+    }
+    $chk = $pdo->query("SHOW COLUMNS FROM configuracion_clinica LIKE 'logo_ocupacional_url'");
+    if (!$chk || $chk->rowCount() === 0) {
+        return;
+    }
+    $raw = trim((string)$input['logo_ocupacional_url']);
+    $valor = null;
+    if ($raw !== '') {
+        $raw = str_replace('\\\\', '/', $raw);
+        if (preg_match('~(?:^|/)(uploads/[^?#\\s]+)$~i', $raw, $m) && !empty($m[1])) {
+            $valor = ltrim($m[1], '/');
+        } else {
+            $valor = ltrim((string)preg_replace('#^\./#', '', $raw), '/');
+        }
+    }
+    $stmt = $pdo->prepare("UPDATE configuracion_clinica SET logo_ocupacional_url = ? WHERE id = (SELECT id FROM (SELECT id FROM configuracion_clinica ORDER BY created_at DESC LIMIT 1) AS temp)");
+    $stmt->execute([$valor]);
+}
+
 function normalize_logo_size_option($value) {
     $allowed = ['sm', 'md', 'lg', 'xl', 'xxl'];
     $normalized = strtolower(trim((string)($value ?? '')));
@@ -443,6 +467,7 @@ try {
                     $agendaProgramacionModo
                 ]);
 
+                cfg_guardar_logo_ocupacional($pdo, $input);
                 $pdo->commit();
                 echo json_encode([
                     'success' => true,
@@ -495,6 +520,7 @@ try {
                     $agendaProgramacionModo
                 ]);
 
+                cfg_guardar_logo_ocupacional($pdo, $input);
                 $pdo->commit();
                 echo json_encode([
                     'success' => true,

@@ -22,11 +22,21 @@ export const RECEPCION_PERMISOS = [
   { key: "ver_plantillas_hc", label: "Plantillas HC" },
   { key: "ver_plantillas_imagen", label: "Plantillas Imagenología" },
   { key: "ver_tema", label: "Personalización" },
-  { key: "ver_reabrir_caja", label: "Reabrir Cajas" }
+  { key: "ver_reabrir_caja", label: "Reabrir Cajas" },
+  { key: "access_salud_ocupacional", label: "Acceso Salud Ocupacional", modulo: "ocupacional" },
+  { key: "gestionar_empresas_ocupacional", label: "Gestionar Empresas Ocupacional", modulo: "ocupacional" },
+  { key: "registrar_trabajadores_ocupacional", label: "Registrar Trabajadores Ocupacional", modulo: "ocupacional" },
+  { key: "baja_trabajadores_ocupacional", label: "Baja de Trabajadores Ocupacional", modulo: "ocupacional" }
 ];
+
+// Los permisos de un módulo solo se ofrecen si la instalación lo tiene activo.
+export function permisosDisponibles(tieneModulo) {
+  return RECEPCION_PERMISOS.filter((p) => !p.modulo || tieneModulo(p.modulo));
+}
 
 // Compatibilidad para recepcionistas antiguos (sin permisos persistidos):
 // solo se habilitan los modulos historicamente visibles en su sidebar.
+// Salud ocupacional NUNCA se concede por compatibilidad (datos confidenciales): se asigna siempre de forma explícita.
 export const RECEPCION_PERMISOS_LEGACY = [
   "ver_pacientes",
   "ver_contabilidad",

@@ -1,14 +1,23 @@
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import OrdenesLaboratorioList from "../laboratorio/OrdenesLaboratorioList";
 import LlenarResultadosForm from "../laboratorio/LlenarResultadosForm";
 import { authFetch } from "../utils/apiClient";
+import useModulos from "../hooks/useModulos";
+
+// Pestaña de salud ocupacional (solo si la instalación tiene el módulo activo).
+const OcupacionalLaboratorioReadOnlyPanel = lazy(() => import("../laboratorio/OcupacionalLaboratorioReadOnlyPanel"));
 
 function LaboratorioPanelPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("ordenes");
+  const { tiene, cargando: cargandoModulos } = useModulos();
+  const ocupacionalLab = tiene("ocupacional");
+  const searchParams = new URLSearchParams(location.search);
+  const pideOcupacionalLab = searchParams.get("tab") === "ocupacional_lab";
+  const modoContextualOcupacional = ocupacionalLab && pideOcupacionalLab && Number(searchParams.get("orden_id") || 0) > 0;
+  const [activeTab, setActiveTab] = useState(pideOcupacionalLab ? "ocupacional_lab" : "ordenes");
   const [ordenSeleccionada, setOrdenSeleccionada] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
   const deepLinkResolvedRef = useRef(false);
@@ -22,6 +31,12 @@ function LaboratorioPanelPage() {
   const [deepLinkInfo, setDeepLinkInfo] = useState(null);
   const backTo = new URLSearchParams(location.search).get('back_to') || '';
 
+  useEffect(() => {
+    // Si el módulo está apagado, un enlace con ?tab=ocupacional_lab no debe dejar la pantalla vacía.
+    if (!cargandoModulos && !ocupacionalLab && activeTab === "ocupacional_lab") {
+      setActiveTab("ordenes");
+    }
+  }, [cargandoModulos, ocupacionalLab, activeTab]);
   useEffect(() => {
     if (activeTab !== 'ordenes') return;
 
@@ -74,6 +89,8 @@ function LaboratorioPanelPage() {
 
   useEffect(() => {
     if (deepLinkResolvedRef.current) return;
+    // En la pestaña de ocupacional, orden_id es una orden ocupacional, no de laboratorio clínico.
+    if (pideOcupacionalLab) return;
 
     const sp = new URLSearchParams(location.search);
     const ordenId = Number(sp.get('orden_id') || sp.get('order_id') || 0);
@@ -137,7 +154,7 @@ function LaboratorioPanelPage() {
     };
 
     resolverDesdeDeepLink();
-  }, [location.search, handleSeleccionarOrden]);
+  }, [location.search, handleSeleccionarOrden, pideOcupacionalLab]);
 
   const handleVolver = () => {
     if (backTo) {
@@ -232,8 +249,21 @@ function LaboratorioPanelPage() {
       icon: "📊",
       color: "from-blue-600 to-cyan-600",
       disabled: !ordenSeleccionada
-    }
+    },
+    ...(ocupacionalLab
+      ? [{
+          id: "ocupacional_lab",
+          label: "Ocupacional Lab",
+          icon: "🧬",
+          color: "from-cyan-700 to-teal-600",
+          disabled: false
+        }]
+      : [])
   ];
+
+  const tabsVisibles = modoContextualOcupacional
+    ? tabs.filter((tab) => tab.id === "ocupacional_lab")
+    : tabs;
 
   return (
     <div
@@ -285,7 +315,7 @@ function LaboratorioPanelPage() {
           </div>
           {/* Navegación por tabs */}
           <div className="flex gap-1 bg-white/10 backdrop-blur-sm rounded-lg p-1">
-            {tabs.map((tab) => (
+            {tabsVisibles.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => !tab.disabled && setActiveTab(tab.id)}
@@ -381,6 +411,14 @@ function LaboratorioPanelPage() {
             <div className="bg-white/70 backdrop-blur-sm rounded-xl shadow-xl border border-white/20 p-3 sm:p-4">
               <LlenarResultadosForm key={ordenSeleccionada.id} orden={ordenSeleccionada} onVolver={handleVolver} onGuardado={handleGuardadoResultados} />
             </div>
+          </div>
+        )}
+
+        {activeTab === "ocupacional_lab" && ocupacionalLab && (
+          <div className="bg-white/70 backdrop-blur-sm rounded-xl shadow-xl border border-white/20">
+            <Suspense fallback={<div className="p-6 text-center text-sm text-gray-600">Cargando...</div>}>
+              <OcupacionalLaboratorioReadOnlyPanel />
+            </Suspense>
           </div>
         )}
       </div>

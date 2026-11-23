@@ -13,6 +13,25 @@ const FALLBACK_LOGO_SRC = `${import.meta.env.BASE_URL}2demayo.svg`;
 const LOGIN_REQUEST_TIMEOUT_MS = Math.max(8000, Number(SECURITY_CONFIG?.requestTimeout || 10000));
 const LOGIN_RETRY_DELAY_MS = 700;
 
+// Alias heredados del login empresarial; además se acepta el dominio con el que se abrió el sistema.
+const DOMINIOS_PORTAL_ALIAS = new Set([
+  "clinica2demayo.com",
+  "clinica2demayo.co",
+  "clinica2demayo",
+  "clinicadosdemayo.com",
+  "clinicadosdemayo.co",
+  "clinicadosdemayo",
+]);
+
+function esLoginEmpresaPortal(rawUsuario) {
+  const partes = String(rawUsuario || "").trim().toLowerCase().split("@");
+  if (partes.length !== 2 || !partes[0].trim()) return false;
+  const dominio = partes[1].trim().replace(/\.+$/, "");
+  if (!dominio) return false;
+  const host = String(window.location.hostname || "").toLowerCase().replace(/^www\./, "");
+  return DOMINIOS_PORTAL_ALIAS.has(dominio) || dominio === host;
+}
+
 function formatRetryAfter(seconds) {
   const total = Math.max(0, Number(seconds || 0));
   if (!Number.isFinite(total) || total <= 0) {
@@ -371,6 +390,30 @@ function Login({ onLogin }) {
       const credUsuario = { usuario, password };
       const credMedico = { email: usuario, password };
 
+      // Portal de empresas (módulo opcional): solo se intenta con un correo del dominio de la clínica. Si el módulo está
+      // apagado o las credenciales no son de empresa, se continúa con el login normal sin cambios.
+      if (esLoginEmpresaPortal(usuario)) {
+        const loginEmpresa = await postLoginWithSingleRetry("api_login_empresa.php", {
+          usuario: String(usuario).trim().toLowerCase(),
+          password,
+        });
+        if (loginEmpresa.ok) {
+          const usuarioEmpresa = {
+            ...loginEmpresa.data.usuario,
+            permisos: normalizePermisos(loginEmpresa.data?.usuario?.permisos || []),
+          };
+          sessionStorage.removeItem('medico');
+          sessionStorage.setItem('usuario', JSON.stringify(usuarioEmpresa));
+          sessionStorage.setItem('user_role', 'empresa');
+          onLogin && onLogin(usuarioEmpresa);
+          navigate("/empresa/panel");
+          return;
+        }
+        if (loginEmpresa.status === 429) {
+          setError(formatRetryAfter(loginEmpresa.data?.retry_after) || "Demasiados intentos. Espere unos minutos.");
+          return;
+        }
+      }
       if (esEmail) {
         const loginUsuario = await postLoginWithSingleRetry("api_login.php", credUsuario);
 

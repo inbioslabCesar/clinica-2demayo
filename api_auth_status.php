@@ -56,6 +56,32 @@ function auth_status_hidratar_medico($mysqli, int $medicoId): ?array {
 }
 
 try {
+    // Portal de empresas (módulo opcional): su sesión es independiente y nunca convive con la de usuarios o médicos
+    // (api_login_empresa.php las descarta al ingresar y los logins clínicos descartan esta).
+    if (isset($_SESSION['empresa_portal']) && is_array($_SESSION['empresa_portal'])
+        && !isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {
+        $empresaSesion = $_SESSION['empresa_portal'];
+        $usuarioEmpresa = [
+            'id' => (int)($empresaSesion['usuario_portal_id'] ?? 0),
+            'usuario' => (string)($empresaSesion['email_login'] ?? ''),
+            'nombre' => (string)($empresaSesion['nombre_empresa'] ?? ''),
+            'rol' => 'empresa',
+            'empresa_id' => (int)($empresaSesion['empresa_id'] ?? 0),
+            'permisos' => ['empresa_portal_read'],
+        ];
+        echo json_encode([
+            'success' => true,
+            'authenticated' => true,
+            'usuario' => $usuarioEmpresa,
+            'usuario_id' => $usuarioEmpresa['id'],
+            'nombre' => $usuarioEmpresa['nombre'],
+            'rol' => 'empresa',
+            'permisos' => $usuarioEmpresa['permisos'],
+            'tipo' => 'empresa',
+        ]);
+        exit;
+    }
+
     // Priorizar la sesion de medico para evitar cruces por colision de ID con tabla usuarios.
     if (isset($_SESSION['medico_id'])) {
         $medicoId = (int)($_SESSION['medico_id'] ?? 0);

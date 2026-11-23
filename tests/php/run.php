@@ -23,6 +23,11 @@ function verdadero($cond, string $msg = 'se esperaba true'): void {
 require_once $root . '/modules/AgendaMedicoRegla.php';
 require_once $root . '/modules/EpisodioAtencionModule.php';
 require_once $root . '/modules/ConsultaClinicaModule.php';
+require_once $root . '/modules/ModulosInstalacion.php';
+require_once $root . '/modules/EngineerAuth.php';
+require_once $root . '/modules/OcupacionalSecretos.php';
+require_once $root . '/modules/OcupacionalSesion.php';
+require_once $root . '/modules/LimiteIntentos.php';
 
 /* ───────── Unitarias: regla "qué servicios ocupan al médico" ───────── */
 
@@ -61,6 +66,277 @@ prueba('estados que liberan el turno: cancelado/anulado/completado/atendido no o
     foreach (['pendiente', 'falta_cancelar'] as $e) {
         verdadero(!in_array($e, agenda_estados_consulta_liberan(), true), "consulta $e ocupa");
     }
+});
+
+/* ───────── Unitarias: módulos y licencias por instalación ───────── */
+
+prueba('módulo apagado o sin fila no está activo', function () {
+    iguales(false, ModulosInstalacion::estadoEfectivo(['habilitado' => 0, 'estado' => 'activo'])['activo']);
+    iguales('apagado', ModulosInstalacion::estadoEfectivo(['habilitado' => 0])['estado']);
+    iguales(false, ModulosInstalacion::estadoEfectivo([])['activo']);
+});
+
+prueba('módulo habilitado sin fecha_fin está activo', function () {
+    $e = ModulosInstalacion::estadoEfectivo(['habilitado' => 1, 'estado' => 'activo', 'fecha_fin' => null], '2026-11-22');
+    iguales(true, $e['activo']);
+    iguales('activo', $e['estado']);
+});
+
+prueba('licencia vencida entra en gracia y luego se suspende', function () {
+    $fila = ['habilitado' => 1, 'estado' => 'activo', 'fecha_fin' => '2026-11-10'];
+    iguales('activo', ModulosInstalacion::estadoEfectivo($fila, '2026-11-10')['estado'], 'el último día aún está vigente');
+    $gracia = ModulosInstalacion::estadoEfectivo($fila, '2026-11-17');
+    iguales('gracia', $gracia['estado']);
+    iguales(true, $gracia['activo']);
+    $susp = ModulosInstalacion::estadoEfectivo($fila, '2026-11-18');
+    iguales('suspendido', $susp['estado']);
+    iguales(false, $susp['activo']);
+});
+
+prueba('estado suspendido manual apaga el módulo aunque esté habilitado', function () {
+    iguales(false, ModulosInstalacion::estadoEfectivo(['habilitado' => 1, 'estado' => 'suspendido'])['activo']);
+});
+
+prueba('tabla vacía o fila de clínico ausente: clínico siempre activo, el resto apagado', function () {
+    $m = ModulosInstalacion::completarMapa([], '2026-11-22');
+    iguales(true, $m['clinico']['activo'], 'tabla creada sin filas (p. ej. por la herramienta de esquema)');
+    iguales(false, $m['ocupacional']['activo']);
+    iguales(false, $m['portal_empresas']['activo']);
+    $conClinicoApagado = ModulosInstalacion::completarMapa(['clinico' => ['habilitado' => 0, 'estado' => 'suspendido']], '2026-11-22');
+    iguales(true, $conClinicoApagado['clinico']['activo'], 'ni siquiera una fila manipulada apaga el clínico');
+    $conOcup = ModulosInstalacion::completarMapa(['ocupacional' => ['habilitado' => 1, 'estado' => 'activo', 'fecha_fin' => null]], '2026-11-22');
+    iguales(true, $conOcup['ocupacional']['activo']);
+    iguales(false, $conOcup['portal_empresas']['activo'], 'un módulo sin fila sigue apagado');
+});
+
+prueba('sin conexión o sin tabla solo el módulo clínico queda activo', function () {
+    ModulosInstalacion::reiniciarCache();
+    $mapa = ModulosInstalacion::mapa(null, '2026-11-22');
+    iguales(true, $mapa['clinico']['activo']);
+    iguales(false, $mapa['ocupacional']['activo']);
+    iguales(false, $mapa['portal_empresas']['activo']);
+    iguales(false, ModulosInstalacion::habilitado(null, 'modulo_inexistente'));
+    ModulosInstalacion::reiniciarCache();
+});
+
+/* ───────── Unitarias: panel Engineer (TOTP, login, límites, validación) ───────── */
+
+function engineerTmp(): string {
+    $d = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'engineer_test_' . bin2hex(random_bytes(4));
+    mkdir($d);
+    EngineerAuth::$dirTemporal = $d;
+    return $d;
+}
+function engineerLimpiar(string $d): void {
+    foreach (glob($d . DIRECTORY_SEPARATOR . '*') ?: [] as $f) { @unlink($f); }
+    @rmdir($d);
+    EngineerAuth::$dirTemporal = null;
+}
+function engineerCfg(string $pass = 'clave-de-prueba-123'): array {
+    return ['password_hash' => password_hash($pass, PASSWORD_DEFAULT), 'totp_secret' => EngineerAuth::base32Encode('12345678901234567890')];
+}
+
+prueba('TOTP: vector oficial de RFC 6238 y base32', function () {
+    iguales('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ', EngineerAuth::base32Encode('12345678901234567890'));
+    iguales('12345678901234567890', EngineerAuth::base32Decode('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'));
+    $s = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+    iguales('287082', EngineerAuth::totpCodigo($s, intdiv(59, 30)));
+    iguales('081804', EngineerAuth::totpCodigo($s, intdiv(1111111109, 30)));
+    iguales('050471', EngineerAuth::totpCodigo($s, intdiv(1111111111, 30)));
+});
+
+prueba('TOTP: acepta ±1 paso, rechaza lo demás y formatos inválidos', function () {
+    $s = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+    $t = 1111111109;
+    $cod = EngineerAuth::totpCodigo($s, intdiv($t, 30));
+    iguales(intdiv($t, 30), EngineerAuth::totpVerificar($s, $cod, $t));
+    iguales(intdiv($t, 30), EngineerAuth::totpVerificar($s, substr($cod, 0, 3) . ' ' . substr($cod, 3), $t), 'tolera espacios');
+    iguales(intdiv($t, 30), EngineerAuth::totpVerificar($s, $cod, $t + 30), 'un paso después aún vale');
+    iguales(null, EngineerAuth::totpVerificar($s, $cod, $t + 120), 'dos minutos después no vale');
+    iguales(null, EngineerAuth::totpVerificar($s, '12345', $t));
+    iguales(null, EngineerAuth::totpVerificar($s, 'abcdef', $t));
+    iguales(null, EngineerAuth::totpVerificar($s, '', $t));
+});
+
+prueba('login: requiere contraseña Y código; no distingue cuál falló', function () {
+    $d = engineerTmp();
+    $cfg = engineerCfg();
+    $t = 1700000000;
+    $bueno = EngineerAuth::totpCodigo($cfg['totp_secret'], intdiv($t, 30));
+    $malaPass = EngineerAuth::intentarLogin('otra-clave', $bueno, '10.0.0.1', $cfg, $t);
+    $malCodigo = EngineerAuth::intentarLogin('clave-de-prueba-123', '000000', '10.0.0.2', $cfg, $t);
+    iguales(['ok' => false, 'codigo' => 'invalido'], $malaPass);
+    iguales($malaPass, $malCodigo, 'mismo mensaje para ambos fallos');
+    iguales(['ok' => true, 'codigo' => 'ok'], EngineerAuth::intentarLogin('clave-de-prueba-123', $bueno, '10.0.0.3', $cfg, $t));
+    engineerLimpiar($d);
+});
+
+prueba('login: un código TOTP ya usado no se puede reutilizar (replay)', function () {
+    $d = engineerTmp();
+    $cfg = engineerCfg();
+    $t = 1700000000;
+    $cod = EngineerAuth::totpCodigo($cfg['totp_secret'], intdiv($t, 30));
+    iguales(true, EngineerAuth::intentarLogin('clave-de-prueba-123', $cod, '10.0.0.1', $cfg, $t)['ok']);
+    iguales(false, EngineerAuth::intentarLogin('clave-de-prueba-123', $cod, '10.0.0.1', $cfg, $t)['ok'], 'segundo uso del mismo código');
+    engineerLimpiar($d);
+});
+
+prueba('login: bloquea tras 5 fallos por IP y no afecta a otra IP', function () {
+    $d = engineerTmp();
+    $cfg = engineerCfg();
+    $t = 1700000000;
+    for ($i = 0; $i < EngineerAuth::MAX_FALLOS_IP; $i++) {
+        iguales('invalido', EngineerAuth::intentarLogin('mala', '000000', '10.9.9.9', $cfg, $t)['codigo']);
+    }
+    iguales('bloqueado', EngineerAuth::intentarLogin('mala', '000000', '10.9.9.9', $cfg, $t)['codigo']);
+    $bueno = EngineerAuth::totpCodigo($cfg['totp_secret'], intdiv($t, 30));
+    iguales('bloqueado', EngineerAuth::intentarLogin('clave-de-prueba-123', $bueno, '10.9.9.9', $cfg, $t)['codigo'], 'ni con credenciales correctas');
+    iguales('ok', EngineerAuth::intentarLogin('clave-de-prueba-123', $bueno, '10.1.1.1', $cfg, $t)['codigo'], 'otra IP sigue pudiendo');
+    iguales('invalido', EngineerAuth::intentarLogin('mala', '000000', '10.9.9.9', $cfg, $t + EngineerAuth::VENTANA_SEG + 1)['codigo'], 'pasada la ventana se libera');
+    engineerLimpiar($d);
+});
+
+prueba('login: el límite global frena ataques desde muchas IP', function () {
+    $d = engineerTmp();
+    $cfg = engineerCfg();
+    $t = 1700000000;
+    for ($i = 0; $i < EngineerAuth::MAX_FALLOS_GLOBAL; $i++) {
+        EngineerAuth::intentarLogin('mala', '000000', '172.16.0.' . ($i + 1), $cfg, $t);
+    }
+    iguales('bloqueado', EngineerAuth::intentarLogin('mala', '000000', '172.16.9.9', $cfg, $t)['codigo']);
+    engineerLimpiar($d);
+});
+
+prueba('login: sin configuración el panel está desactivado', function () {
+    // Aislar del acceso Engineer real que pueda existir en esta máquina (../clinica-config/engineer.php).
+    $previo = getenv('ENGINEER_CONFIG_FILE');
+    putenv('ENGINEER_CONFIG_FILE=' . sys_get_temp_dir() . '/no-existe-engineer.php');
+    try {
+        iguales('desactivado', EngineerAuth::intentarLogin('x', '000000', '10.0.0.1', null, 1700000000)['codigo'] ?? 'desactivado');
+    } finally {
+        putenv($previo === false ? 'ENGINEER_CONFIG_FILE' : 'ENGINEER_CONFIG_FILE=' . $previo);
+    }
+    iguales(null, EngineerAuth::cargarConfig(sys_get_temp_dir() . '/no-existe-engineer.php'));
+});
+
+prueba('sesión del panel: caduca por inactividad y valida CSRF', function () {
+    $_SESSION = [];
+    iguales(false, EngineerAuth::sesionActiva(1000));
+    $_SESSION['engineer'] = ['ts' => 1000, 'csrf' => str_repeat('a', 64)];
+    iguales(true, EngineerAuth::sesionActiva(1000 + EngineerAuth::SESION_TTL - 1));
+    iguales(true, EngineerAuth::csrfValido(str_repeat('a', 64)));
+    iguales(false, EngineerAuth::csrfValido(str_repeat('b', 64)));
+    iguales(false, EngineerAuth::csrfValido(''));
+    iguales(false, EngineerAuth::sesionActiva(1000 + (EngineerAuth::SESION_TTL - 1) + EngineerAuth::SESION_TTL + 1));
+    iguales(false, isset($_SESSION['engineer']), 'se elimina al caducar');
+    $_SESSION = [];
+});
+
+prueba('validar cambio de módulo: acepta lo correcto y rechaza lo peligroso', function () {
+    $ok = ModulosInstalacion::validarCambio('ocupacional', ['habilitado' => 1, 'estado' => 'activo', 'plan' => 'mensual', 'precio' => '150.5', 'moneda' => 'pen', 'fecha_inicio' => '2026-12-01', 'fecha_fin' => '2027-01-01', 'notas' => 'ok']);
+    iguales(1, $ok['habilitado']);
+    iguales(150.5, $ok['precio']);
+    iguales('PEN', $ok['moneda']);
+    iguales(null, ModulosInstalacion::validarCambio('portal_empresas', [])['plan']);
+    $debeFallar = function (string $mod, array $datos, string $msg) {
+        try { ModulosInstalacion::validarCambio($mod, $datos); } catch (InvalidArgumentException $e) { return; }
+        throw new RuntimeException("debía rechazar: $msg");
+    };
+    $debeFallar('clinico', ['habilitado' => 0], 'apagar el módulo clínico');
+    $debeFallar('inventado', ['habilitado' => 1], 'módulo desconocido');
+    $debeFallar('ocupacional', ['estado' => 'raro'], 'estado inválido');
+    $debeFallar('ocupacional', ['fecha_fin' => '2026-02-31'], 'fecha imposible');
+    $debeFallar('ocupacional', ['fecha_inicio' => '2026-05-01', 'fecha_fin' => '2026-04-01'], 'fin anterior al inicio');
+    $debeFallar('ocupacional', ['precio' => '-5'], 'precio negativo');
+    $debeFallar('ocupacional', ['precio' => 'abc'], 'precio no numérico');
+    $debeFallar('ocupacional', ['moneda' => 'SOLES'], 'moneda inválida');
+    $debeFallar('ocupacional', ['notas' => str_repeat('x', 256)], 'notas demasiado largas');
+});
+
+/* ───────── Unitarias: contraseñas de empresas ocupacionales y límite de intentos ───────── */
+
+prueba('secretos ocupacionales: hashea, verifica hash y acepta texto plano heredado', function () {
+    $h = OcupacionalSecretos::hashear('Empresa#2026');
+    verdadero(OcupacionalSecretos::esHash($h));
+    verdadero($h !== 'Empresa#2026');
+    verdadero(OcupacionalSecretos::verificar('Empresa#2026', $h));
+    verdadero(!OcupacionalSecretos::verificar('otra', $h));
+    verdadero(!OcupacionalSecretos::esHash('Empresa#2026'), 'un texto plano no es hash');
+    verdadero(OcupacionalSecretos::verificar('clave-vieja', 'clave-vieja'), 'heredada en texto plano sigue valiendo');
+    verdadero(!OcupacionalSecretos::verificar('clave-vieja', 'clave-vieja '), 'sin tolerancia a diferencias');
+});
+
+prueba('secretos ocupacionales: vacíos nunca autentican', function () {
+    verdadero(!OcupacionalSecretos::verificar('', ''));
+    verdadero(!OcupacionalSecretos::verificar('x', ''));
+    verdadero(!OcupacionalSecretos::verificar('', 'x'));
+    verdadero(!OcupacionalSecretos::requiereActualizar(''));
+});
+
+prueba('secretos ocupacionales: el texto plano se actualiza a hash y el hash vigente no', function () {
+    verdadero(OcupacionalSecretos::requiereActualizar('texto-plano'));
+    verdadero(!OcupacionalSecretos::requiereActualizar(OcupacionalSecretos::hashear('algo-seguro-1')));
+});
+
+prueba('secretos ocupacionales: al editar, vacío conserva la actual y un valor nuevo se hashea', function () {
+    $actual = OcupacionalSecretos::hashear('vigente-123');
+    iguales($actual, OcupacionalSecretos::valorParaGuardar('', $actual));
+    iguales($actual, OcupacionalSecretos::valorParaGuardar('   ', $actual), 'espacios cuentan como vacío');
+    $nuevo = OcupacionalSecretos::valorParaGuardar(' nueva-clave-9 ', $actual);
+    verdadero($nuevo !== $actual && OcupacionalSecretos::esHash($nuevo));
+    verdadero(OcupacionalSecretos::verificar('nueva-clave-9', $nuevo), 'se recorta antes de hashear');
+    verdadero(OcupacionalSecretos::esHash(OcupacionalSecretos::valorParaGuardar('primera-vez', '')), 'alta nueva');
+    iguales('', OcupacionalSecretos::valorParaGuardar('', ''), 'sin contraseña definida sigue vacía');
+});
+
+prueba('secretos ocupacionales: modo visibles guarda texto plano, no convierte a hash y solo lo muestra a administradores', function () {
+    iguales('clave-1', OcupacionalSecretos::valorParaGuardar(' clave-1 ', '', true));
+    iguales('vieja', OcupacionalSecretos::valorParaGuardar('', 'vieja', true), 'vacío conserva');
+    verdadero(!OcupacionalSecretos::requiereActualizar('texto-plano', true), 'en modo visibles no se convierte a hash');
+    iguales('clave-1', OcupacionalSecretos::paraMostrar('clave-1', true, true));
+    iguales('', OcupacionalSecretos::paraMostrar('clave-1', false, true), 'no administrador no la ve');
+    iguales('', OcupacionalSecretos::paraMostrar('clave-1', true, false), 'modo seguro nunca la devuelve');
+    iguales('', OcupacionalSecretos::paraMostrar(OcupacionalSecretos::hashear('x-clave-9'), true, true), 'un hash no se muestra');
+    verdadero(!OcupacionalSecretos::visibles(), 'por defecto es modo seguro');
+});
+
+prueba('sesion ocupacional: el medico (sesion separada) se ve como usuario de rol medico sin escribir en $_SESSION', function () {
+    $antes = $_SESSION ?? null;
+    $_SESSION = ['medico_id' => 7, 'medico' => ['id' => 7, 'nombre' => 'Ana', 'apellido' => 'Paz', 'email' => 'ana@x.pe']];
+    $u = OcupacionalSesion::usuario();
+    iguales('medico', $u['rol']);
+    iguales(7, $u['id']);
+    iguales(7, $u['medico_id']);
+    iguales([], $u['permisos']);
+    verdadero(!isset($_SESSION['usuario']), 'no debe crear $_SESSION[usuario]');
+    $_SESSION = ['usuario' => ['id' => 3, 'rol' => 'administrador'], 'medico_id' => 7, 'medico' => ['id' => 7]];
+    iguales('administrador', OcupacionalSesion::usuario()['rol'], 'si hay usuario, manda el usuario');
+    $_SESSION = [];
+    iguales(null, OcupacionalSesion::usuario());
+    $_SESSION = ['medico_id' => 7];
+    iguales(null, OcupacionalSesion::usuario(), 'medico_id sin datos de medico no autentica');
+    if ($antes === null) { unset($_SESSION); } else { $_SESSION = $antes; }
+});
+
+prueba('límite de intentos: bloquea al llegar al máximo, por clave, y se libera pasada la ventana', function () {
+    $d = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'limite_test_' . bin2hex(random_bytes(4));
+    mkdir($d);
+    LimiteIntentos::$dirTemporal = $d;
+    $t = 1700000000;
+    for ($i = 0; $i < 3; $i++) {
+        verdadero(!LimiteIntentos::bloqueado('portal', ['ip:1.1.1.1', 'cuenta:a'], 3, $t), "aún no bloquea ($i)");
+        LimiteIntentos::registrarFallo('portal', ['ip:1.1.1.1', 'cuenta:a'], $t);
+    }
+    verdadero(LimiteIntentos::bloqueado('portal', ['ip:1.1.1.1'], 3, $t), 'bloquea por IP');
+    verdadero(LimiteIntentos::bloqueado('portal', ['ip:9.9.9.9', 'cuenta:a'], 3, $t), 'bloquea por cuenta aunque cambie la IP');
+    verdadero(!LimiteIntentos::bloqueado('portal', ['ip:9.9.9.9', 'cuenta:b'], 3, $t), 'otra IP y otra cuenta no');
+    verdadero(!LimiteIntentos::bloqueado('otro_espacio', ['ip:1.1.1.1'], 3, $t), 'los espacios no se mezclan');
+    verdadero(!LimiteIntentos::bloqueado('portal', ['ip:1.1.1.1'], 3, $t + LimiteIntentos::VENTANA_SEG + 1), 'se libera pasada la ventana');
+    LimiteIntentos::limpiar('portal', 'cuenta:a');
+    verdadero(!LimiteIntentos::bloqueado('portal', ['cuenta:a'], 3, $t), 'limpiar tras un acceso correcto');
+    foreach (glob($d . DIRECTORY_SEPARATOR . '*') ?: [] as $f) { @unlink($f); }
+    @rmdir($d);
+    LimiteIntentos::$dirTemporal = null;
 });
 
 /* ───────── Con BD: ejecuta el SQL real y los endpoints ───────── */

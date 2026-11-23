@@ -101,7 +101,7 @@ if ($row = $result->fetch_assoc()) {
     limpiarRateLimitLogin($usuario);
     session_regenerate_id(true);
     // Evitar sesion mixta si antes hubo login de medico en el mismo navegador.
-    unset($_SESSION['medico_id'], $_SESSION['medico']);
+    unset($_SESSION['medico_id'], $_SESSION['medico'], $_SESSION['empresa_portal']);
     // Guardar usuario en sesión
     $_SESSION['usuario'] = $row;
     echo json_encode(['success' => true, 'usuario' => $row]);

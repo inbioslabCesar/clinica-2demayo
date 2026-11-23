@@ -6,9 +6,12 @@ import { ThemeProvider } from "./context/ThemeContext";
 import { hasPermiso, normalizePermisos } from "./config/recepcionPermisos";
 import { APP_BASE_PATH, BASE_URL } from "./config/config";
 import { authFetch } from "./utils/apiClient";
+import useModulos from "./hooks/useModulos";
+import { rutasOcupacional, rutasOcupacionalProfesionales } from "./pages/ocupacional/rutasOcupacional.jsx";
 import DashboardLayout from "./components/dashboard/DashboardLayout";
 import ModalAperturaCaja from "./components/caja/ModalAperturaCaja.jsx";
 // Lazy loading para todos los componentes y páginas principales
+const EmpresaPortalPanelPage = lazy(() => import("./pages/ocupacional/EmpresaPortalPanelPage.jsx"));
 const Login = lazy(() => import("./components/usuario/Login.jsx"));
 const DashboardEstadisticasAdmin = lazy(() =>
   import("./pages/DashboardEstadisticasAdmin.jsx")
@@ -794,8 +797,13 @@ function App() {
     };
   }, []);
 
+  const { tiene: tieneModulo, cargando: cargandoModulos } = useModulos(Boolean(usuario) && usuario.rol !== "empresa");
+  const ocupacionalActivo = tieneModulo("ocupacional");
+
   const getHomeByRole = (rol) => {
     switch (rol) {
+      case "empresa":
+        return "/empresa/panel";
       case "medico":
         return "/mis-consultas";
       case "laboratorista":
@@ -825,6 +833,10 @@ function App() {
         if (hasPermiso(usuario, "ver_web_banners")) return "/web-banners";
         if (hasPermiso(usuario, "ver_panel_laboratorio")) return "/panel-laboratorio";
         if (hasPermiso(usuario, "ver_modulo_quimico")) return "/medicamentos";
+        if (ocupacionalActivo && hasPermiso(usuario, "access_salud_ocupacional")) {
+          if (hasPermiso(usuario, "gestionar_empresas_ocupacional")) return "/salud-ocupacional/empresas";
+          if (hasPermiso(usuario, "registrar_trabajadores_ocupacional")) return "/salud-ocupacional/trabajadores";
+        }
         return "/";
       case "administrador":
         return "/usuarios";
@@ -852,7 +864,15 @@ function App() {
       ) : null}
       {authBootstrap.phase === "infra_error" || authBootstrap.phase === "checking" ? null : (
       <BrowserRouter basename={ROUTER_BASENAME}>
-        {usuario ? (
+        {usuario?.rol === "empresa" ? (
+          // Portal de empresas (módulo opcional 'portal_empresas'): sin menú clínico, solo su panel.
+          <Suspense fallback={<div className="p-8 text-center">Cargando módulo...</div>}>
+            <Routes>
+              <Route path="/empresa/panel" element={<EmpresaPortalPanelPage usuario={usuario} onLogout={handleLogout} />} />
+              <Route path="*" element={<Navigate to="/empresa/panel" replace />} />
+            </Routes>
+          </Suspense>
+        ) : usuario ? (
           <>
           <CajaAperturaGuard usuario={usuario} onLogout={handleLogout} />
           <DashboardLayout usuario={usuario} onLogout={handleLogout}>
@@ -1730,6 +1750,12 @@ function App() {
                   }
                 />
               )}
+              {/* Salud ocupacional: solo si la instalación tiene el módulo activo. Mientras se consulta el módulo se espera para no perder el enlace directo. */}
+              {ocupacionalActivo && rutasOcupacional(usuario)}
+              {ocupacionalActivo && rutasOcupacionalProfesionales(usuario)}
+              {!ocupacionalActivo && cargandoModulos && ["/salud-ocupacional/*", "/mis-evaluaciones-ocupacionales/*", "/mis-triajes-ocupacionales/*"].map((ruta) => (
+                <Route key={ruta} path={ruta} element={<div className="p-8 text-center">Cargando módulo...</div>} />
+              ))}
               <Route path="*" element={<Navigate to={getHomeByRole(usuario?.rol)} replace />} />
               {/* Puedes agregar más rutas aquí */}
             </Routes>

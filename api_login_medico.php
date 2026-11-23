@@ -206,7 +206,7 @@ if ($row = buscar_medico_para_login($conn, $email)) {
     limpiarRateLimitLoginMedico($email);
     session_regenerate_id(true);
     // Mantener sesion de medico separada para evitar cruces con usuarios internos.
-    unset($_SESSION['usuario']);
+    unset($_SESSION['usuario'], $_SESSION['empresa_portal']);
     $_SESSION['medico_id'] = $row['id'];
     $row['rol'] = 'medico';
     $row['permisos'] = [];

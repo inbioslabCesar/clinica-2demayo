@@ -1,12 +1,23 @@
 import { initializeIcons } from '@fluentui/react';
 initializeIcons();
 
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import './index.css';
 
 import ErrorBoundary from "./components/comunes/ErrorBoundary.jsx";
+
+// Panel de licencias: ruta propia, fuera de la sesión de la clínica (no usa App ni sessionStorage).
+const EngineerPanelPage = lazy(() => import("./pages/EngineerPanelPage.jsx"));
+const RUTA_PANEL_ENGINEER = "/panel-engineer";
+
+function esRutaPanelEngineer() {
+  const ruta = String(window.location.pathname || "")
+    .replace(/^\/sistema(?=\/|$)/, "")
+    .replace(/\/+$/, "");
+  return ruta === RUTA_PANEL_ENGINEER;
+}
 
 const CHUNK_RELOAD_GUARD_KEY = 'sistema_chunk_reload_guard';
 
@@ -61,6 +72,12 @@ if (typeof window !== 'undefined') {
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <ErrorBoundary>
-    <App />
+    {esRutaPanelEngineer() ? (
+      <Suspense fallback={<div style={{ padding: 32, textAlign: "center" }}>Cargando...</div>}>
+        <EngineerPanelPage />
+      </Suspense>
+    ) : (
+      <App />
+    )}
   </ErrorBoundary>
 );

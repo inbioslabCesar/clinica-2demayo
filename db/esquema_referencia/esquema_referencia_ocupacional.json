@@ -1,0 +1,4806 @@
+{
+    "formato": 1,
+    "generado_en": "2026-11-23 01:05",
+    "origen_motor": "8.4.3",
+    "tablas": {
+        "empresas_ocupacionales": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "bigint unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "ruc": {
+                    "orden": 2,
+                    "tipo": "char(11)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "razon_social": {
+                    "orden": 3,
+                    "tipo": "varchar(200)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "nombre_comercial": {
+                    "orden": 4,
+                    "tipo": "varchar(200)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "actividad": {
+                    "orden": 5,
+                    "tipo": "varchar(200)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "direccion": {
+                    "orden": 6,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "departamento": {
+                    "orden": 7,
+                    "tipo": "varchar(120)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "provincia": {
+                    "orden": 8,
+                    "tipo": "varchar(120)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "distrito": {
+                    "orden": 9,
+                    "tipo": "varchar(120)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "telefono": {
+                    "orden": 10,
+                    "tipo": "varchar(30)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "telefono_1": {
+                    "orden": 11,
+                    "tipo": "varchar(30)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "telefono_2": {
+                    "orden": 12,
+                    "tipo": "varchar(30)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "contacto_1": {
+                    "orden": 13,
+                    "tipo": "varchar(160)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "contacto_2": {
+                    "orden": 14,
+                    "tipo": "varchar(160)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "correo": {
+                    "orden": 15,
+                    "tipo": "varchar(120)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "correo_1": {
+                    "orden": 16,
+                    "tipo": "varchar(120)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "correo_2": {
+                    "orden": 17,
+                    "tipo": "varchar(120)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "rrhh_usuario": {
+                    "orden": 18,
+                    "tipo": "varchar(80)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "rrhh_password": {
+                    "orden": 19,
+                    "tipo": "varchar(120)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "doctor_usuario": {
+                    "orden": 20,
+                    "tipo": "varchar(80)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "doctor_password": {
+                    "orden": 21,
+                    "tipo": "varchar(120)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "formato_principal": {
+                    "orden": 22,
+                    "tipo": "varchar(40)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "formato_certificado": {
+                    "orden": 23,
+                    "tipo": "varchar(40)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "observacion": {
+                    "orden": 24,
+                    "tipo": "text",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 25,
+                    "tipo": "enum('activo','inactivo')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "activo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 26,
+                    "tipo": "bigint unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 27,
+                    "tipo": "bigint unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 28,
+                    "tipo": "datetime",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 29,
+                    "tipo": "datetime",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_emp_estado_created": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "estado",
+                            "sub": null
+                        },
+                        {
+                            "c": "created_at",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_empresas_ocupacionales_estado": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "estado",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_empresas_ocupacionales_razon_social": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "razon_social",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_empresas_ocupacionales_ruc": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "ruc",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "ocupacional_catalogo_empresas": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "empresa_id": {
+                    "orden": 2,
+                    "tipo": "bigint unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "examen_id": {
+                    "orden": 3,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 4,
+                    "tipo": "enum('activo','inactivo')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "activo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 5,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 6,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 7,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 8,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_catalogo_empresa": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "empresa_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_catalogo_estado": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "estado",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_catalogo_examen": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "examen_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_ocup_catalogo_empresa_examen": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "empresa_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "examen_id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": {
+                "fk_cat_empresa": {
+                    "columnas": [
+                        "empresa_id"
+                    ],
+                    "ref_tabla": "empresas_ocupacionales",
+                    "ref_columnas": [
+                        "id"
+                    ],
+                    "on_delete": "NO ACTION",
+                    "on_update": "CASCADE"
+                },
+                "fk_cat_examen": {
+                    "columnas": [
+                        "examen_id"
+                    ],
+                    "ref_tabla": "ocupacional_examenes_generales",
+                    "ref_columnas": [
+                        "id"
+                    ],
+                    "on_delete": "NO ACTION",
+                    "on_update": "CASCADE"
+                }
+            }
+        },
+        "ocupacional_catalogos_laborales_empresa": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "bigint unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "empresa_id": {
+                    "orden": 2,
+                    "tipo": "bigint unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "tipo": {
+                    "orden": 3,
+                    "tipo": "enum('area','puesto')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "nombre": {
+                    "orden": 4,
+                    "tipo": "varchar(180)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 5,
+                    "tipo": "enum('activo','inactivo')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "activo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 6,
+                    "tipo": "bigint unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 7,
+                    "tipo": "bigint unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 8,
+                    "tipo": "datetime",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 9,
+                    "tipo": "datetime",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_catalogo_laboral_empresa_tipo_estado": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "empresa_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "tipo",
+                            "sub": null
+                        },
+                        {
+                            "c": "estado",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_ocup_catalogo_laboral_empresa_tipo_nombre": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "empresa_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "tipo",
+                            "sub": null
+                        },
+                        {
+                            "c": "nombre",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": {
+                "fk_ocup_catalogo_laboral_empresa": {
+                    "columnas": [
+                        "empresa_id"
+                    ],
+                    "ref_tabla": "empresas_ocupacionales",
+                    "ref_columnas": [
+                        "id"
+                    ],
+                    "on_delete": "NO ACTION",
+                    "on_update": "CASCADE"
+                }
+            }
+        },
+        "ocupacional_empresas_portal_usuarios": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_0900_ai_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "empresa_id": {
+                    "orden": 2,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "email_login": {
+                    "orden": 3,
+                    "tipo": "varchar(190)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_0900_ai_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "password_hash": {
+                    "orden": 4,
+                    "tipo": "varchar(255)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_0900_ai_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 5,
+                    "tipo": "enum('activo','inactivo')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "activo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_0900_ai_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "ultimo_login_at": {
+                    "orden": 6,
+                    "tipo": "datetime",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 7,
+                    "tipo": "datetime",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 8,
+                    "tipo": "datetime",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_empresa_id": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "empresa_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uk_email_login": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "email_login",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "ocupacional_examenes_generales": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "codigo": {
+                    "orden": 2,
+                    "tipo": "varchar(50)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "descripcion": {
+                    "orden": 3,
+                    "tipo": "varchar(160)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "grupo": {
+                    "orden": 4,
+                    "tipo": "varchar(100)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": ""
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "subgrupo": {
+                    "orden": 5,
+                    "tipo": "varchar(100)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "valores_normales": {
+                    "orden": 6,
+                    "tipo": "text",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "precio": {
+                    "orden": 7,
+                    "tipo": "decimal(10,2)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0.00"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "posicion": {
+                    "orden": 8,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 9,
+                    "tipo": "enum('activo','inactivo')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "activo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "origen_datos": {
+                    "orden": 10,
+                    "tipo": "varchar(20)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "manual"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "laboratorio_examen_id": {
+                    "orden": 11,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "laboratorio_version_id": {
+                    "orden": 12,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "laboratorio_snapshot_json": {
+                    "orden": 13,
+                    "tipo": "longtext",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 14,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 15,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 16,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 17,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_examen_lab_origen": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "laboratorio_examen_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_examenes_descripcion": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "descripcion",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_examenes_estado": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "estado",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_ocup_examen_lab_origen": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "laboratorio_examen_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_ocup_examenes_codigo": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "codigo",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "ocupacional_grupos_examenes": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "nombre": {
+                    "orden": 2,
+                    "tipo": "varchar(100)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "parent_id": {
+                    "orden": 3,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "orden": {
+                    "orden": 4,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 5,
+                    "tipo": "enum('activo','inactivo')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "activo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 6,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 7,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 8,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 9,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_grupos_nombre": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "nombre",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_grupos_parent_estado": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "parent_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "estado",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_ocup_grupos_parent_nombre": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "parent_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "nombre",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "ocupacional_historia_auditoria": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "bigint unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "entidad": {
+                    "orden": 2,
+                    "tipo": "enum('historia_ocupacional','resultado_clinico')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "registro_id": {
+                    "orden": 3,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "orden_id": {
+                    "orden": 4,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "accion": {
+                    "orden": 5,
+                    "tipo": "enum('insert','update','annul','close')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "payload_json": {
+                    "orden": 6,
+                    "tipo": "json",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "actor_id": {
+                    "orden": 7,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 8,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_hist_audit_accion": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "accion",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_hist_audit_entidad_registro": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "entidad",
+                            "sub": null
+                        },
+                        {
+                            "c": "registro_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_hist_audit_orden_fecha": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "orden_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "created_at",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "ocupacional_historia_ocupacional": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "orden_id": {
+                    "orden": 2,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "empresa_id": {
+                    "orden": 3,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "trabajador_id": {
+                    "orden": 4,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "protocolo_id": {
+                    "orden": 5,
+                    "tipo": "int unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "tipo_evaluacion_id": {
+                    "orden": 6,
+                    "tipo": "int unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "motivo_evaluacion": {
+                    "orden": 7,
+                    "tipo": "varchar(180)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "puesto_actual": {
+                    "orden": 8,
+                    "tipo": "varchar(180)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "area_trabajo": {
+                    "orden": 9,
+                    "tipo": "varchar(180)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "tiempo_puesto_meses": {
+                    "orden": 10,
+                    "tipo": "smallint unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "antecedentes_laborales_json": {
+                    "orden": 11,
+                    "tipo": "longtext",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "antecedentes_patologicos_json": {
+                    "orden": 12,
+                    "tipo": "longtext",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "habitos_json": {
+                    "orden": 13,
+                    "tipo": "longtext",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "observaciones": {
+                    "orden": 14,
+                    "tipo": "text",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 15,
+                    "tipo": "enum('activo','anulado','cerrado')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "activo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "anulado_motivo": {
+                    "orden": 16,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "anulado_by": {
+                    "orden": 17,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "anulado_at": {
+                    "orden": 18,
+                    "tipo": "datetime",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 19,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 20,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 21,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 22,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_historia_empresa_fecha": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "empresa_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "created_at",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_historia_estado": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "estado",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_historia_orden": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "orden_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_historia_trabajador": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "trabajador_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": {
+                "fk_ocup_historia_orden": {
+                    "columnas": [
+                        "orden_id"
+                    ],
+                    "ref_tabla": "ocupacional_ordenes",
+                    "ref_columnas": [
+                        "id"
+                    ],
+                    "on_delete": "NO ACTION",
+                    "on_update": "CASCADE"
+                }
+            }
+        },
+        "ocupacional_interconsultas": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "orden_id": {
+                    "orden": 2,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "orden_detalle_id": {
+                    "orden": 3,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "especialidad": {
+                    "orden": 4,
+                    "tipo": "varchar(120)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "motivo": {
+                    "orden": 5,
+                    "tipo": "text",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "diagnostico_cie10": {
+                    "orden": 6,
+                    "tipo": "varchar(20)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "diagnostico_descripcion": {
+                    "orden": 7,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "observaciones": {
+                    "orden": 8,
+                    "tipo": "text",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 9,
+                    "tipo": "enum('solicitada','respondida','levantada','anulada')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "solicitada"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "especialista_nombre": {
+                    "orden": 10,
+                    "tipo": "varchar(180)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "respuesta": {
+                    "orden": 11,
+                    "tipo": "text",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "respuesta_documento": {
+                    "orden": 12,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "respuesta_at": {
+                    "orden": 13,
+                    "tipo": "datetime",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "respondida_by": {
+                    "orden": 14,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "levantamiento": {
+                    "orden": 15,
+                    "tipo": "text",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "recomendacion": {
+                    "orden": 16,
+                    "tipo": "text",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "resultado_levantamiento": {
+                    "orden": 17,
+                    "tipo": "enum('FAVORABLE','NO_FAVORABLE')",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "medico_levantamiento_id": {
+                    "orden": 18,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "medico_levantamiento_nombre_snapshot": {
+                    "orden": 19,
+                    "tipo": "varchar(220)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "medico_levantamiento_cmp_snapshot": {
+                    "orden": 20,
+                    "tipo": "varchar(30)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "levantamiento_at": {
+                    "orden": 21,
+                    "tipo": "datetime",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "levantada_by": {
+                    "orden": 22,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "anulacion_motivo": {
+                    "orden": 23,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "anulada_at": {
+                    "orden": 24,
+                    "tipo": "datetime",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "anulada_by": {
+                    "orden": 25,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 26,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 27,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 28,
+                    "tipo": "timestamp",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 29,
+                    "tipo": "timestamp",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_inter_detalle_estado": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "orden_detalle_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "estado",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_inter_orden": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "orden_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": {
+                "fk_ocup_inter_detalle": {
+                    "columnas": [
+                        "orden_detalle_id"
+                    ],
+                    "ref_tabla": "ocupacional_orden_detalle",
+                    "ref_columnas": [
+                        "id"
+                    ],
+                    "on_delete": "CASCADE",
+                    "on_update": "CASCADE"
+                },
+                "fk_ocup_inter_orden": {
+                    "columnas": [
+                        "orden_id"
+                    ],
+                    "ref_tabla": "ocupacional_ordenes",
+                    "ref_columnas": [
+                        "id"
+                    ],
+                    "on_delete": "CASCADE",
+                    "on_update": "CASCADE"
+                }
+            }
+        },
+        "ocupacional_orden_detalle": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "orden_id": {
+                    "orden": 2,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "catalogo_id": {
+                    "orden": 3,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "examen_id": {
+                    "orden": 4,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "examen_codigo": {
+                    "orden": 5,
+                    "tipo": "varchar(40)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "examen_descripcion": {
+                    "orden": 6,
+                    "tipo": "varchar(200)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "grupo_snapshot": {
+                    "orden": 7,
+                    "tipo": "varchar(100)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "subgrupo_snapshot": {
+                    "orden": 8,
+                    "tipo": "varchar(100)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "grupo_orden_snapshot": {
+                    "orden": 9,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "examen_orden_snapshot": {
+                    "orden": 10,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "examen_snapshot_json": {
+                    "orden": 11,
+                    "tipo": "longtext",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "monto": {
+                    "orden": 12,
+                    "tipo": "decimal(10,2)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0.00"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado_ejecucion": {
+                    "orden": 13,
+                    "tipo": "enum('pendiente','en_proceso','realizado','observado')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "pendiente"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "observacion_ejecucion": {
+                    "orden": 14,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "fecha_ejecucion": {
+                    "orden": 15,
+                    "tipo": "datetime",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 16,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 17,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 18,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_detalle_orden_id": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "orden_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_orden_detalle_catalogo": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "catalogo_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_orden_detalle_examen": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "examen_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_orden_detalle_orden": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "orden_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "ocupacional_orden_eventos": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "orden_id": {
+                    "orden": 2,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "tipo_evento": {
+                    "orden": 3,
+                    "tipo": "varchar(40)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "descripcion": {
+                    "orden": 4,
+                    "tipo": "varchar(255)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "payload_json": {
+                    "orden": 5,
+                    "tipo": "json",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 6,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 7,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_orden_evt_fecha": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "created_at",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_orden_evt_orden": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "orden_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_orden_evt_tipo": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "tipo_evento",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "ocupacional_ordenes": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "codigo": {
+                    "orden": 2,
+                    "tipo": "varchar(20)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "empresa_id": {
+                    "orden": 3,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "subcontrata_empresa_id": {
+                    "orden": 4,
+                    "tipo": "int unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "facturar_empresa_id": {
+                    "orden": 5,
+                    "tipo": "int unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "trabajador_id": {
+                    "orden": 6,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "gestante": {
+                    "orden": 7,
+                    "tipo": "tinyint(1)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "protocolo_id": {
+                    "orden": 8,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "tipo_evaluacion_id": {
+                    "orden": 9,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "firma_doctor": {
+                    "orden": 10,
+                    "tipo": "varchar(80)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "modo": {
+                    "orden": 11,
+                    "tipo": "varchar(30)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "fecha_orden": {
+                    "orden": 12,
+                    "tipo": "date",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "certificado_fecha_evaluacion": {
+                    "orden": 13,
+                    "tipo": "date",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "certificado_fecha_emision": {
+                    "orden": 14,
+                    "tipo": "date",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 15,
+                    "tipo": "enum('emitida','en_proceso','completada','cerrada','anulada')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "emitida"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "monto_total": {
+                    "orden": 16,
+                    "tipo": "decimal(10,2)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0.00"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "observacion": {
+                    "orden": 17,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "documento": {
+                    "orden": 18,
+                    "tipo": "varchar(50)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "indica_dr": {
+                    "orden": 19,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "aptitud_final": {
+                    "orden": 20,
+                    "tipo": "enum('APTO','APTO_CON_RESTRICCIONES','NO_APTO')",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "restriccion_final": {
+                    "orden": 21,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "recomendacion_final": {
+                    "orden": 22,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "medico_responsable": {
+                    "orden": 23,
+                    "tipo": "varchar(150)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "medico_responsable_id": {
+                    "orden": 24,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "medico_nombre_snapshot": {
+                    "orden": 25,
+                    "tipo": "varchar(220)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "medico_especialidad_snapshot": {
+                    "orden": 26,
+                    "tipo": "varchar(150)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "medico_cmp_snapshot": {
+                    "orden": 27,
+                    "tipo": "varchar(30)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "medico_rne_snapshot": {
+                    "orden": 28,
+                    "tipo": "varchar(30)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "medico_rna_snapshot": {
+                    "orden": 29,
+                    "tipo": "varchar(30)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "medico_firma_snapshot": {
+                    "orden": 30,
+                    "tipo": "longtext",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "aptitud_registrada_by": {
+                    "orden": 31,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "aptitud_registrada_at": {
+                    "orden": 32,
+                    "tipo": "datetime",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 33,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 34,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 35,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 36,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_orden_empresa_fecha": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "empresa_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "fecha_orden",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_orden_estado": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "estado",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_orden_facturar": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "facturar_empresa_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_orden_medico_responsable": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "medico_responsable_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_orden_protocolo_tipo": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "protocolo_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "tipo_evaluacion_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_orden_subcontrata": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "subcontrata_empresa_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_orden_trabajador": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "trabajador_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_ocup_orden_codigo": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "codigo",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "ocupacional_plantillas_resultado": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "codigo": {
+                    "orden": 2,
+                    "tipo": "varchar(60)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "nombre": {
+                    "orden": 3,
+                    "tipo": "varchar(120)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "template_code": {
+                    "orden": 4,
+                    "tipo": "varchar(50)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "examen_codigo": {
+                    "orden": 5,
+                    "tipo": "varchar(60)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "formato_codigo": {
+                    "orden": 6,
+                    "tipo": "varchar(40)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "datos_json": {
+                    "orden": 7,
+                    "tipo": "longtext",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "activo": {
+                    "orden": 8,
+                    "tipo": "tinyint(1)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "1"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 9,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 10,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 11,
+                    "tipo": "timestamp",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 12,
+                    "tipo": "timestamp",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_plantilla_activo": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "activo",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_plantilla_examen": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "examen_codigo",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_plantilla_template": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "template_code",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_ocup_plantilla_codigo": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "codigo",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "ocupacional_protocolo_condiciones": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "protocolo_id": {
+                    "orden": 2,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "catalogo_id": {
+                    "orden": 3,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "puesto_trabajo": {
+                    "orden": 4,
+                    "tipo": "varchar(120)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "sexo": {
+                    "orden": 5,
+                    "tipo": "enum('M','F')",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "edad_min": {
+                    "orden": 6,
+                    "tipo": "tinyint unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "edad_max": {
+                    "orden": 7,
+                    "tipo": "tinyint unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 8,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 9,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 10,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 11,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_cond_proto_catalogo": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "protocolo_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "catalogo_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_cond_puesto": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "puesto_trabajo",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_cond_sexo": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "sexo",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "ocupacional_protocolo_detalle": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "protocolo_id": {
+                    "orden": 2,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "catalogo_id": {
+                    "orden": 3,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "tipo_evaluacion_id": {
+                    "orden": 4,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "monto": {
+                    "orden": 5,
+                    "tipo": "decimal(10,2)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0.00"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 6,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 7,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 8,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 9,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_proto_detalle_catalogo": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "catalogo_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_proto_detalle_proto": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "protocolo_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_proto_detalle_tipo": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "tipo_evaluacion_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_ocup_proto_detalle": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "protocolo_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "catalogo_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "tipo_evaluacion_id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "ocupacional_protocolos_empresa": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "empresa_id": {
+                    "orden": 2,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "descripcion": {
+                    "orden": 3,
+                    "tipo": "varchar(120)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 4,
+                    "tipo": "enum('activo','inactivo')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "activo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 5,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 6,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 7,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 8,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_proto_empresa_estado": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "empresa_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "estado",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_ocup_proto_empresa_desc": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "empresa_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "descripcion",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "ocupacional_resultados_clinicos": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "orden_detalle_id": {
+                    "orden": 2,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "orden_id": {
+                    "orden": 3,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "examen_id": {
+                    "orden": 4,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "formato_codigo": {
+                    "orden": 5,
+                    "tipo": "varchar(40)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "datos_json": {
+                    "orden": 6,
+                    "tipo": "longtext",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 7,
+                    "tipo": "enum('borrador','finalizado','anulado')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "borrador"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "ejecutado_by": {
+                    "orden": 8,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "validado_by": {
+                    "orden": 9,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "validado_at": {
+                    "orden": 10,
+                    "tipo": "datetime",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "observacion": {
+                    "orden": 11,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 12,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 13,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 14,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 15,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_resultado_detalle_formato": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "orden_detalle_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "formato_codigo",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_resultado_estado": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "estado",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_resultado_examen": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "examen_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_ocup_resultado_orden": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "orden_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_ocup_resultado_detalle_formato": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "orden_detalle_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "formato_codigo",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": {
+                "fk_ocup_resultado_detalle": {
+                    "columnas": [
+                        "orden_detalle_id"
+                    ],
+                    "ref_tabla": "ocupacional_orden_detalle",
+                    "ref_columnas": [
+                        "id"
+                    ],
+                    "on_delete": "NO ACTION",
+                    "on_update": "CASCADE"
+                },
+                "fk_ocup_resultado_examen": {
+                    "columnas": [
+                        "examen_id"
+                    ],
+                    "ref_tabla": "ocupacional_examenes_generales",
+                    "ref_columnas": [
+                        "id"
+                    ],
+                    "on_delete": "NO ACTION",
+                    "on_update": "CASCADE"
+                },
+                "fk_ocup_resultado_orden": {
+                    "columnas": [
+                        "orden_id"
+                    ],
+                    "ref_tabla": "ocupacional_ordenes",
+                    "ref_columnas": [
+                        "id"
+                    ],
+                    "on_delete": "NO ACTION",
+                    "on_update": "CASCADE"
+                }
+            }
+        },
+        "ocupacional_tipos_evaluacion": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "codigo": {
+                    "orden": 2,
+                    "tipo": "varchar(20)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "nombre": {
+                    "orden": 3,
+                    "tipo": "varchar(80)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "orden": {
+                    "orden": 4,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 5,
+                    "tipo": "enum('activo','inactivo')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "activo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 6,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 7,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_ocup_tipos_eval_estado_orden": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "estado",
+                            "sub": null
+                        },
+                        {
+                            "c": "orden",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_ocup_tipos_eval_codigo": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "codigo",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "pacientes_ocupacionales": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "bigint unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "empresa_id": {
+                    "orden": 2,
+                    "tipo": "bigint unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "external_patient_id": {
+                    "orden": 3,
+                    "tipo": "bigint unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "documento_tipo": {
+                    "orden": 4,
+                    "tipo": "varchar(20)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "DNI"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "documento_numero": {
+                    "orden": 5,
+                    "tipo": "varchar(15)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "puesto_trabajo": {
+                    "orden": 6,
+                    "tipo": "varchar(180)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "area_riesgo": {
+                    "orden": 7,
+                    "tipo": "varchar(120)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "tipo_contrato": {
+                    "orden": 8,
+                    "tipo": "varchar(60)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado_laboral": {
+                    "orden": 9,
+                    "tipo": "enum('activo','retirado','anulado')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "activo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "anulacion_motivo": {
+                    "orden": 10,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "anulado_at": {
+                    "orden": 11,
+                    "tipo": "datetime",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "anulado_by": {
+                    "orden": 12,
+                    "tipo": "bigint unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "fecha_ingreso": {
+                    "orden": 13,
+                    "tipo": "date",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_by": {
+                    "orden": 14,
+                    "tipo": "bigint unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_by": {
+                    "orden": 15,
+                    "tipo": "bigint unsigned",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 16,
+                    "tipo": "datetime",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 17,
+                    "tipo": "datetime",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_pac_empresa_fecha": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "empresa_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "fecha_ingreso",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_pac_estado_fecha": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "estado_laboral",
+                            "sub": null
+                        },
+                        {
+                            "c": "fecha_ingreso",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_pacientes_ocupacionales_doc_tipo_num": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "documento_tipo",
+                            "sub": null
+                        },
+                        {
+                            "c": "documento_numero",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_pacientes_ocupacionales_documento": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "documento_numero",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_pacientes_ocupacionales_empresa_estado": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "empresa_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "estado_laboral",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_pacientes_ocupacionales_external": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "external_patient_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_empresa_external_patient": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "empresa_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "external_patient_id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": {
+                "fk_pacientes_ocupacionales_empresa": {
+                    "columnas": [
+                        "empresa_id"
+                    ],
+                    "ref_tabla": "empresas_ocupacionales",
+                    "ref_columnas": [
+                        "id"
+                    ],
+                    "on_delete": "NO ACTION",
+                    "on_update": "CASCADE"
+                }
+            }
+        }
+    },
+    "semillas": []
+}

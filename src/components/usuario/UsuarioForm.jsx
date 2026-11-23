@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { RECEPCION_PERMISOS, RECEPCION_PERMISOS_LEGACY, normalizePermisos } from "../../config/recepcionPermisos";
+import { permisosDisponibles, RECEPCION_PERMISOS_LEGACY, normalizePermisos } from "../../config/recepcionPermisos";
+import useModulos from "../../hooks/useModulos";
 
 const roles = [
   "administrador",
@@ -12,6 +13,8 @@ const roles = [
 
 function UsuarioForm({ initialData = {}, onSubmit, onCancel, loading }) {
   const esEdicion = !!initialData.id;
+  const { tiene } = useModulos();
+  const permisosOfrecidos = permisosDisponibles(tiene);
   const permisosNormalizados = normalizePermisos(initialData.permisos || []);
   const usaCompatLegadoRecepcion =
     esEdicion &&
@@ -153,7 +156,7 @@ function UsuarioForm({ initialData = {}, onSubmit, onCancel, loading }) {
             </div>
           )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {RECEPCION_PERMISOS.map((permiso) => (
+            {permisosOfrecidos.map((permiso) => (
               <label key={permiso.key} className="flex items-center gap-2 text-sm text-gray-700">
                 <input
                   type="checkbox"
