@@ -46,7 +46,16 @@ Vive **solo** en el panel Engineer, pestaña "Personalización" (`/panel-enginee
 `api_tema.php`: GET sigue público (la clínica lo lee para pintar sus colores); POST exige sesión Engineer vigente + cabecera `X-Engineer-Csrf`, aunque el usuario sea administrador.
 No hay cambios de BD: las columnas `tema_*` se siguen creando solas. El permiso `ver_tema` ya no se ofrece en el formulario de usuarios, pero su clave se conserva en los usuarios que ya la tenían.
 
-## Licencia vencida
+## Suscripción del sistema (aviso de cobro, gracia y bloqueo)
+Pestaña **"Suscripción"** del panel Engineer. Se configura por clínica (cada una tiene su BD): monto, moneda, periodicidad, día de pago, próximo vencimiento, **días de aviso** antes del vencimiento, **días de gracia** después, mensaje, WhatsApp para el comprobante y los métodos de pago (Yape, Plin, transferencia, depósito: solo texto y números).
+- **Estados** (fecha de Lima): al día → *aviso* (faltan N días; banner ámbar, administrador) → *vencida* (en gracia; banner rojo, administrador y recepción) → *bloqueada* (pasó la gracia).
+- **Bloqueo real en el servidor** (`config.php` → `LicenciaSistema::aplicarGuardia`): toda API de la clínica responde **402** `licencia_bloqueada`. Siguen funcionando `api_engineer`, `api_licencia`, login/logout/`api_auth_status`, `api_tema` (GET) y `api_public_*`. Ocultar pantallas no bastaría.
+- **Qué ve cada rol:** administrador (aviso, vencida, bloqueada, con datos de pago); recepción (vencida y bloqueada); resto de roles, médicos y empresas del portal: solo "servicio suspendido, avise al administrador" (sin montos ni cuentas).
+- **"Registrar pago recibido"** guarda el pago y avanza el vencimiento un periodo (día 31 → último día de los meses cortos y luego vuelve al 31). Nunca se renueva solo. **Prórroga puntual**: sigue funcionando hasta esa fecha sin tocar el calendario; se quita al registrar el pago.
+- **Falla seguro:** sin la tabla, sin fila, desactivada o ante cualquier error de lectura, no se avisa ni se bloquea. Subir el código a una clínica no cambia nada hasta activarla en su panel.
+- **BD (no viaja en el build):** aplicar `sql/2026-11-23/001_licencia_sistema_schema.sql` en la BD de cada clínica (requiere antes `005_modulos_instalacion_schema.sql`); verificar con `002_verify_licencia_sistema.sql`. Si el bloqueo llega a ocurrir por error, desde el panel: desactivar o aplicar prórroga.
+
+## Licencia vencida (módulos)
 Al pasar `fecha_fin`: 7 días en **gracia** (sigue funcionando) y luego **suspendido** (los endpoints del módulo responden 403).
 Los datos nunca se borran. Si la tabla no existe, solo `clinico` queda activo.
 

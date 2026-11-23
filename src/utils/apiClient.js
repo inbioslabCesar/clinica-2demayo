@@ -33,6 +33,10 @@ export function authFetch(path, init = {}) {
   }
 
   return fetch(url, merged).then((response) => {
+    if (response.status === 402 && typeof window !== "undefined") {
+      // Suscripción vencida y fuera de gracia: la pantalla de bloqueo escucha este evento (no es un cierre de sesión).
+      window.dispatchEvent(new CustomEvent("licencia-bloqueada", { detail: { url: response.url || url } }));
+    }
     if (!__skipAuthEvent && (response.status === 401 || response.status === 403) && typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("auth-response-unauthorized", {
         detail: {

@@ -22,6 +22,7 @@ if (EngineerAuth::cargarConfig() === null) {
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/ModulosInstalacion.php';
+require_once __DIR__ . '/modules/LicenciaSistema.php';
 
 $metodo = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $ip = (string)($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
@@ -87,6 +88,38 @@ if ($accion === 'actualizar' && $metodo === 'POST') {
     } catch (Throwable $e) {
         if (function_exists('api_log_server_error')) {
             api_log_server_error('api-engineer', $e->getMessage(), $e->getFile(), (int)$e->getLine());
+        }
+        engineer_out(500, ['success' => false, 'error' => 'Error interno']);
+    }
+}
+
+if ($accion === 'licencia' && $metodo === 'GET') {
+    try {
+        engineer_out(200, ['success' => true] + LicenciaSistema::obtenerAdmin($pdo));
+    } catch (PDOException $e) {
+        engineer_out(500, ['success' => false, 'error' => 'Faltan las tablas de suscripcion: aplique sql/2026-11-23/001_licencia_sistema_schema.sql']);
+    }
+}
+
+if (in_array($accion, ['licencia_guardar', 'licencia_pago', 'licencia_prorroga'], true) && $metodo === 'POST') {
+    if (!EngineerAuth::csrfValido((string)($_SERVER['HTTP_X_ENGINEER_CSRF'] ?? ''))) {
+        engineer_out(403, ['success' => false, 'error' => 'Token invalido']);
+    }
+    try {
+        if ($accion === 'licencia_guardar') {
+            LicenciaSistema::guardar($pdo, (array)($entrada['datos'] ?? []), 'engineer', $ip);
+        } elseif ($accion === 'licencia_pago') {
+            LicenciaSistema::registrarPago($pdo, (array)($entrada['datos'] ?? []), 'engineer', $ip);
+        } else {
+            $hasta = isset($entrada['hasta']) && $entrada['hasta'] !== '' ? (string)$entrada['hasta'] : null;
+            LicenciaSistema::prorrogar($pdo, $hasta, 'engineer', $ip);
+        }
+        engineer_out(200, ['success' => true] + LicenciaSistema::obtenerAdmin($pdo));
+    } catch (InvalidArgumentException $e) {
+        engineer_out(422, ['success' => false, 'error' => $e->getMessage()]);
+    } catch (Throwable $e) {
+        if (function_exists('api_log_server_error')) {
+            api_log_server_error('api-engineer-licencia', $e->getMessage(), $e->getFile(), (int)$e->getLine());
         }
         engineer_out(500, ['success' => false, 'error' => 'Error interno']);
     }

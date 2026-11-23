@@ -9,6 +9,7 @@ import { authFetch } from "./utils/apiClient";
 import useModulos from "./hooks/useModulos";
 import { rutasOcupacional, rutasOcupacionalProfesionales } from "./pages/ocupacional/rutasOcupacional.jsx";
 import DashboardLayout from "./components/dashboard/DashboardLayout";
+import LicenciaAviso from "./components/licencia/LicenciaAviso";
 import ModalAperturaCaja from "./components/caja/ModalAperturaCaja.jsx";
 // Lazy loading para todos los componentes y páginas principales
 const EmpresaPortalPanelPage = lazy(() => import("./pages/ocupacional/EmpresaPortalPanelPage.jsx"));
@@ -848,6 +849,7 @@ function App() {
   return (
     <ThemeProvider>
     <QuoteCartProvider>
+      <LicenciaAviso usuario={usuario} onLogout={handleLogout} />
       {authBootstrap.phase === "infra_error" ? (
         <SistemaNoDisponible
           detail={authBootstrap.detail}

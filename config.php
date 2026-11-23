@@ -236,4 +236,8 @@ if (session_status() === PHP_SESSION_NONE) {
     }
     session_start();
 }
+
+// Suscripción del sistema: si el plazo de gracia terminó, toda API de la clínica responde 402 (ver modules/LicenciaSistema.php).
+require_once __DIR__ . '/modules/LicenciaSistema.php';
+LicenciaSistema::aplicarGuardia($pdo ?? $mysqli);
 ?>

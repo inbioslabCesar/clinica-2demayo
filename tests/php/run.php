@@ -29,6 +29,77 @@ require_once $root . '/modules/OcupacionalSecretos.php';
 require_once $root . '/modules/OcupacionalSesion.php';
 require_once $root . '/modules/LimiteIntentos.php';
 require_once $root . '/modules/PermisoAnulacion.php';
+require_once $root . '/modules/LicenciaSistema.php';
+
+function licFila(array $extra = []): array {
+    return $extra + ['activa' => 1, 'proximo_vencimiento' => '2026-12-31', 'dias_aviso' => 10, 'dias_gracia' => 5, 'prorroga_hasta' => null];
+}
+
+prueba('suscripción: al día, aviso, vence hoy, vencida y bloqueada según los días configurados', function () {
+    $est = static fn(array $f, string $hoy) => LicenciaSistema::calcularEstado($f, $hoy)['estado'];
+    iguales('al_dia', $est(licFila(), '2026-12-20'));
+    iguales('aviso', $est(licFila(), '2026-12-21'), 'a 10 días ya avisa');
+    iguales('aviso', $est(licFila(), '2026-12-31'), 'el día del vencimiento aún es aviso');
+    iguales('vencida', $est(licFila(), '2027-01-01'));
+    iguales('vencida', $est(licFila(), '2027-01-05'), 'último día de gracia');
+    iguales('bloqueada', $est(licFila(), '2027-01-06'));
+    $e = LicenciaSistema::calcularEstado(licFila(), '2026-12-21');
+    iguales(10, $e['dias_restantes']);
+    iguales('2027-01-05', $e['fecha_limite']);
+    iguales(true, LicenciaSistema::calcularEstado(licFila(), '2027-02-01')['bloquea']);
+});
+
+prueba('suscripción: desactivada, sin fecha o sin fila nunca avisa ni bloquea; la prórroga extiende el uso', function () {
+    iguales('desactivada', LicenciaSistema::calcularEstado(null, '2030-01-01')['estado']);
+    iguales('desactivada', LicenciaSistema::calcularEstado(licFila(['activa' => 0]), '2030-01-01')['estado']);
+    iguales('desactivada', LicenciaSistema::calcularEstado(licFila(['proximo_vencimiento' => null]), '2030-01-01')['estado']);
+    iguales(false, LicenciaSistema::calcularEstado(licFila(['dias_gracia' => 0, 'prorroga_hasta' => '2027-01-10']), '2027-01-10')['bloquea']);
+    iguales(true, LicenciaSistema::calcularEstado(licFila(['dias_gracia' => 0, 'prorroga_hasta' => '2027-01-10']), '2027-01-11')['bloquea']);
+});
+
+prueba('suscripción: el día de pago 31 cae en el último día de los meses cortos y luego vuelve al 31', function () {
+    iguales('2027-02-28', LicenciaSistema::siguienteVencimiento('2027-01-31', 31, 'mensual'));
+    iguales('2028-02-29', LicenciaSistema::siguienteVencimiento('2028-01-31', 31, 'mensual'), 'bisiesto');
+    iguales('2027-03-31', LicenciaSistema::siguienteVencimiento('2027-02-28', 31, 'mensual'));
+    iguales('2027-01-31', LicenciaSistema::siguienteVencimiento('2026-12-31', 31, 'mensual'), 'cambio de año');
+    iguales('2027-03-15', LicenciaSistema::siguienteVencimiento('2026-12-15', 15, 'trimestral'));
+    iguales('2027-12-31', LicenciaSistema::siguienteVencimiento('2026-12-31', 31, 'anual'));
+});
+
+prueba('suscripción: cada rol ve solo lo que le corresponde y nunca datos de pago ajenos', function () {
+    $fila = licFila(['monto' => '150.00', 'metodos_pago' => json_encode([['tipo' => 'yape', 'numero' => '999111222']])]);
+    $aviso = '2026-12-25';
+    iguales(true, LicenciaSistema::vistaPara($fila, 'administrador', $aviso)['mostrar']);
+    iguales(false, LicenciaSistema::vistaPara($fila, 'administrador', '2026-11-01')['mostrar'], 'al día: nadie ve nada');
+    iguales(false, LicenciaSistema::vistaPara(null, 'administrador', $aviso)['mostrar'], 'sin configurar: nadie ve nada');
+    iguales(false, LicenciaSistema::vistaPara($fila, 'recepcionista', $aviso)['mostrar'], 'recepción no ve el aviso previo');
+    iguales(false, LicenciaSistema::vistaPara($fila, 'medico', $aviso)['mostrar']);
+    iguales(true, LicenciaSistema::vistaPara($fila, 'recepcionista', '2027-01-02')['detalle_pago']);
+    $med = LicenciaSistema::vistaPara($fila, 'medico', '2027-02-01');
+    iguales(true, $med['bloqueado']);
+    iguales(false, $med['detalle_pago']);
+    verdadero(!isset($med['metodos_pago']) && !isset($med['monto']), 'un médico no recibe cuentas ni monto');
+    $adm = LicenciaSistema::vistaPara($fila, 'administrador', '2027-02-01');
+    iguales('999111222', $adm['metodos_pago'][0]['numero']);
+});
+
+prueba('suscripción: validación de la configuración', function () {
+    $ok = ['activa' => 1, 'monto' => '99.5', 'dia_pago' => 31, 'proximo_vencimiento' => '2026-12-31', 'periodicidad' => 'mensual',
+        'metodos_pago' => [['tipo' => 'yape', 'numero' => '999'], ['tipo' => 'plin']]];
+    $v = LicenciaSistema::validar($ok);
+    iguales('99.50', $v['monto']);
+    iguales(1, count(json_decode($v['metodos_pago'], true)), 'un método totalmente vacío se descarta');
+    foreach ([['dia_pago' => 32], ['dia_pago' => 0], ['proximo_vencimiento' => '2026-02-30'], ['proximo_vencimiento' => ''],
+        ['dias_gracia' => 61], ['dias_aviso' => -1], ['periodicidad' => 'semanal'], ['monto' => '-5'], ['contacto_whatsapp' => 'abc'],
+        ['metodos_pago' => [['tipo' => 'cripto', 'numero' => '1']]]] as $malo) {
+        try {
+            LicenciaSistema::validar($malo + $ok);
+            throw new RuntimeException('debió rechazar ' . json_encode($malo));
+        } catch (InvalidArgumentException $e) {
+        }
+    }
+    iguales(null, LicenciaSistema::validar(['activa' => 0, 'dia_pago' => 1, 'proximo_vencimiento' => ''] )['proximo_vencimiento'], 'desactivada no exige fecha');
+});
 
 prueba('anular/eliminar: administrador sí; recepcionista solo con el privilegio; otros roles no', function () {
     $clave = PermisoAnulacion::CLAVE;

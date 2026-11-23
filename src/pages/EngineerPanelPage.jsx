@@ -9,6 +9,7 @@ import {
 import { ThemeProvider } from "../context/ThemeContext";
 
 const PersonalizacionVisual = lazy(() => import("../components/engineer/PersonalizacionVisual.jsx"));
+const SuscripcionPanel = lazy(() => import("../components/engineer/SuscripcionPanel.jsx"));
 
 const NOMBRES = {
   clinico: "Sistema clínico",
@@ -271,15 +272,16 @@ export default function EngineerPanelPage() {
   return (
     <main className="min-h-screen bg-gray-100 p-4">
       <div className="mx-auto max-w-5xl space-y-4">
-        <header className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">Panel de la instalación</h1>
+        <header className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-xl font-semibold sm:text-2xl">Panel de la instalación</h1>
           <button type="button" onClick={salir} className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50">
             Cerrar sesión
           </button>
         </header>
-        <nav className="flex gap-2 border-b border-gray-300" aria-label="Secciones">
+        <nav className="flex gap-2 overflow-x-auto whitespace-nowrap border-b border-gray-300" aria-label="Secciones">
           {[
             ["modulos", "Módulos y licencias"],
+            ["suscripcion", "Suscripción"],
             ["personalizacion", "Personalización"],
           ].map(([id, texto]) => (
             <button
@@ -294,7 +296,11 @@ export default function EngineerPanelPage() {
             </button>
           ))}
         </nav>
-        {vista === "personalizacion" ? (
+        {vista === "suscripcion" ? (
+          <Suspense fallback={<div className="p-6 text-center text-gray-600">Cargando...</div>}>
+            <SuscripcionPanel csrf={csrf} onSesionExpirada={() => setFase("login")} />
+          </Suspense>
+        ) : vista === "personalizacion" ? (
           <Suspense fallback={<div className="p-6 text-center text-gray-600">Cargando...</div>}>
             <ThemeProvider>
               <PersonalizacionVisual csrf={csrf} onSesionExpirada={() => setFase("login")} />
