@@ -239,11 +239,12 @@ export default function EngineerPanelPage() {
             />
           </label>
           <label className="block text-sm">
-            Código de autenticación
+            Código de 6 dígitos de su app de autenticación
             <input
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 tracking-widest"
               inputMode="numeric"
               autoComplete="one-time-code"
+              placeholder="123456"
               maxLength={7}
               value={codigo}
               onChange={(e) => setCodigo(e.target.value)}
