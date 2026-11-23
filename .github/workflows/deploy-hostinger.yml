@@ -16,6 +16,7 @@ on:
           - prod-dorcassalud
           - prod-femcarepucallpa
           - prod-maternofetalsanjuan
+          - prod-clinica2demayo
       confirm_production:
         description: 'Escribe EXACTAMENTE: DEPLOY_HOSTINGER_TEST'
         required: true
