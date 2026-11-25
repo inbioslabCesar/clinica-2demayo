@@ -1478,7 +1478,7 @@ function hc_ensure_consultas_origen_creacion_column($conn) {
          END
          WHERE c.origen_creacion IS NULL
             OR TRIM(c.origen_creacion) = ''
-            OR c.origen_creacion NOT IN ('agendada', 'cotizador', 'hc_proxima')"
+            OR c.origen_creacion NOT IN ('agendada', 'cotizador', 'hc_proxima', 'hc_reevaluacion')"
     );
 
     // Compatibilidad histórica: normalizar hc_origen_id legado cuando fue guardado como consulta_id.

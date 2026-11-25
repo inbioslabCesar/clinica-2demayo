@@ -150,6 +150,9 @@ if (!function_exists('rev_formatear')) {
             'fecha_proximo_contacto' => $r['fecha_proximo_contacto'] ?? null,
             'fecha_ultimo_contacto' => $r['fecha_ultimo_contacto'] ?? null,
             'motivo_cierre' => (string)($r['motivo_cierre'] ?? ''),
+            'llegada_en' => $r['llegada_en'] ?? null,
+            'inicio_en' => $r['inicio_en'] ?? null,
+            'cierre_en' => $r['cierre_en'] ?? null,
             'created_at' => (string)($r['created_at'] ?? ''),
             'updated_at' => (string)($r['updated_at'] ?? ''),
             'editable' => $estado === 'pendiente' ? 1 : 0,
@@ -215,6 +218,11 @@ if (!function_exists('rev_vencer_abiertas')) {
             return;
         }
         $hecho = true;
+
+        // Visitas que quedaron abiertas de un día anterior (Fase 2).
+        if (function_exists('rev_revertir_visitas_abandonadas')) {
+            rev_revertir_visitas_abandonadas($conn);
+        }
 
         $hoy = date('Y-m-d');
         $stmt = $conn->prepare("SELECT id FROM hc_reevaluaciones WHERE estado = 'pendiente' AND abierta = 1 AND fecha_limite < ? LIMIT 200");
@@ -732,6 +740,12 @@ if (!function_exists('rev_aplicar_accion')) {
         if (!$row) {
             throw new RevError('Reevaluación no encontrada.', 404);
         }
+        if (in_array($accion, rev_acciones_visita(), true)) {
+            if (!rev_visita_actor_puede($actor, $row, $accion)) {
+                throw new RevError('No autorizado para esta acción.', 403);
+            }
+            return rev_aplicar_accion_visita($conn, $row, $accion, $p, $actor);
+        }
         if (!rev_actor_puede($actor, $row, $accion)) {
             throw new RevError('No autorizado para esta acción.', 403);
         }
@@ -820,6 +834,13 @@ if (!function_exists('rev_listar')) {
 
         if (!empty($f['abiertas'])) {
             $where[] = 'r.abierta = 1';
+        }
+        if (!empty($f['estados']) && is_array($f['estados'])) {
+            $where[] = 'r.estado IN (' . implode(',', array_fill(0, count($f['estados']), '?')) . ')';
+            foreach ($f['estados'] as $e) {
+                $types .= 's';
+                $params[] = (string)$e;
+            }
         }
         if (!empty($f['medico_id'])) {
             $where[] = 'r.medico_id = ?';
@@ -1059,3 +1080,5 @@ if (!function_exists('rev_stats_medico')) {
         ];
     }
 }
+
+require_once __DIR__ . '/ReevaluacionVisitaModule.php';

@@ -723,6 +723,13 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     };
   };
 
+  // La visita de una reevaluación se atiende en su propia pantalla (revisión sobre la HC de origen).
+  const rutaAtencionConsulta = (consulta) => (
+    String(consulta?.origen_creacion || '').toLowerCase().trim() === 'hc_reevaluacion'
+      ? `/reevaluacion/${consulta.id}`
+      : `/historia-clinica/${consulta.paciente_id}/${consulta.id}`
+  );
+
   const getOrigenConsultaMeta = (consulta) => {
     const origen = String(consulta?.origen_creacion || '').trim().toLowerCase();
     const hcOrigenId = Number(consulta?.hc_origen_id || 0);
@@ -731,6 +738,14 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
       ? fechaConsulta > getHoyYmd()
       : false;
     const esHcProxima = origen === 'hc_proxima' || hcOrigenId > 0;
+    if (origen === 'hc_reevaluacion') {
+      return {
+        visible: true,
+        label: 'Reevaluación',
+        icon: '🔄',
+        className: 'bg-violet-100 text-violet-800 border-violet-200'
+      };
+    }
     if (esHcProxima) {
       return {
         visible: true,
@@ -1794,7 +1809,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                             )}
                             
                             <button
-                              onClick={() => navigate(`/historia-clinica/${consulta.paciente_id}/${consulta.id}`)}
+                              onClick={() => navigate(rutaAtencionConsulta(consulta))}
                               disabled={accionesClinicasBloqueadas}
                               className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-medium transition-all duration-200 ${
                                 accionesClinicasBloqueadas
@@ -2110,7 +2125,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                   )}
                   
                   <button
-                    onClick={() => navigate(`/historia-clinica/${consulta.paciente_id}/${consulta.id}`)}
+                    onClick={() => navigate(rutaAtencionConsulta(consulta))}
                     disabled={accionesClinicasBloqueadas}
                     title={esConsultaFutura ? tituloAccionesFuturas : (accionesBloqueadas ? tituloAccionesBloqueadas : '')}
                       className={`flex-1 min-w-0 inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg font-medium transition-all duration-200 text-sm ${

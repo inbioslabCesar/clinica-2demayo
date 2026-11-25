@@ -21,7 +21,7 @@ function horaHm(value) {
  * Bloque "Reevaluación" de la HC: continuación de la MISMA atención (máx. 7 días).
  * `value` es el formulario (hc.reevaluacion) y `servidor` la fila real guardada en BD.
  */
-export default function ReevaluacionHcCard({ value, onChange, servidor, readOnly, medicoId, consultaId }) {
+export default function ReevaluacionHcCard({ value, onChange, servidor, readOnly, medicoId, consultaId, titulo = "🔄 Reevaluación", etiquetaActivar = "El paciente debe volver para reevaluación (revisar resultados o evolución)", historial = [] }) {
   const form = { ...DEFAULT_REEVALUACION, ...(value || {}) };
   const hoy = useMemo(() => limaYmd(), []);
   const abierta = Number(servidor?.abierta) === 1;
@@ -101,7 +101,7 @@ export default function ReevaluacionHcCard({ value, onChange, servidor, readOnly
   return (
     <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border-2 border-violet-200">
       <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
-        <h2 className="text-lg font-bold text-violet-900">🔄 Reevaluación</h2>
+        <h2 className="text-lg font-bold text-violet-900">{titulo}</h2>
         <span className="text-xs text-violet-700">
           Continuación de esta misma atención (hasta {REEVALUACION_MAX_DIAS} días). Para un plazo mayor use «Próxima cita».
         </span>
@@ -139,7 +139,7 @@ export default function ReevaluacionHcCard({ value, onChange, servidor, readOnly
             >
               {form.programar ? "✓" : ""}
             </span>
-            <span>El paciente debe volver para reevaluación (revisar resultados o evolución)</span>
+            <span>{etiquetaActivar}</span>
           </div>
           <span className={`rounded-full px-2 py-1 text-xs font-semibold ${form.programar ? "bg-violet-100 text-violet-800" : "bg-slate-100 text-slate-600"}`}>
             {form.programar ? "Activado" : "Desactivado"}
@@ -260,6 +260,24 @@ export default function ReevaluacionHcCard({ value, onChange, servidor, readOnly
           </>
         )}
       </div>
+
+      {Array.isArray(historial) && historial.length > 0 && (
+        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <p className="mb-2 text-sm font-semibold text-slate-700">Reevaluaciones realizadas</p>
+          <div className="space-y-2">
+            {[...historial].reverse().map((h, idx) => (
+              <div key={`${h?.reevaluacion_id || "rv"}-${idx}`} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                <div className="font-semibold text-slate-800">
+                  {String(h?.fecha || "")} {String(h?.hora || "")} · {h?.conducta_label || h?.conducta || "-"}
+                  {h?.atendido_por ? ` · ${h.atendido_por}` : ""}
+                </div>
+                <div className="mt-0.5 whitespace-pre-line">{h?.evolucion}</div>
+                {h?.ajustes ? <div className="mt-0.5 text-slate-500">Ajustes: {h.ajustes}</div> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

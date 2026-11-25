@@ -39,6 +39,15 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 try {
     if ($method === 'GET') {
         $consultaId = (int)($_GET['consulta_id'] ?? 0);
+        $visitaId = (int)($_GET['consulta_visita_id'] ?? 0);
+
+        if ($visitaId > 0) {
+            $r = rev_obtener_por_visita($conn, $visitaId);
+            if (!$r || ($actor['rol'] === 'medico' && (int)$r['medico_id'] !== $actor['medico_id'])) {
+                rev_api_responder(['success' => false, 'error' => 'No hay una reevaluación vigente para esta visita'], 404);
+            }
+            rev_api_responder(['success' => true, 'reevaluacion' => $r]);
+        }
 
         if ($consultaId > 0) {
             if ($actor['rol'] === 'medico') {
@@ -76,6 +85,7 @@ try {
             'abiertas' => (($_GET['abiertas'] ?? '1') !== '0'),
             'medico_id' => $actor['rol'] === 'medico' ? $actor['medico_id'] : (int)($_GET['medico_id'] ?? 0),
             'paciente_id' => (int)($_GET['paciente_id'] ?? 0),
+            'estados' => ($_GET['estados'] ?? '') !== '' ? array_values(array_intersect(explode(',', (string)$_GET['estados']), ['pendiente', 'en_espera', 'en_revision'])) : [],
             'estado_gestion' => (string)($_GET['estado_gestion'] ?? ''),
             'busqueda' => (string)($_GET['busqueda'] ?? ''),
             'page' => $page,
@@ -102,7 +112,12 @@ try {
         }
 
         $reevaluacion = rev_aplicar_accion($conn, $id, $accion, $payload, $actor);
-        rev_api_responder(['success' => true, 'reevaluacion' => $reevaluacion]);
+        $extra = [];
+        if (isset($reevaluacion['_extra'])) {
+            $extra = (array)$reevaluacion['_extra'];
+            unset($reevaluacion['_extra']);
+        }
+        rev_api_responder(['success' => true, 'reevaluacion' => $reevaluacion] + $extra);
     }
 
     rev_api_responder(['success' => false, 'error' => 'Método no permitido'], 405);

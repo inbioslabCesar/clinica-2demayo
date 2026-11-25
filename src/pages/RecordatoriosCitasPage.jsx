@@ -1880,6 +1880,74 @@ export default function RecordatoriosCitasPage() {
     return ejecutarAccionReevaluacion(item, { accion: "cancelar", motivo: String(modal.value || "").trim() }, "Reevaluación cancelada.");
   };
 
+  const marcarLlegadaReevaluacion = async (item) => {
+    const hoy = limaYmd();
+    const fechaItem = String(item?.fecha || "").slice(0, 10);
+    const cuando = formatReevaluacionCuando(item?.fecha, item?.hora, Number(item?.reevaluacion_sin_hora_fija || 0) === 1);
+    const aviso = fechaItem > hoy
+      ? `Estaba indicada para ${cuando}: llega antes de la fecha.`
+      : fechaItem < hoy
+        ? `Estaba indicada para ${cuando}: llega después de la fecha, dentro de su ventana.`
+        : "";
+    const paciente = `${item?.paciente_nombre || ""} ${item?.paciente_apellido || ""}`.trim() || "El paciente";
+    const modal = await Swal.fire({
+      title: "Registrar llegada",
+      html: `<div style="text-align:left;font-size:14px;"><b>${paciente}</b> llegó para su reevaluación con ${item?.medico_nombre || ""} ${item?.medico_apellido || ""}.${aviso ? `<br/><span style="color:#92400e;font-size:12px;">${aviso}</span>` : ""}<br/><span style="font-size:12px;color:#475569;">Se crea su visita sin costo y pasa a la cola del médico.</span></div>`,
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Registrar llegada",
+      cancelButtonText: "Cancelar",
+    });
+    if (!modal.isConfirmed) return false;
+
+    setSavingId(`rev-${item.id}`);
+    setMensaje("");
+    setError("");
+    try {
+      const reev = await postReevaluacion({ accion: "llegada", id: item.id });
+      const visitaId = Number(reev?.consulta_visita_id || 0);
+      if (visitaId > 0) {
+        // Que figure como "llegó" en la cola de sala; si falla, recepción puede marcarlo después.
+        await authFetch("api_recordatorios_citas.php", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "actualizar_cola_medico",
+            consulta_id: visitaId,
+            medico_id: Number(item?.medico_id || 0),
+            fecha: hoy,
+            estado_cola: "llego",
+          }),
+        }).catch(() => null);
+      }
+      setMensaje("Llegada registrada. El paciente figura en la cola del médico como reevaluación.");
+      await cargar();
+      return true;
+    } catch (err) {
+      setError(err.message || "No se pudo registrar la llegada");
+      return false;
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const deshacerLlegadaReevaluacion = async (item) => {
+    const modal = await Swal.fire({
+      title: "Deshacer llegada",
+      text: "La visita se cancela y el paciente vuelve a quedar pendiente de reevaluación.",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Sí, deshacer",
+      cancelButtonText: "Volver",
+    });
+    if (!modal.isConfirmed) return false;
+    return ejecutarAccionReevaluacion(
+      { id: item.reevaluacion_id },
+      { accion: "deshacer_llegada" },
+      "Llegada deshecha: la reevaluación vuelve a estar pendiente."
+    );
+  };
+
   const marcarNoAsistioReevaluacion = async (item) => {
     const modal = await Swal.fire({
       title: "¿El paciente no asistió?",
@@ -2776,6 +2844,7 @@ export default function RecordatoriosCitasPage() {
                 <option value="">Todos</option>
                 <option value="agendada">Agendada</option>
                 <option value="hc_proxima">HC proxima</option>
+                <option value="hc_reevaluacion">Reevaluación (visita)</option>
                 <option value="cotizador">Cotizador</option>
                 <option value="reservada_sin_turno">Reservada sin turno</option>
               </select>
@@ -3308,6 +3377,7 @@ export default function RecordatoriosCitasPage() {
                   const esHcProxima = esConsultaHcProxima(item);
                   const esFaltaCancelar = esRecordatorioFaltaCancelar(item);
                   const esReevaluacion = esRecordatorioReevaluacion(item);
+                  const esVisitaReevaluacion = String(item?.origen_consulta || "") === "hc_reevaluacion";
                   const reevSavingKey = `rev-${Number(item?.id || 0)}`;
                   const esControl = Number(item?.es_control || 0) === 1;
                   const esTipoProgramada = String(item?.tipo_consulta || "").toLowerCase() === "programada";
@@ -3369,9 +3439,9 @@ export default function RecordatoriosCitasPage() {
                               <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
                                 Falta cancelar
                               </span>
-                            ) : esReevaluacion ? (
+                            ) : esReevaluacion || esVisitaReevaluacion ? (
                               <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${REEVALUACION_BADGE_CLASSES}`}>
-                                🔄 Reevaluación
+                                🔄 Reevaluación{esVisitaReevaluacion ? " · llegó" : ""}
                               </span>
                             ) : (
                               <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
@@ -3531,6 +3601,15 @@ export default function RecordatoriosCitasPage() {
                               <>
                                 <button
                                   type="button"
+                                  onClick={() => marcarLlegadaReevaluacion(item)}
+                                  disabled={savingId === reevSavingKey}
+                                  className="rounded-lg border border-emerald-500 bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                  title="El paciente llegó: crea su visita sin costo y la pasa a la cola del médico"
+                                >
+                                  ✅ Marcar llegada
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={() => enviarRecordatorioWhatsApp(item)}
                                   disabled={!String(item?.paciente_telefono || "").trim() || savingId === reevSavingKey}
                                   className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
@@ -3587,6 +3666,16 @@ export default function RecordatoriosCitasPage() {
                                   Cancelar
                                 </button>
                               </>
+                            ) : esVisitaReevaluacion ? (
+                              <button
+                                type="button"
+                                onClick={() => deshacerLlegadaReevaluacion(item)}
+                                disabled={Number(item?.reevaluacion_id || 0) <= 0 || String(item?.reevaluacion_estado || "") !== "en_espera"}
+                                className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                title={String(item?.reevaluacion_estado || "") === "en_espera" ? "Anula la visita y devuelve el paciente a pendiente" : "El médico ya inició la revisión"}
+                              >
+                                ↩ Deshacer llegada
+                              </button>
                             ) : (
                               <>
                                 <button

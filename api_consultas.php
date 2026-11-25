@@ -4139,6 +4139,11 @@ switch ($method) {
 
         $ok = $stmt->execute();
 
+        // Si cancelan la consulta de una visita de reevaluación, el paciente vuelve a esperar su reevaluación.
+        if ($ok && $actualizarEstado && in_array(strtolower(trim((string)$estado)), ['cancelada', 'cancelado'], true)) {
+            rev_on_visita_cancelada($conn, (int)$id);
+        }
+
         if ($ok && $actualizarEstado) {
             consultas_registrar_auditoria_estado(
                 $conn,

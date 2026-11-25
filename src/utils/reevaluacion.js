@@ -56,6 +56,13 @@ export const REEVALUACION_MOTIVOS = [
   { value: "otro", label: "Otro" },
 ];
 
+export const REEVALUACION_CONDUCTAS = [
+  { value: "continuar", label: "Continuar tratamiento" },
+  { value: "ajustar", label: "Ajustar tratamiento" },
+  { value: "alta", label: "Alta" },
+  { value: "derivar", label: "Derivar" },
+];
+
 /** Modelo del formulario de la HC a partir de la fila que devuelve el servidor (solo si sigue abierta). */
 export function buildReevaluacionForm(row) {
   if (!row || Number(row.abierta) !== 1) return { ...DEFAULT_REEVALUACION };

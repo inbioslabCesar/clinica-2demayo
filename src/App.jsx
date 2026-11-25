@@ -62,6 +62,9 @@ const PanelMedicoPage = lazy(() => import("./pages/PanelMedicoPage.jsx"));
 const HistoriaClinicaPage = lazy(() =>
   import("./pages/HistoriaClinicaPage.jsx")
 );
+const ReevaluacionVisitaPage = lazy(() =>
+  import("./pages/ReevaluacionVisitaPage.jsx")
+);
 const EnfermeroPanelPage = lazy(() => import("./pages/EnfermeroPanelPage.jsx"));
 const SolicitudLaboratorioPage = lazy(() =>
   import("./pages/SolicitudLaboratorioPage.jsx")
@@ -1063,6 +1066,17 @@ function App() {
                         rolesPermitidos={["medico"]}
                       >
                         <HistoriaClinicaPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/reevaluacion/:consultaId"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["medico"]}
+                      >
+                        <ReevaluacionVisitaPage />
                       </ProtectedRoute>
                     }
                   />

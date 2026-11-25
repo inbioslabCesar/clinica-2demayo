@@ -29,7 +29,7 @@ const DEFAULT_PROXIMA_CITA = {
   consulta_id: null,
   es_control: false,
 };
-const HC_PREV_EXCLUDED_FIELDS = new Set(["tratamiento", "receta", "diagnosticos", "template", "proxima_cita", "reevaluacion"]);
+const HC_PREV_EXCLUDED_FIELDS = new Set(["tratamiento", "receta", "diagnosticos", "template", "proxima_cita", "reevaluacion", "reevaluaciones"]);
 const HC_PREV_EXCLUDED_SECTIONS = new Set(["plan", "tratamiento", "receta"]);
 const HC_PREVIAS_CACHE_TTL_MS = 5 * 60 * 1000;
 const HC_PREVIAS_UI_STORAGE_PREFIX = "hc_previas_ui_v1";
@@ -3599,6 +3599,7 @@ function HistoriaClinicaPage() {
             readOnly={readOnly}
             medicoId={proximaMedicoId}
             consultaId={Number(consultaId || 0)}
+            historial={Array.isArray(hc.reevaluaciones) ? hc.reevaluaciones : []}
           />
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border-2 border-indigo-200">
             <div className="mb-5 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">

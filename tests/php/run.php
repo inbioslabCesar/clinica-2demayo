@@ -1289,6 +1289,145 @@ prueba('reevaluación (BD): la hora fija ocupa el turno del médico; sin hora fi
     }
 }, true);
 
+prueba('reevaluación (BD, fase 2): llegada, deshacer, iniciar, diferir y completar con evolución en la HC de origen', function () {
+    $m = $GLOBALS['mysqli'];
+    if (!rev_disponible($m)) {
+        throw new RuntimeException('falta aplicar sql/2026-11-25/001_schema.sql');
+    }
+    $med = (int)$m->query('SELECT id FROM medicos ORDER BY id LIMIT 1')->fetch_assoc()['id'];
+    $pac = (int)$m->query('SELECT id FROM pacientes ORDER BY id LIMIT 1')->fetch_assoc()['id'];
+    $hoy = date('Y-m-d');
+    $manana = date('Y-m-d', strtotime('+1 day'));
+    $recep = ['rol' => 'recepcionista', 'usuario_id' => 0, 'medico_id' => 0, 'nombre' => 'Recep', 'ip' => ''];
+    $doc = ['rol' => 'medico', 'usuario_id' => 0, 'medico_id' => $med, 'nombre' => 'Dr Prueba', 'ip' => ''];
+    $otro = ['rol' => 'medico', 'usuario_id' => 0, 'medico_id' => $med + 9999, 'nombre' => 'Otro', 'ip' => ''];
+    $codigo = static function (callable $fn): ?int {
+        try { $fn(); return null; } catch (RevError $e) { return $e->getCode(); }
+    };
+    $origen = 0; $hcId = 0;
+    $ids = [];
+    try {
+        $m->query("INSERT INTO consultas (paciente_id, medico_id, fecha, hora, estado, tipo_consulta) VALUES ($pac, $med, '$hoy', '08:00:00', 'completada', 'programada')");
+        $origen = (int)$m->insert_id;
+        $m->query("INSERT INTO historia_clinica (consulta_id, paciente_id, datos) VALUES ($origen, $pac, '{\"motivo\":\"dolor\"}')");
+        $hcId = (int)$m->insert_id;
+
+        $g = rev_guardar_desde_hc($m, $origen, $hcId, ['programar' => true, 'fecha' => $hoy, 'sin_hora_fija' => true, 'motivo' => 'Ver laboratorio']);
+        $id = $g['reevaluacion']['id'];
+        iguales('pendiente', $g['reevaluacion']['estado']);
+
+        iguales(403, $codigo(fn() => rev_aplicar_accion($m, $id, 'llegada', [], $doc)), 'el médico no registra llegadas');
+        iguales(403, $codigo(fn() => rev_aplicar_accion($m, $id, 'iniciar', [], $recep)), 'recepción no inicia la revisión');
+
+        $r = rev_aplicar_accion($m, $id, 'llegada', [], $recep);
+        iguales('en_espera', $r['estado']);
+        $visita = (int)$r['consulta_visita_id'];
+        $ids[] = $visita;
+        $v = $m->query("SELECT estado, origen_creacion, es_control, hc_origen_id, medico_id, paciente_id, fecha FROM consultas WHERE id = $visita")->fetch_assoc();
+        iguales(['pendiente', 'hc_reevaluacion', '1', (string)$hcId, (string)$med, (string)$pac, $hoy], array_values($v), 'visita ligera sin cobro');
+        iguales(409, $codigo(fn() => rev_aplicar_accion($m, $id, 'llegada', [], $recep)), 'no se registra la llegada dos veces');
+        iguales(409, $codigo(fn() => rev_aplicar_accion($m, $id, 'cancelar', ['motivo' => 'x yz'], $recep)), 'en espera ya no se cancela como pendiente');
+        verdadero(rev_obtener_por_visita($m, $visita)['paciente_nombre'] !== null, 'se resuelve por visita');
+
+        $r = rev_aplicar_accion($m, $id, 'deshacer_llegada', [], $recep);
+        iguales('pendiente', $r['estado']);
+        iguales(null, $r['consulta_visita_id']);
+        iguales('cancelada', $m->query("SELECT estado FROM consultas WHERE id = $visita")->fetch_assoc()['estado'], 'la visita se cancela');
+
+        $r = rev_aplicar_accion($m, $id, 'llegada', [], $recep);
+        $visita = (int)$r['consulta_visita_id'];
+        $ids[] = $visita;
+        iguales(403, $codigo(fn() => rev_aplicar_accion($m, $id, 'iniciar', [], $otro)), 'otro médico no puede');
+        iguales('en_revision', rev_aplicar_accion($m, $id, 'iniciar', [], $doc)['estado']);
+        iguales('en_revision', rev_aplicar_accion($m, $id, 'iniciar', [], $doc)['estado'], 'iniciar es idempotente');
+        iguales(409, $codigo(fn() => rev_aplicar_accion($m, $id, 'deshacer_llegada', [], $recep)), 'ya no se deshace en revisión');
+
+        iguales(400, $codigo(fn() => rev_aplicar_accion($m, $id, 'diferir', ['fecha' => $hoy, 'sin_hora_fija' => true], $doc)), 'diferir exige otra fecha u hora');
+        $r = rev_aplicar_accion($m, $id, 'diferir', ['fecha' => $manana, 'sin_hora_fija' => true, 'motivo' => 'Falta el hemograma'], $doc);
+        iguales('pendiente', $r['estado']);
+        iguales($manana, $r['fecha_sugerida']);
+        iguales('cancelada', $m->query("SELECT estado FROM consultas WHERE id = $visita")->fetch_assoc()['estado']);
+
+        $r = rev_aplicar_accion($m, $id, 'llegada', [], $recep);
+        $visita = (int)$r['consulta_visita_id'];
+        $ids[] = $visita;
+        iguales(400, $codigo(fn() => rev_aplicar_accion($m, $id, 'completar', ['evolucion' => 'ok', 'conducta' => 'alta'], $doc)), 'la evolución es obligatoria');
+        iguales(400, $codigo(fn() => rev_aplicar_accion($m, $id, 'completar', ['evolucion' => 'Mejoría franca', 'conducta' => 'inventada'], $doc)), 'la conducta debe ser válida');
+
+        $r = rev_aplicar_accion($m, $id, 'completar', [
+            'evolucion' => 'Mejoría franca con los resultados', 'conducta' => 'continuar', 'resultados_revisados' => true,
+            'siguiente' => ['programar' => true, 'fecha' => $manana, 'sin_hora_fija' => true, 'motivo' => 'Control de respuesta'],
+        ], $doc);
+        $extra = $r['_extra'] ?? [];
+        iguales('completada', $r['estado']);
+        iguales(0, $r['abierta']);
+        iguales('completada', $m->query("SELECT estado FROM consultas WHERE id = $visita")->fetch_assoc()['estado'], 'la visita queda completada');
+        $datos = json_decode($m->query("SELECT datos FROM historia_clinica WHERE id = $hcId")->fetch_assoc()['datos'], true);
+        iguales('dolor', $datos['motivo'], 'el resto de la HC no se toca');
+        iguales('Mejoría franca con los resultados', $datos['reevaluaciones'][0]['evolucion']);
+        iguales('Continuar tratamiento', $datos['reevaluaciones'][0]['conducta_label']);
+        verdadero(is_array($extra['siguiente'] ?? null) && $extra['siguiente']['estado'] === 'pendiente', 'se encadena la siguiente reevaluación');
+        iguales($id, $extra['siguiente']['reevaluacion_previa_id']);
+        iguales(409, $codigo(fn() => rev_aplicar_accion($m, $id, 'completar', ['evolucion' => 'Otra vez', 'conducta' => 'alta'], $doc)), 'una completada no se completa de nuevo');
+
+        // Ventana vencida: no se registra la llegada.
+        $sig = $extra['siguiente']['id'];
+        $m->query("UPDATE hc_reevaluaciones SET fecha_limite = '" . date('Y-m-d', strtotime('-1 day')) . "' WHERE id = $sig");
+        iguales(409, $codigo(fn() => rev_aplicar_accion($m, $sig, 'llegada', [], $recep)), 'fuera de ventana no hay llegada');
+    } finally {
+        $listaIds = $m->query("SELECT id FROM hc_reevaluaciones WHERE consulta_origen_id = $origen")->fetch_all(MYSQLI_ASSOC);
+        foreach ($listaIds as $x) {
+            $m->query('DELETE FROM hc_reevaluaciones_eventos WHERE reevaluacion_id = ' . (int)$x['id']);
+        }
+        $m->query("DELETE FROM hc_reevaluaciones WHERE consulta_origen_id = $origen");
+        $m->query("DELETE FROM historia_clinica WHERE consulta_id = $origen");
+        if ($ids) {
+            $m->query('DELETE FROM consultas WHERE id IN (' . implode(',', array_map('intval', $ids)) . ')');
+        }
+        if ($origen > 0) {
+            $m->query("DELETE FROM consultas WHERE id = $origen");
+        }
+    }
+}, true);
+
+prueba('reevaluación (BD, fase 2): una visita abandonada de un día anterior vuelve a pendiente o vence', function () {
+    $m = $GLOBALS['mysqli'];
+    $med = (int)$m->query('SELECT id FROM medicos ORDER BY id LIMIT 1')->fetch_assoc()['id'];
+    $pac = (int)$m->query('SELECT id FROM pacientes ORDER BY id LIMIT 1')->fetch_assoc()['id'];
+    $hoy = date('Y-m-d');
+    $ayer = date('Y-m-d H:i:s', strtotime('-1 day'));
+    $recep = ['rol' => 'recepcionista', 'usuario_id' => 0, 'medico_id' => 0, 'nombre' => 'Recep', 'ip' => ''];
+    $o1 = 990000011; $o2 = 990000012;
+    $visitas = [];
+    try {
+        foreach ([[$o1, date('Y-m-d', strtotime('+3 days')), false], [$o2, date('Y-m-d', strtotime('+3 days')), true]] as [$o, $limite, $vence]) {
+            $m->query("INSERT INTO hc_reevaluaciones (consulta_origen_id, hc_id, paciente_id, medico_id, fecha_sugerida, sin_hora_fija, fecha_limite, estado, abierta)
+                       VALUES ($o, 0, $pac, $med, '$hoy', 1, '$limite', 'pendiente', 1)");
+            $id = (int)$m->insert_id;
+            $r = rev_aplicar_accion($m, $id, 'llegada', [], $recep);
+            $visitas[$o] = (int)$r['consulta_visita_id'];
+            $limiteFinal = $vence ? date('Y-m-d', strtotime('-1 day')) : $limite;
+            $m->query("UPDATE hc_reevaluaciones SET llegada_en = '$ayer', fecha_limite = '$limiteFinal' WHERE id = $id");
+        }
+        rev_revertir_visitas_abandonadas($m);
+        $a = $m->query("SELECT estado, consulta_visita_id FROM hc_reevaluaciones WHERE consulta_origen_id = $o1")->fetch_assoc();
+        iguales('pendiente', $a['estado'], 'sigue en ventana: vuelve a pendiente');
+        iguales(null, $a['consulta_visita_id']);
+        $b = $m->query("SELECT estado, abierta FROM hc_reevaluaciones WHERE consulta_origen_id = $o2")->fetch_assoc();
+        iguales('vencida', $b['estado'], 'fuera de ventana: vence');
+        iguales(null, $b['abierta']);
+        foreach ($visitas as $v) {
+            iguales('cancelada', $m->query("SELECT estado FROM consultas WHERE id = $v")->fetch_assoc()['estado'], 'la visita abandonada se cancela');
+        }
+    } finally {
+        $m->query("DELETE FROM hc_reevaluaciones_eventos WHERE reevaluacion_id IN (SELECT id FROM hc_reevaluaciones WHERE consulta_origen_id IN ($o1, $o2))");
+        $m->query("DELETE FROM hc_reevaluaciones WHERE consulta_origen_id IN ($o1, $o2)");
+        if ($visitas) {
+            $m->query('DELETE FROM consultas WHERE id IN (' . implode(',', array_map('intval', $visitas)) . ')');
+        }
+    }
+}, true);
+
 /* ───────── Ejecución ───────── */
 
 $bd = null;

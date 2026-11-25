@@ -2064,6 +2064,8 @@ if ($method === 'GET') {
         $disponibleRev = rev_disponible($conn);
         $listaRev = rev_listar($conn, [
             'abiertas' => true,
+            // Una vez que llega, el paciente se gestiona como consulta visita en la lista de citas.
+            'estados' => ['pendiente'],
             'estado_gestion' => $estadoGestion,
             'busqueda' => $busqueda,
             'paciente_id' => $pacienteIdFiltro,
@@ -2377,7 +2379,7 @@ if ($method === 'GET') {
         $params[] = $estadoGestion;
     }
 
-    if (in_array($origenConsulta, ['agendada', 'cotizador', 'hc_proxima', 'reservada_sin_turno'], true)) {
+    if (in_array($origenConsulta, ['agendada', 'cotizador', 'hc_proxima', 'hc_reevaluacion', 'reservada_sin_turno'], true)) {
         $where[] = 'COALESCE(NULLIF(TRIM(c.origen_creacion), ""), CASE'
               . ' WHEN c.hc_origen_id IS NOT NULL AND c.hc_origen_id > 0 THEN "hc_proxima"'
               . ' WHEN cot_ref_any.cotizacion_id IS NOT NULL THEN "cotizador"'
@@ -2828,6 +2830,7 @@ if ($method === 'GET') {
 
     $colaMap = rc_cola_map_for_items($conn, $items);
     rc_attach_cola_to_items($items, $colaMap);
+    rev_enriquecer_visitas($conn, $items);
 
     if ($considerarAgendaEnListado || !$usarPaginacion) {
         $totalItems = count($items);
