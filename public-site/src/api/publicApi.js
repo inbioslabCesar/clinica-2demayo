@@ -79,3 +79,13 @@ export async function getConfiguracion() {
   const data = await fetchJson('api_get_configuracion.php')
   return data?.data || null
 }
+
+// Accesos externos que tiene activos la clínica (portal de pacientes y de empresas). Ante cualquier error no se ofrece ninguno.
+export async function getPortalesActivos() {
+  try {
+    const data = await fetchJson('api_public_portales.php')
+    return { pacientes: data?.pacientes === true, empresas: data?.empresas === true }
+  } catch {
+    return { pacientes: false, empresas: false }
+  }
+}

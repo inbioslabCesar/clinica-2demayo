@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Icon } from "@fluentui/react";
 import SidebarSection from "./SidebarSection";
 import SidebarSaludOcupacional from "./SidebarSaludOcupacional";
+import EnlacePortalPaciente from "./EnlacePortalPaciente";
 
 export default function SidebarAdmin({ onClose }) {
   const [openSection, setOpenSection] = useState("finanzas");
@@ -116,6 +117,7 @@ export default function SidebarAdmin({ onClose }) {
           <Icon iconName="ReminderTime" className="text-lg text-sky-600" />
           <span>Recordatorios Citas</span>
         </Link>
+        <EnlacePortalPaciente can={() => true} onClose={onClose} />
       </SidebarSection>
 
       <SidebarSection

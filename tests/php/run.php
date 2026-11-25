@@ -29,6 +29,7 @@ require_once $root . '/modules/OcupacionalSecretos.php';
 require_once $root . '/modules/OcupacionalSesion.php';
 require_once $root . '/modules/LimiteIntentos.php';
 require_once $root . '/modules/PermisoAnulacion.php';
+require_once $root . '/modules/PortalPaciente.php';
 require_once $root . '/modules/LicenciaSistema.php';
 
 function licFila(array $extra = []): array {
@@ -139,6 +140,61 @@ prueba('anular/eliminar: administrador sí; recepcionista solo con el privilegio
     iguales(false, PermisoAnulacion::permitido(['rol' => 'laboratorista']));
     $_SESSION = [];
     iguales(false, PermisoAnulacion::permitido());
+});
+
+prueba('portal del paciente: estado de un resultado según modo, retención y deuda', function () {
+    $auto = PortalPaciente::MODO_AUTOMATICO;
+    $manual = PortalPaciente::MODO_MANUAL;
+    iguales('disponible', PortalPaciente::decidirEstado($auto, null, 0.0, true), 'automático sin deuda');
+    iguales('en_revision', PortalPaciente::decidirEstado($auto, 'retenido', 0.0, true), 'retenido por el personal');
+    iguales('en_revision', PortalPaciente::decidirEstado($manual, null, 0.0, true), 'manual sin liberar');
+    iguales('disponible', PortalPaciente::decidirEstado($manual, 'liberado', 0.0, true), 'manual liberado');
+    iguales('pendiente_pago', PortalPaciente::decidirEstado($auto, null, 25.5, true), 'deuda bloquea');
+    iguales('pendiente_pago', PortalPaciente::decidirEstado($manual, 'liberado', 25.5, true), 'liberar no salta la deuda');
+    iguales('disponible', PortalPaciente::decidirEstado($auto, null, 25.5, false), 'sin bloqueo por deuda configurado');
+    iguales('disponible', PortalPaciente::decidirEstado($auto, 'liberado', 0.004, true), 'centavos de redondeo no cuentan');
+    iguales('en_revision', PortalPaciente::decidirEstado($auto, 'retenido', 25.5, true), 'la retención se muestra primero');
+});
+
+prueba('portal del paciente: PIN, documento y permiso del personal', function () {
+    for ($i = 0; $i < 50; $i++) {
+        verdadero(PortalPaciente::pinValido(PortalPaciente::generarPin()), 'el PIN generado siempre tiene 6 dígitos');
+    }
+    foreach (['12345', '1234567', 'abcdef', '12 345', ''] as $malo) {
+        iguales(false, PortalPaciente::pinValido($malo), "PIN inválido '$malo'");
+    }
+    iguales('12345678', PortalPaciente::normalizarDocumento(' 12345678 '));
+    iguales('ABC12345', PortalPaciente::normalizarDocumento('abc-123 45'));
+    iguales('', PortalPaciente::normalizarDocumento('1234'), 'muy corto');
+    iguales('', PortalPaciente::normalizarDocumento('PENDIENTE_COMPLETAR'), 'dato pendiente de completar no es un documento');
+    iguales(true, PortalPaciente::staffPermitido(['rol' => 'administrador']));
+    iguales(true, PortalPaciente::staffPermitido(['rol' => 'recepcionista', 'permisos' => [PortalPaciente::PERMISO]]));
+    iguales(true, PortalPaciente::staffPermitido(['rol' => 'recepcionista', 'permisos' => json_encode([PortalPaciente::PERMISO])]));
+    iguales(false, PortalPaciente::staffPermitido(['rol' => 'recepcionista', 'permisos' => ['ver_pacientes']]));
+    iguales(false, PortalPaciente::staffPermitido(['rol' => 'laboratorista', 'permisos' => [PortalPaciente::PERMISO]]));
+    iguales(false, PortalPaciente::staffPermitido(null));
+});
+
+prueba('portal del paciente: solo se entregan PDF dentro de uploads/informes_imagenologia', function () {
+    global $root;
+    iguales(null, PortalPaciente::rutaPdfImagenologia('../config.php'), 'no sale de la carpeta');
+    iguales(null, PortalPaciente::rutaPdfImagenologia('uploads/informes_imagenologia/../../config.php'));
+    iguales(null, PortalPaciente::rutaPdfImagenologia('uploads/informes_imagenologia/no_existe_phptest.pdf'));
+    $dir = $root . '/uploads/informes_imagenologia';
+    $creada = !is_dir($dir);
+    if ($creada) mkdir($dir, 0775, true);
+    $archivo = $dir . '/phptest_portal.pdf';
+    $otro = $dir . '/phptest_portal.txt';
+    file_put_contents($archivo, '%PDF-1.4');
+    file_put_contents($otro, 'x');
+    try {
+        verdadero(PortalPaciente::rutaPdfImagenologia('uploads/informes_imagenologia/phptest_portal.pdf') !== null, 'un PDF de la carpeta sí');
+        iguales(null, PortalPaciente::rutaPdfImagenologia('uploads/informes_imagenologia/phptest_portal.txt'), 'solo PDF');
+    } finally {
+        @unlink($archivo);
+        @unlink($otro);
+        if ($creada) @rmdir($dir);
+    }
 });
 
 /* ───────── Unitarias: regla "qué servicios ocupan al médico" ───────── */
@@ -1058,6 +1114,74 @@ prueba('adenda: el mismo client_request_id devuelve la misma adenda, también co
         iguales(4, $ok, 'ninguno recibe error');
     } finally {
         $mysqli->query("DELETE FROM bloques_atencion WHERE paciente_id = $paciente");
+    }
+}, true);
+
+prueba('portal del paciente: la deuda suma la cadena de cotizaciones y un resultado ajeno nunca aparece', function () {
+    global $mysqli, $marcador;
+    $obs = $mysqli->real_escape_string($marcador);
+    $pac = 987654;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, saldo_pendiente, estado, observaciones) VALUES ($pac, 18, 100, 100, 'pendiente', '$obs')");
+    $raiz = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, saldo_pendiente, estado, observaciones, cotizacion_padre_id, es_adenda) VALUES ($pac, 18, 30, 0, 'pagado', '$obs', $raiz, 1)");
+    $adenda = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, saldo_pendiente, estado, observaciones, cotizacion_padre_id, es_adenda) VALUES ($pac, 18, 50, 50, 'anulada', '$obs', $raiz, 1)");
+    $mysqli->query("INSERT INTO ordenes_laboratorio (paciente_id, examenes, estado, cotizacion_id) VALUES ($pac, '[]', 'completado', $adenda)");
+    $ordenId = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO resultados_laboratorio (orden_id, tipo_examen, resultados) VALUES ($ordenId, 'PHPTEST hemograma', '{}')");
+    $resultadoId = (int)$mysqli->insert_id;
+    try {
+        iguales(100.0, PortalPaciente::saldoPendiente($mysqli, $adenda), 'desde la adenda se ve el saldo de la raíz; la anulada no cuenta');
+        iguales(0.0, PortalPaciente::saldoPendiente($mysqli, null), 'sin cotización no hay deuda');
+
+        $docs = array_values(array_filter(PortalPaciente::documentos($mysqli, $pac), fn($d) => $d['tipo'] === 'laboratorio' && $d['ref_id'] === $resultadoId));
+        iguales(1, count($docs), 'el resultado completado aparece');
+        iguales('pendiente_pago', $docs[0]['estado']);
+        verdadero(!array_key_exists('saldo_pendiente', $docs[0]) && !array_key_exists('decision_manual', $docs[0]), 'el paciente no recibe datos internos');
+
+        $mysqli->query("UPDATE cotizaciones SET saldo_pendiente = 0, estado = 'pagado' WHERE id = $raiz");
+        $docs = array_values(array_filter(PortalPaciente::documentos($mysqli, $pac), fn($d) => $d['ref_id'] === $resultadoId && $d['tipo'] === 'laboratorio'));
+        iguales('disponible', $docs[0]['estado'], 'pagado: disponible');
+
+        iguales(null, PortalPaciente::buscarDocumento($mysqli, 987655, 'laboratorio', $resultadoId), 'otro paciente no lo encuentra');
+        $mysqli->query("UPDATE ordenes_laboratorio SET estado = 'pendiente' WHERE id = $ordenId");
+        iguales(null, PortalPaciente::buscarDocumento($mysqli, $pac, 'laboratorio', $resultadoId), 'orden sin completar no se publica');
+    } finally {
+        $mysqli->query("DELETE FROM resultados_laboratorio WHERE id = $resultadoId");
+        $mysqli->query("DELETE FROM ordenes_laboratorio WHERE id = $ordenId");
+    }
+}, true);
+
+prueba('portal del paciente: informe de imagen en borrador o sin PDF se lista "en revisión" y no se descarga', function () {
+    global $mysqli;
+    $pac = 987654;
+    $mysqli->query("INSERT INTO ordenes_imagen (paciente_id, tipo, indicaciones, estado) VALUES ($pac, 'rx', 'PHPTEST', 'completado')");
+    $oi1 = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO ordenes_imagen (paciente_id, tipo, indicaciones, estado) VALUES ($pac, 'rx', 'PHPTEST', 'completado')");
+    $oi2 = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO imagenologia_informes (orden_imagen_id, paciente_id, medico_id, titulo, contenido_json, estado) VALUES ($oi1, $pac, 1, 'PHPTEST borrador', '{}', 'borrador')");
+    $inf1 = (int)$mysqli->insert_id;
+    $mysqli->query("INSERT INTO imagenologia_informes (orden_imagen_id, paciente_id, medico_id, titulo, contenido_json, estado) VALUES ($oi2, $pac, 1, 'PHPTEST sin pdf', '{}', 'completado')");
+    $inf2 = (int)$mysqli->insert_id;
+    try {
+        $docs = [];
+        foreach (PortalPaciente::documentos($mysqli, $pac, true) as $d) {
+            if ($d['tipo'] === 'imagenologia') $docs[$d['ref_id']] = $d;
+        }
+        iguales('en_revision', $docs[$inf1]['estado']);
+        iguales('borrador', $docs[$inf1]['pendiente_motivo']);
+        iguales('en_revision', $docs[$inf2]['estado']);
+        iguales('sin_pdf', $docs[$inf2]['pendiente_motivo']);
+        $mysqli->query("INSERT INTO paciente_portal_liberaciones (paciente_id, tipo, ref_id, estado) VALUES ($pac, 'imagenologia', $inf2, 'liberado')");
+        $d2 = PortalPaciente::buscarDocumento($mysqli, $pac, 'imagenologia', $inf2);
+        iguales('en_revision', $d2['estado'], 'liberar a mano no publica un informe sin PDF');
+        foreach (PortalPaciente::documentos($mysqli, $pac) as $d) {
+            verdadero(!array_key_exists('pendiente_motivo', $d), 'el paciente no recibe el motivo interno');
+        }
+    } finally {
+        $mysqli->query("DELETE FROM paciente_portal_liberaciones WHERE paciente_id = $pac");
+        $mysqli->query("DELETE FROM imagenologia_informes WHERE id IN ($inf1, $inf2)");
+        $mysqli->query("DELETE FROM ordenes_imagen WHERE id IN ($oi1, $oi2)");
     }
 }, true);
 

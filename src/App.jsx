@@ -13,6 +13,8 @@ import LicenciaAviso from "./components/licencia/LicenciaAviso";
 import ModalAperturaCaja from "./components/caja/ModalAperturaCaja.jsx";
 // Lazy loading para todos los componentes y páginas principales
 const EmpresaPortalPanelPage = lazy(() => import("./pages/ocupacional/EmpresaPortalPanelPage.jsx"));
+const PacientePortalPage = lazy(() => import("./pages/paciente/PacientePortalPage.jsx"));
+const PortalPacienteAdminPage = lazy(() => import("./pages/PortalPacienteAdminPage.jsx"));
 const Login = lazy(() => import("./components/usuario/Login.jsx"));
 const DashboardEstadisticasAdmin = lazy(() =>
   import("./pages/DashboardEstadisticasAdmin.jsx")
@@ -530,6 +532,21 @@ function hydrateUsuario(rawUsuario) {
   };
 }
 
+// Portal del paciente (módulo opcional 'portal_pacientes'): es público y se muestra siempre en /resultados,
+// aunque haya una sesión del personal abierta en este navegador (sin esto, el comodín de las rutas del personal
+// redirigía a su pantalla de inicio).
+function PortalPacientePublico({ children }) {
+  const { pathname } = useLocation();
+  if (/^\/resultados\/?$/.test(pathname)) {
+    return (
+      <Suspense fallback={<div className="p-8 text-center">Cargando módulo...</div>}>
+        <PacientePortalPage />
+      </Suspense>
+    );
+  }
+  return children;
+}
+
 function App() {
   const authRecoveryInFlight = React.useRef(false);
   const authRecoveryLastTs = React.useRef(0);
@@ -772,6 +789,40 @@ function App() {
   }, [usuario]);
 
   useEffect(() => {
+    // Si el administrador cambia los privilegios mientras la sesión sigue abierta, se releen al volver a la pestaña.
+    let ultimo = 0;
+    const refrescarPermisos = async () => {
+      if (document.visibilityState === "hidden") return;
+      if (!sessionStorage.getItem("usuario")) return;
+      const ahora = Date.now();
+      if (ahora - ultimo < 15000) return;
+      ultimo = ahora;
+      try {
+        const r = await authFetch("api_auth_status.php", { cache: "no-store", __skipAuthEvent: true });
+        if (!r.ok) return;
+        const data = await r.json().catch(() => null);
+        if (!data?.success || !data?.authenticated || data?.tipo !== "usuario") return;
+        const nuevos = normalizePermisos(data.permisos || []);
+        const rolNuevo = String(data.rol || "").trim().toLowerCase();
+        setUsuario((prev) => {
+          if (!prev || prev.rol === "medico") return prev;
+          const iguales = prev.rol === rolNuevo
+            && JSON.stringify([...normalizePermisos(prev.permisos)].sort()) === JSON.stringify([...nuevos].sort());
+          return iguales ? prev : hydrateUsuario({ ...prev, rol: rolNuevo, permisos: nuevos });
+        });
+      } catch {
+        // Sin red: se conserva el estado actual.
+      }
+    };
+    window.addEventListener("focus", refrescarPermisos);
+    document.addEventListener("visibilitychange", refrescarPermisos);
+    return () => {
+      window.removeEventListener("focus", refrescarPermisos);
+      document.removeEventListener("visibilitychange", refrescarPermisos);
+    };
+  }, []);
+
+  useEffect(() => {
     const handleUsuarioSessionUpdated = (event) => {
       const detail = event?.detail;
       if (detail && typeof detail === "object") {
@@ -798,6 +849,7 @@ function App() {
 
   const { tiene: tieneModulo, cargando: cargandoModulos } = useModulos(Boolean(usuario) && usuario.rol !== "empresa");
   const ocupacionalActivo = tieneModulo("ocupacional");
+  const portalPacientesActivo = tieneModulo("portal_pacientes");
 
   const getHomeByRole = (rol) => {
     switch (rol) {
@@ -863,6 +915,7 @@ function App() {
       ) : null}
       {authBootstrap.phase === "infra_error" || authBootstrap.phase === "checking" ? null : (
       <BrowserRouter basename={ROUTER_BASENAME}>
+        <PortalPacientePublico>
         {usuario?.rol === "empresa" ? (
           // Portal de empresas (módulo opcional 'portal_empresas'): sin menú clínico, solo su panel.
           <Suspense fallback={<div className="p-8 text-center">Cargando módulo...</div>}>
@@ -1219,6 +1272,23 @@ function App() {
                       </ProtectedRoute>
                     }
                   />
+                  {portalPacientesActivo && (
+                    <Route
+                      path="/portal-paciente"
+                      element={
+                        <ProtectedRoute
+                          usuario={usuario}
+                          rolesPermitidos={["administrador", "recepcionista"]}
+                          permisosRequeridos={["gestionar_portal_pacientes"]}
+                        >
+                          <PortalPacienteAdminPage />
+                        </ProtectedRoute>
+                      }
+                    />
+                  )}
+                  {!portalPacientesActivo && cargandoModulos && (
+                    <Route path="/portal-paciente" element={<div className="p-8 text-center">Cargando módulo...</div>} />
+                  )}
                   <Route
                     path="/reporte-pacientes"
                     element={
@@ -1755,6 +1825,7 @@ function App() {
             <Login onLogin={setUsuario} />
           </Suspense>
         )}
+        </PortalPacientePublico>
     </BrowserRouter>
       )}
     </QuoteCartProvider>

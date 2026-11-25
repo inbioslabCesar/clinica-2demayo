@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PUBLIC_API_BASE } from '../api/publicApi'
+import { accesosDisponibles, hayAccesosExternos } from '../utils/accesos.js'
 import { resolvePublicLogoSize } from '../utils/logoSizing'
 
 function resolvePublicUrl(maybePath) {
@@ -54,7 +55,7 @@ function normalizeLines(text) {
     .filter(Boolean)
 }
 
-export default function PublicFooter({ configuracion, sistemaUrl, logoSize }) {
+export default function PublicFooter({ configuracion, sistemaUrl, portales, logoSize }) {
   const cfg = configuracion || {}
   const fallbackLogoSrc = `${import.meta.env.BASE_URL}2demayo.svg`
   const configuredLogoSrc = resolvePublicUrl(cfg.logo_url)
@@ -126,9 +127,17 @@ export default function PublicFooter({ configuracion, sistemaUrl, logoSize }) {
               <Link to="/" className="block text-white/70 hover:text-white">Inicio</Link>
               <Link to="/servicios" className="block text-white/70 hover:text-white">Servicios</Link>
               <Link to="/ofertas" className="block text-white/70 hover:text-white">Ofertas</Link>
-              <a href={sistemaUrl} className="block text-white/70 hover:text-white" rel="noopener noreferrer">
-                Iniciar sesión
-              </a>
+              {hayAccesosExternos(portales) ? (
+                accesosDisponibles(sistemaUrl, portales).map(({ clave, titulo, href }) => (
+                  <a key={clave} href={href} className="block text-white/70 hover:text-white" rel="noopener noreferrer">
+                    Iniciar sesión como {titulo.toLowerCase()}
+                  </a>
+                ))
+              ) : (
+                <a href={sistemaUrl} className="block text-white/70 hover:text-white" rel="noopener noreferrer">
+                  Iniciar sesión
+                </a>
+              )}
             </div>
           </div>
 

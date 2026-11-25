@@ -546,6 +546,47 @@ export default function ModalInformeImagenologia({
     }
   }, [ordenImagenId, titulo, contenido, plantillaSeleccionada, estado, onSaved]);
 
+  // ─ Cambiar el estado del informe (sin generar PDF) ─────────────────────
+  const handleCambiarEstado = useCallback(async (nuevoEstado) => {
+    if (!ordenImagenId) return;
+    setSaving(true);
+    try {
+      const response = await authFetch('api_imagenologia_informes.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orden_imagen_id: ordenImagenId,
+          titulo: titulo || '',
+          contenido_json: contenido,
+          plantilla_json: plantillaSeleccionada,
+          estado: nuevoEstado
+        })
+      });
+      const data = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || 'No se pudo cambiar el estado del informe');
+      }
+      setEstado(nuevoEstado);
+      setInforme((prev) => ({ ...(prev || {}), id: data.informe_id, estado: nuevoEstado }));
+      sessionStorage.removeItem(draftStorageKey(ordenImagenId));
+      setDirty(false);
+      if (onSaved) onSaved({ refreshListado: true, informeId: data.informe_id || null, estado: nuevoEstado });
+      Swal.fire(swalFrontConfig({
+        title: 'Éxito',
+        text: nuevoEstado === 'completado' ? 'Informe marcado como completado' : 'Informe devuelto a borrador',
+        icon: 'success'
+      }));
+    } catch (err) {
+      Swal.fire(swalFrontConfig({
+        title: 'Error',
+        text: err.message || 'Error de conexión',
+        icon: 'error'
+      }));
+    } finally {
+      setSaving(false);
+    }
+  }, [ordenImagenId, titulo, contenido, plantillaSeleccionada, onSaved]);
+
   // ─ Generar PDF ──────────────────────────────────────────────────────────
   const handleGenerarPdf = useCallback(async () => {
     setGenerandoPdf(true);
@@ -898,6 +939,17 @@ export default function ModalInformeImagenologia({
           >
             {saving ? <FiLoader className="animate-spin" /> : <FiSave />}
             Guardar Informe
+          </button>
+          <button
+            onClick={() => handleCambiarEstado(estado === 'completado' ? 'borrador' : 'completado')}
+            disabled={saving || generandoPdf || loading || estado === 'archivado'}
+            className={`px-4 py-2 rounded border disabled:opacity-50 transition ${
+              estado === 'completado'
+                ? 'border-yellow-500 text-yellow-700 hover:bg-yellow-50'
+                : 'border-green-600 text-green-700 hover:bg-green-50'
+            }`}
+          >
+            {estado === 'completado' ? 'Volver a borrador' : 'Marcar como completado'}
           </button>
           <button
             onClick={handleGenerarPdf}

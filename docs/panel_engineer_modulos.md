@@ -105,6 +105,14 @@ Todo queda **detrás del módulo**: una clínica con `ocupacional` apagado no ve
   si el módulo está apagado o no son credenciales de empresa, continúa el login habitual sin cambios. Sesión `empresa_portal` independiente de usuarios y médicos
   (cada login clínico la descarta; `api_auth_status.php` la reconoce solo si no hay otra sesión). La empresa solo ve `/empresa/panel`.
 - **Laboratorio:** pestaña "Ocupacional Lab" en `LaboratorioPanelPage` (solo con el módulo activo; enlace contextual `?tab=ocupacional_lab&orden_id=`).
+- **Portal del paciente** (`portal_pacientes`, independiente de `ocupacional`): el paciente entra en `/resultados` con DNI + PIN de 6 dígitos
+  (`api_paciente_portal.php`, sesión `paciente_portal` aislada, límite de intentos) y descarga laboratorio e imagenología. El personal (administrador, o recepción con
+  el permiso `gestionar_portal_pacientes`) genera el PIN, lo envía por WhatsApp y libera/retiene resultados en `/portal-paciente` (`api_paciente_portal_gestion.php`).
+  Liberación `automatico` (al completarse) o `manual`; con saldo pendiente en la cadena de cotizaciones la descarga se bloquea (configurable). Tablas y activación:
+  `sql/2026-11-24/`. Otros tipos de informe se agregan registrándolos en `PortalPaciente::PROVEEDORES`.
+  La web pública (`public-site/`) muestra el botón "Iniciar sesión" como menú **"Iniciar sesión como: Paciente · Médico o personal · Empresa"** según los módulos activos
+  (`api_public_portales.php`: `pacientes` = `portal_pacientes`; `empresas` = `ocupacional` + `portal_empresas`). Sin ninguno activo es el enlace directo de siempre.
+  "Médico o personal" mantiene la URL del sistema de siempre; "Empresa" abre el mismo login con `?acceso=empresa` (solo cambian los textos); "Paciente" abre `/resultados`.
 - **Configuración:** "Logo horizontal para certificados ocupacionales" (solo con el módulo; columna opcional `configuracion_clinica.logo_ocupacional_url`,
   `sql/2026-11-22/010`). Sin la columna, `api_configuracion.php` ignora el campo y los documentos usan `logo_url`.
 - Necesita el catálogo de ubigeo: `sql/2026-11-22/007`–`009`.

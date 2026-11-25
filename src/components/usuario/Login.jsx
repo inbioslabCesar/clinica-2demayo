@@ -230,6 +230,8 @@ function applyFavicon(iconHref) {
 }
 
 function Login({ onLogin }) {
+  // La web pública enlaza con ?acceso=empresa: es el mismo login (reconoce a las empresas por su usuario), solo cambian los textos.
+  const esAccesoEmpresa = new URLSearchParams(window.location.search).get("acceso") === "empresa";
   const cachedBrand = readCachedBrand();
   const hasFreshCachedBrand = Boolean(
     (cachedBrand?.clinicName || cachedBrand?.logoSrc) &&
@@ -575,8 +577,11 @@ function Login({ onLogin }) {
               {clinicName}
             </h1>
             <p className="text-lg text-white/80">
-              Acceso al Sistema Médico
+              {esAccesoEmpresa ? "Acceso para empresas" : "Acceso al Sistema Médico"}
             </p>
+            {esAccesoEmpresa ? (
+              <p className="mt-1 text-sm text-white/60">Ingrese el usuario y la clave que le entregó la clínica.</p>
+            ) : null}
           </div>
 
           {/* Formulario */}
@@ -588,7 +593,7 @@ function Login({ onLogin }) {
               </div>
               <input
                 type="text"
-                placeholder="Usuario o email del médico"
+                placeholder={esAccesoEmpresa ? "Usuario de la empresa" : "Usuario o email del médico"}
                 value={usuario}
                 onChange={(e) => setUsuario(e.target.value)}
                 className="w-full bg-white/10 border border-white/20 rounded-2xl pl-12 pr-4 py-4 text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-blue-400/50 focus:border-transparent backdrop-blur-sm transition-all duration-300"

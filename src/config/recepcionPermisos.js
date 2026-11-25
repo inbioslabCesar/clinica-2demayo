@@ -26,6 +26,7 @@ export const RECEPCION_PERMISOS = [
   { key: "ver_tema", label: "Personalización", oculto: true },
   { key: "ver_reabrir_caja", label: "Reabrir Cajas" },
   { key: "anular_eliminar_atenciones", label: "Anular cotizaciones y eliminar consumos cobrados" },
+  { key: "gestionar_portal_pacientes", label: "Portal del paciente (PIN y liberación de resultados)", modulo: "portal_pacientes" },
   { key: "access_salud_ocupacional", label: "Acceso Salud Ocupacional", modulo: "ocupacional" },
   { key: "gestionar_empresas_ocupacional", label: "Gestionar Empresas Ocupacional", modulo: "ocupacional" },
   { key: "registrar_trabajadores_ocupacional", label: "Registrar Trabajadores Ocupacional", modulo: "ocupacional" },

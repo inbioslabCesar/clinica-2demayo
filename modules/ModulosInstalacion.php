@@ -3,7 +3,7 @@
 // Regla de seguridad: si la tabla no existe o falla la consulta, solo 'clinico' queda activo
 // (las clínicas sin actualizar se comportan exactamente como hoy y nunca se abre un módulo por error).
 class ModulosInstalacion {
-    public const MODULOS = ['clinico', 'ocupacional', 'portal_empresas'];
+    public const MODULOS = ['clinico', 'ocupacional', 'portal_empresas', 'portal_pacientes'];
     public const GRACIA_DIAS = 7;
 
     private static $cache = null;

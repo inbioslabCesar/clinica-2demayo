@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { getServicios, getOfertas, getBanners } from '../api/publicApi'
 import HeroCarousel from '../components/HeroCarousel'
 import ServiceIcon from '../components/ServiceIcon'
+import AccesoMenu from '../components/AccesoMenu'
 import CountUpNumber from '../components/CountUpNumber'
 import VerticalOffersSlider from '../components/VerticalOffersSlider'
 import { resolvePublicLogoSize } from '../utils/logoSizing'
@@ -18,7 +19,7 @@ function clampIndex(value, length) {
 const PACIENTES_BASE_KEY = buildScopedStorageKey('public_pacientes_base')
 const PACIENTES_START_TS_KEY = buildScopedStorageKey('public_pacientes_start_ts')
 
-export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.env.BASE_URL}2demayo.svg`, clinicName = 'Portal de Salud', configuracion, logoSize }) {
+export default function HomePage({ sistemaUrl, portales, publicLogoSrc = `${import.meta.env.BASE_URL}2demayo.svg`, clinicName = 'Portal de Salud', configuracion, logoSize }) {
 
   const resolvedLogoSize = logoSize || resolvePublicLogoSize(configuracion?.logo_size_publico)
   const brandNameColor = sanitizeHexColor(configuracion?.nombre_color, 'var(--color-primary, #E85D8E)')
@@ -390,14 +391,13 @@ export default function HomePage({ sistemaUrl, publicLogoSrc = `${import.meta.en
           >
             Ver ofertas
           </Link>
-          <a
+          <AccesoMenu
+            sistemaUrl={sistemaUrl}
+            portales={portales}
+            align="left"
             className="px-4 py-2 rounded-lg border text-base font-semibold hover:bg-slate-50 transition-colors"
-            href={sistemaUrl}
-            rel="noopener noreferrer"
             style={{ color: 'var(--color-primary, #E85D8E)', borderColor: 'var(--color-primary, #E85D8E)' }}
-          >
-            Iniciar sesión
-          </a>
+          />
         </div>
       </section>
 

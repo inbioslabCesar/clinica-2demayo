@@ -4,7 +4,9 @@ import PublicFooter from './components/PublicFooter.jsx'
 import CartToggleButton from './components/ShoppingCart/CartToggleButton.jsx'
 import CartPanel from './components/ShoppingCart/CartPanel.jsx'
 import { CartProvider } from './context/CartContext.jsx'
-import { getConfiguracion, PUBLIC_API_BASE } from './api/publicApi.js'
+import { getConfiguracion, getPortalesActivos, PUBLIC_API_BASE } from './api/publicApi.js'
+import AccesoMenu from './components/AccesoMenu.jsx'
+import { accesosDisponibles, hayAccesosExternos } from './utils/accesos.js'
 import { resolvePublicLogoSize } from './utils/logoSizing.js'
 import { sanitizeFontSize, sanitizeHexColor } from './utils/branding.js'
 import { buildScopedStorageKey } from './utils/storageScope.js'
@@ -217,6 +219,29 @@ function MobileNavItem({ to, children, onClick }) {
   )
 }
 
+// Accesos de inicio de sesión dentro del menú móvil: sin servicios externos activos es el botón de siempre;
+// con alguno activo se listan las opciones "Iniciar sesión como:".
+function AccesosMovil({ sistemaUrl, portales, className, style, onNavigate }) {
+  if (!hayAccesosExternos(portales)) {
+    return (
+      <a href={sistemaUrl} className={className} style={style} rel="noopener noreferrer" onClick={onNavigate}>
+        Iniciar sesión
+      </a>
+    )
+  }
+  return (
+    <div className="space-y-2">
+      <div className="px-1 text-sm font-semibold text-slate-700">Iniciar sesión como:</div>
+      {accesosDisponibles(sistemaUrl, portales).map(({ clave, titulo, detalle, href }) => (
+        <a key={clave} href={href} className={className} style={style} rel="noopener noreferrer" onClick={onNavigate}>
+          <span className="block">{titulo}</span>
+          <span className="block text-xs font-normal opacity-90">{detalle}</span>
+        </a>
+      ))}
+    </div>
+  )
+}
+
 function IconMenu(props) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -236,7 +261,7 @@ function IconClose(props) {
   )
 }
 
-function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
+function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize, portales }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const headerRef = useRef(null)
   const location = useLocation()
@@ -312,14 +337,12 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
                 <NavItem to="/ofertas">Ofertas</NavItem>
               </nav>
 
-              <a
-                href={SISTEMA_URL}
+              <AccesoMenu
+                sistemaUrl={SISTEMA_URL}
+                portales={portales}
                 className="px-3.5 py-2 rounded-lg text-white text-sm sm:text-base font-semibold hover:opacity-90 transition-colors"
                 style={{ background: 'linear-gradient(to right, var(--color-primary-dark, #7e22ce), var(--color-secondary, #2563eb))' }}
-                rel="noopener noreferrer"
-              >
-                Iniciar sesión
-              </a>
+              />
 
               <CartToggleButton />
 
@@ -380,15 +403,13 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
 
               <div className="my-3 border-t border-slate-200/70" />
 
-              <a
-                href={SISTEMA_URL}
+              <AccesosMovil
+                sistemaUrl={SISTEMA_URL}
+                portales={portales}
                 className="block w-full text-center px-4 py-2.5 rounded-xl text-white text-base font-semibold hover:opacity-90 transition-colors"
                 style={{ background: 'linear-gradient(to right, var(--color-primary-dark, #7e22ce), var(--color-secondary, #2563eb))' }}
-                rel="noopener noreferrer"
-                onClick={() => setMobileOpen(false)}
-              >
-                Iniciar sesión
-              </a>
+                onNavigate={() => setMobileOpen(false)}
+              />
             </div>
           </aside>
         </div>
@@ -396,7 +417,7 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
         <main className="max-w-6xl mx-auto px-4 pt-6 pb-8">
           <Suspense fallback={<PublicRouteFallback />}>
             <Routes>
-              <Route path="/" element={<HomePage sistemaUrl={SISTEMA_URL} publicLogoSrc={publicLogoSrc} clinicName={safeClinicName} configuracion={configuracion} logoSize={logoSize} />} />
+              <Route path="/" element={<HomePage sistemaUrl={SISTEMA_URL} portales={portales} publicLogoSrc={publicLogoSrc} clinicName={safeClinicName} configuracion={configuracion} logoSize={logoSize} />} />
               <Route path="/conocenos" element={<ConocenosPage clinicName={safeClinicName} publicLogoSrc={publicLogoSrc} logoSize={logoSize} />} />
               <Route path="/servicios" element={<ServiciosPage configuracion={configuracion} />} />
               <Route path="/ofertas" element={<OfertasPage configuracion={configuracion} />} />
@@ -404,7 +425,7 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
           </Suspense>
         </main>
 
-        <PublicFooter configuracion={configuracion} sistemaUrl={SISTEMA_URL} logoSize={logoSize} />
+        <PublicFooter configuracion={configuracion} sistemaUrl={SISTEMA_URL} portales={portales} logoSize={logoSize} />
         <CartPanel whatsappNumero={whatsappNumero} />
       </div>
     </div>
@@ -412,7 +433,7 @@ function AppShell({ clinicName, publicLogoSrc, configuracion, logoSize }) {
 }
 
 /* ── Landing layout shell (Design 2) ── */
-function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize }) {
+function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize, portales }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const headerRef = useRef(null)
   const location = useLocation()
@@ -476,14 +497,12 @@ function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize })
           </nav>
 
           <div className="flex items-center gap-2">
-            <a
-              href={SISTEMA_URL}
+            <AccesoMenu
+              sistemaUrl={SISTEMA_URL}
+              portales={portales}
               className="px-5 py-2 rounded-full text-white text-sm font-semibold hover:opacity-90 transition shadow-md"
               style={{ backgroundColor: 'var(--color-primary, #E85D8E)' }}
-              rel="noopener noreferrer"
-            >
-              Iniciar sesión
-            </a>
+            />
             <CartToggleButton />
             <button
               type="button"
@@ -511,7 +530,13 @@ function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize })
             <MobileNavItem to="/ofertas" onClick={() => setMobileOpen(false)}>Ofertas</MobileNavItem>
             <MobileNavItem to="/conocenos" onClick={() => setMobileOpen(false)}>Conócenos</MobileNavItem>
             <div className="my-2 border-t border-gray-200" />
-            <a href={SISTEMA_URL} className="block text-center px-4 py-3 rounded-xl text-white font-semibold" style={{ backgroundColor: 'var(--color-primary, #E85D8E)' }} rel="noopener noreferrer" onClick={() => setMobileOpen(false)}>Iniciar sesión</a>
+            <AccesosMovil
+              sistemaUrl={SISTEMA_URL}
+              portales={portales}
+              className="block text-center px-4 py-3 rounded-xl text-white font-semibold"
+              style={{ backgroundColor: 'var(--color-primary, #E85D8E)' }}
+              onNavigate={() => setMobileOpen(false)}
+            />
           </div>
         </aside>
       </div>
@@ -520,7 +545,7 @@ function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize })
       <main className="pt-28">
         <Suspense fallback={<PublicRouteFallback />}>
           <Routes>
-            <Route path="/" element={<HomePageLanding sistemaUrl={SISTEMA_URL} publicLogoSrc={publicLogoSrc} clinicName={safeClinicName} configuracion={configuracion} logoSize={logoSize} />} />
+            <Route path="/" element={<HomePageLanding sistemaUrl={SISTEMA_URL} portales={portales} publicLogoSrc={publicLogoSrc} clinicName={safeClinicName} configuracion={configuracion} logoSize={logoSize} />} />
             <Route path="/servicios" element={<ServiciosPage configuracion={configuracion} />} />
             <Route path="/ofertas" element={<OfertasPage configuracion={configuracion} />} />
             <Route path="/conocenos" element={<ConocenosPage clinicName={safeClinicName} publicLogoSrc={publicLogoSrc} logoSize={logoSize} />} />
@@ -529,7 +554,7 @@ function AppShellLanding({ clinicName, publicLogoSrc, configuracion, logoSize })
       </main>
 
       {/* 2-level footer */}
-      <PublicFooter configuracion={configuracion} sistemaUrl={SISTEMA_URL} logoSize={logoSize} />
+      <PublicFooter configuracion={configuracion} sistemaUrl={SISTEMA_URL} portales={portales} logoSize={logoSize} />
       <CartPanel whatsappNumero={whatsappNumero} />
     </div>
   )
@@ -564,6 +589,7 @@ export default function App() {
   const cachedTheme = BOOTSTRAP_PUBLIC_THEME || readPublicThemeCache()
   const cachedConfig = readConfigCache()
   const [configuracion, setConfiguracion] = useState(cachedConfig)
+  const [portales, setPortales] = useState({ pacientes: false, empresas: false })
   const [clinicName, setClinicName] = useState(cachedBrand.nombre || cachedConfig?.nombre_clinica || '')
   const [publicLayout, setPublicLayout] = useState(cachedTheme?.tema_public_layout || 'classic')
   const [publicLogoSrc, setPublicLogoSrc] = useState(() => {
@@ -661,12 +687,23 @@ export default function App() {
 
   const Shell = publicLayout === 'landing' ? AppShellLanding : AppShell
 
+  // Sin el servicio activo no hay opción en el menú: la web no ofrece una puerta a algo que la clínica no tiene.
+  useEffect(() => {
+    let cancelled = false
+    getPortalesActivos().then((activos) => {
+      if (!cancelled) setPortales(activos)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const celular = normalizePhone(configuracion?.celular)
 
   return (
     <CartProvider>
       <BrowserRouter>
-        <Shell configuracion={configuracion} clinicName={clinicName} publicLogoSrc={publicLogoSrc} logoSize={publicLogoSize} />
+        <Shell configuracion={configuracion} clinicName={clinicName} publicLogoSrc={publicLogoSrc} logoSize={publicLogoSize} portales={portales} />
         {celular.length >= 10 && <FloatingWhatsApp phone={celular} />}
       </BrowserRouter>
     </CartProvider>

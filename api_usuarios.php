@@ -29,6 +29,8 @@ function permisosPermitidosRecepcion() {
         'ver_tema',
         'ver_reabrir_caja',
         'anular_eliminar_atenciones',
+        // Portal del paciente: solo surte efecto si el módulo 'portal_pacientes' está activo en la instalación.
+        'gestionar_portal_pacientes',
         // Salud ocupacional: solo surten efecto si el módulo 'ocupacional' está activo en la instalación.
         'access_salud_ocupacional',
         'gestionar_empresas_ocupacional',

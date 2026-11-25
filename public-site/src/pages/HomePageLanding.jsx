@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getServicios, getOfertas, getBanners } from '../api/publicApi'
 import ServiceIcon from '../components/ServiceIcon'
+import AccesoMenu from '../components/AccesoMenu'
+import { hayAccesosExternos } from '../utils/accesos'
 import { resolvePublicLogoSize } from '../utils/logoSizing'
 import { sanitizeFontSize, sanitizeHexColor } from '../utils/branding'
 import { resolvePublicAssetUrl } from '../utils/publicAssetUrl'
 
 /* ── Hero Section ── */
-function HeroSection({ clinicName, publicLogoSrc, banners = [], sistemaUrl, slogan, sloganColor, nombreColor, nombreFontSize, logoSize }) {
+function HeroSection({ clinicName, publicLogoSrc, banners = [], sistemaUrl, portales, slogan, sloganColor, nombreColor, nombreFontSize, logoSize }) {
   const [activeIdx, setActiveIdx] = useState(0)
   const [loadedByIdx, setLoadedByIdx] = useState({})
   const count = banners.length
@@ -57,7 +59,7 @@ function HeroSection({ clinicName, publicLogoSrc, banners = [], sistemaUrl, slog
               {slogan}
             </p>
           )}
-          <div className="mt-6 flex gap-3 justify-center md:justify-start">
+          <div className="mt-6 flex flex-wrap gap-3 justify-center md:justify-start">
             <Link
               to="/conocenos"
               className="px-6 py-3 rounded-full text-white font-semibold shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-300"
@@ -65,14 +67,14 @@ function HeroSection({ clinicName, publicLogoSrc, banners = [], sistemaUrl, slog
             >
               Conócenos
             </Link>
-            <a
-              href={sistemaUrl}
+            <AccesoMenu
+              sistemaUrl={sistemaUrl}
+              portales={portales}
+              align="left"
+              label={hayAccesosExternos(portales) ? 'Iniciar sesión' : 'Ingresar al Sistema'}
               className="px-6 py-3 rounded-full font-semibold shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-300 border-2"
               style={{ borderColor: 'var(--color-primary, #E85D8E)', color: 'var(--color-primary, #E85D8E)' }}
-              rel="noopener noreferrer"
-            >
-              Ingresar al Sistema
-            </a>
+            />
           </div>
         </div>
         {/* Right: banner images with crossfade */}
@@ -445,6 +447,7 @@ function ContactMapSection({ configuracion }) {
 /* ── Main Landing HomePage ── */
 export default function HomePageLanding({
   sistemaUrl,
+  portales,
   publicLogoSrc = `${import.meta.env.BASE_URL}2demayo.svg`,
   clinicName = 'Portal de Salud',
   configuracion,
@@ -487,6 +490,7 @@ export default function HomePageLanding({
         publicLogoSrc={publicLogoSrc}
         banners={heroBanners}
         sistemaUrl={sistemaUrl}
+        portales={portales}
         slogan={configuracion?.slogan}
         sloganColor={configuracion?.slogan_color}
         nombreColor={configuracion?.nombre_color}

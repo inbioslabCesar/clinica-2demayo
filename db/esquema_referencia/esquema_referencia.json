@@ -1,6 +1,6 @@
 {
     "formato": 1,
-    "generado_en": "2026-11-23 01:13",
+    "generado_en": "2026-11-24 14:46",
     "origen_motor": "8.4.3",
     "tablas": {
         "agenda_contrato": {
@@ -23653,6 +23653,529 @@
                     "columnas": [
                         {
                             "c": "id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "paciente_portal_accesos": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "paciente_id": {
+                    "orden": 2,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "pin_hash": {
+                    "orden": 3,
+                    "tipo": "varchar(255)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 4,
+                    "tipo": "enum('activo','inactivo')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "activo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "pin_generado_por": {
+                    "orden": 5,
+                    "tipo": "varchar(80)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "pin_generado_at": {
+                    "orden": 6,
+                    "tipo": "datetime",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "ultimo_login_at": {
+                    "orden": 7,
+                    "tipo": "datetime",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 8,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 9,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uk_paciente_portal_accesos_paciente": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "paciente_id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "paciente_portal_config": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "clave": {
+                    "orden": 2,
+                    "tipo": "varchar(60)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "valor": {
+                    "orden": 3,
+                    "tipo": "varchar(255)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": ""
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 4,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uk_paciente_portal_config_clave": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "clave",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "paciente_portal_eventos": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "bigint unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "paciente_id": {
+                    "orden": 2,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "accion": {
+                    "orden": 3,
+                    "tipo": "varchar(30)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "tipo": {
+                    "orden": 4,
+                    "tipo": "varchar(30)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "ref_id": {
+                    "orden": 5,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "actor": {
+                    "orden": 6,
+                    "tipo": "varchar(80)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "ip": {
+                    "orden": 7,
+                    "tipo": "varchar(45)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "detalle": {
+                    "orden": 8,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 9,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_paciente_portal_eventos_paciente": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "paciente_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "created_at",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "paciente_portal_liberaciones": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_unicode_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "paciente_id": {
+                    "orden": 2,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "tipo": {
+                    "orden": 3,
+                    "tipo": "varchar(30)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "ref_id": {
+                    "orden": 4,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "estado": {
+                    "orden": 5,
+                    "tipo": "enum('liberado','retenido')",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "motivo": {
+                    "orden": 6,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "usuario_nombre": {
+                    "orden": 7,
+                    "tipo": "varchar(80)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "created_at": {
+                    "orden": 8,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "updated_at": {
+                    "orden": 9,
+                    "tipo": "timestamp",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_paciente_portal_liberaciones_paciente": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "paciente_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uk_paciente_portal_liberaciones_doc": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "tipo",
+                            "sub": null
+                        },
+                        {
+                            "c": "ref_id",
                             "sub": null
                         }
                     ]

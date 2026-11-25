@@ -4,12 +4,13 @@ import { Icon } from "@fluentui/react";
 import { hasPermiso } from "../../config/recepcionPermisos";
 import SidebarSection from "./SidebarSection";
 import SidebarSaludOcupacional from "./SidebarSaludOcupacional";
+import EnlacePortalPaciente from "./EnlacePortalPaciente";
 
 export default function SidebarRecepcionista({ onClose, usuario }) {
   const [openSection, setOpenSection] = useState("finanzas");
   const can = (permiso) => hasPermiso(usuario, permiso);
   const showFinanzas = can("ver_contabilidad") || can("ver_gestion_tarifas") || can("ver_paquetes_perfiles") || can("ver_reabrir_caja") || can("ver_cotizaciones") || can("ver_contratos");
-  const showPacientes = can("ver_pacientes") || can("ver_lista_consultas") || can("ver_recordatorios_citas");
+  const showPacientes = can("ver_pacientes") || can("ver_lista_consultas") || can("ver_recordatorios_citas") || can("gestionar_portal_pacientes");
   const showPersonal = can("ver_medicos") || can("ver_panel_enfermeria") || can("ver_panel_laboratorio") || can("ver_modulo_quimico");
   const showInventario = can("ver_inventario_general") || can("ver_inventario_laboratorio");
   const showAdministracion = can("ver_usuarios") || can("ver_configuracion") || can("ver_plantillas_hc");
@@ -137,6 +138,7 @@ export default function SidebarRecepcionista({ onClose, usuario }) {
               <span>Recordatorios Citas</span>
             </Link>
           )}
+          <EnlacePortalPaciente can={can} onClose={onClose} />
         </SidebarSection>
       )}
 
