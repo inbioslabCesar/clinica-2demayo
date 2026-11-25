@@ -35,10 +35,34 @@ final class PermisoAnulacion {
     }
 
     /**
+     * Los permisos viven en la sesión PHP desde el login; si el administrador los cambia después,
+     * una sesión abierta quedaría con los permisos viejos. Se relee rol y permisos desde la BD.
+     */
+    public static function refrescarSesion(\mysqli $conn): void {
+        $id = (int)($_SESSION['usuario']['id'] ?? 0);
+        if ($id <= 0) {
+            return;
+        }
+        $stmt = $conn->prepare('SELECT rol, permisos FROM usuarios WHERE id = ? LIMIT 1');
+        if (!$stmt) {
+            return;
+        }
+        $stmt->bind_param('i', $id);
+        $stmt->execute();
+        $fila = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if ($fila) {
+            $_SESSION['usuario']['rol'] = $fila['rol'];
+            $_SESSION['usuario']['permisos'] = $fila['permisos'] ?? '[]';
+        }
+    }
+
+    /**
      * Sin el privilegio solo se puede tocar una cotización que aún no tiene ningún pago
      * (por ejemplo, cancelar una cita recién agendada antes de cobrarla).
      */
     public static function puedeSobreCotizacion(\mysqli $conn, int $cotizacionId): bool {
+        self::refrescarSesion($conn);
         if (self::permitido()) {
             return true;
         }

@@ -17,6 +17,10 @@ if (!$usuario || !in_array($rol, ['administrador', 'recepcionista'])) {
     exit;
 }
 require_once __DIR__ . '/modules/PermisoAnulacion.php';
+if (isset($mysqli) && $mysqli instanceof mysqli) {
+    PermisoAnulacion::refrescarSesion($mysqli);
+    $usuario = $_SESSION['usuario'];
+}
 if (!PermisoAnulacion::permitido($usuario)) {
     http_response_code(403);
     echo json_encode(['success' => false, 'error' => 'No tiene permiso para eliminar consumos ya cobrados. Solicítelo al administrador.']);
