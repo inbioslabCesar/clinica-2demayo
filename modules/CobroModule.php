@@ -4,6 +4,7 @@ require_once __DIR__ . '/AgendaMedicoRegla.php';
 require_once __DIR__ . '/EpisodioAtencionModule.php';
 require_once __DIR__ . '/ConsultaClinicaModule.php';
 require_once __DIR__ . '/OrdenesClinicasModule.php';
+require_once __DIR__ . '/ReevaluacionModule.php';
 // Módulo de Cobros: lógica principal para registrar cobros y detalles
 class CobroModule
 {
@@ -1583,6 +1584,14 @@ class CobroModule
             }
         }
 
+        // Reevaluaciones pendientes con hora fija ocupan el turno del médico.
+        foreach (rev_horas_ocupadas($conn, $medicoId, $fechaYmd) as $reevOcupada) {
+            $horaDb = self::normalizarHoraProgramadaAgenda($reevOcupada['hora'] ?? null);
+            if ($horaDb !== null) {
+                $ocupadas[$horaDb] = true;
+            }
+        }
+
         $slots = [];
         $slotMinutes = self::obtenerDuracionSlotMin($conn);
         if (self::tableExists($conn, 'disponibilidad_medicos')) {
@@ -1745,6 +1754,13 @@ class CobroModule
                     $maxMin = ($maxMin === null) ? $m : max($maxMin, $m);
                 }
                 $stmtA->close();
+            }
+        }
+
+        foreach (rev_horas_ocupadas($conn, $medicoId, $fechaYmd) as $reevOcupada) {
+            $m = self::toMinutesFromHm((string)self::normalizarHoraProgramadaAgenda($reevOcupada['hora'] ?? null));
+            if ($m !== null) {
+                $maxMin = ($maxMin === null) ? $m : max($maxMin, $m);
             }
         }
 
@@ -2182,7 +2198,10 @@ class CobroModule
                 }
             }
 
-            if ($choqueConsultas || $choqueAgenda) {
+            // Una reevaluación pendiente con hora fija ocupa el turno (la de la propia consulta no cuenta).
+            $choqueReevaluacion = rev_conflicto_reevaluacion($conn, $medicoId, $fecha, $hora, $consultaId) !== null;
+
+            if ($choqueConsultas || $choqueAgenda || $choqueReevaluacion) {
                 $esSlotMismaCotizacion = false;
                 if ($cotizacionId > 0
                     && $hora !== null

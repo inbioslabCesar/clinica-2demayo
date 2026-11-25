@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { authFetch } from "../utils/apiClient";
 import Swal from "sweetalert2";
 import QuickAccessNav from "../components/comunes/QuickAccessNav";
+import { REEVALUACION_BADGE_CLASSES, addDaysYmd, formatReevaluacionCuando, limaYmd } from "../utils/reevaluacion";
 
 const ESTADOS_GESTION = [
   { value: "", label: "Todos" },
@@ -82,6 +83,7 @@ function disponibilidadPagoLabel(cita) {
   const saldo = Number(cita?.saldo_pendiente || 0);
   const estado = String(cita?.cotizacion_estado || "").toLowerCase();
 
+  if (cita?.origen === "reevaluacion") return "Sin costo (control)";
   if (cotId <= 0) return "Sin orden";
   if (saldo > 0) return estado === "parcial" ? "Parcial" : "Falta cancelar";
   if (["pagado", "pagada", "control"].includes(estado)) return "Pagado";
@@ -94,6 +96,7 @@ function disponibilidadPagoBadge(cita) {
   const estado = String(cita?.cotizacion_estado || "").toLowerCase();
   const saldoRepetido = Boolean(cita?._saldo_repetido_cotizacion);
 
+  if (cita?.origen === "reevaluacion") return "border-emerald-300 bg-emerald-50 text-emerald-700";
   if (cotId <= 0) return "border-slate-300 bg-slate-100 text-slate-700";
   if (saldo > 0 && saldoRepetido) return "border-amber-300 bg-amber-50 text-amber-800";
   if (saldo > 0) return "border-rose-300 bg-rose-100 text-rose-700";
@@ -179,6 +182,10 @@ function consultaAtendidaEnHC(item) {
 
 function esRecordatorioFaltaCancelar(item) {
   return String(item?.recordatorio_tipo || "") === "falta_cancelar";
+}
+
+function esRecordatorioReevaluacion(item) {
+  return String(item?.recordatorio_tipo || "") === "reevaluacion";
 }
 
 function esRecordatorioAgendaServicio(item) {
@@ -718,6 +725,11 @@ function obtenerPrioridad(item) {
     return { nivel: "resuelto", etiqueta: "Resuelto", orden: 5, badge: "bg-emerald-100 text-emerald-700 border-emerald-200" };
   }
 
+  // Una reevaluación atrasada sigue abierta (ventana de 7 días): se prioriza como crítica.
+  if (esRecordatorioReevaluacion(item) && Number.isFinite(dias) && dias < 0) {
+    return { nivel: "critico", etiqueta: "Atrasada", orden: 0, badge: "bg-rose-100 text-rose-700 border-rose-200" };
+  }
+
   if (dias === 0) {
     return { nivel: "critico", etiqueta: "Critico", orden: 0, badge: "bg-rose-100 text-rose-700 border-rose-200" };
   }
@@ -863,10 +875,17 @@ export default function RecordatoriosCitasPage() {
 
         const citasParams = new URLSearchParams({ ...base, tipo_recordatorio: "citas" });
         const faltasParams = new URLSearchParams({ ...base, tipo_recordatorio: "falta_cancelar" });
+        const reevParams = new URLSearchParams({ ...base, tipo_recordatorio: "reevaluaciones" });
 
-        const [dataCitas, dataFaltas] = await Promise.all([
+        const [dataCitas, dataFaltas, dataReev] = await Promise.all([
           fetchJsonWithRetry(`api_recordatorios_citas.php?${citasParams.toString()}`, fetchOpts, { attempts: 3, baseDelayMs: 240 }),
           fetchJsonWithRetry(`api_recordatorios_citas.php?${faltasParams.toString()}`, fetchOpts, { attempts: 3, baseDelayMs: 240 }),
+          // Un fallo de reevaluaciones no debe vaciar citas ni faltas por cancelar.
+          fetchJsonWithRetry(`api_recordatorios_citas.php?${reevParams.toString()}`, fetchOpts, { attempts: 2, baseDelayMs: 240 })
+            .catch((err) => {
+              if (err?.name === "AbortError") throw err;
+              return { success: true, items: [], prioridad: {} };
+            }),
         ]);
         if (!esVigente()) return;
 
@@ -875,7 +894,8 @@ export default function RecordatoriosCitasPage() {
 
         const itemsCitas = Array.isArray(dataCitas.items) ? dataCitas.items : [];
         const itemsFaltas = Array.isArray(dataFaltas.items) ? dataFaltas.items : [];
-        const combinados = [...itemsCitas, ...itemsFaltas];
+        const itemsReev = Array.isArray(dataReev?.items) ? dataReev.items : [];
+        const combinados = [...itemsCitas, ...itemsFaltas, ...itemsReev];
 
         setItems(combinados);
         setTotalItems(combinados.length);
@@ -890,12 +910,12 @@ export default function RecordatoriosCitasPage() {
         });
 
         setPrioridadGlobal({
-          critico: Number(dataCitas?.prioridad?.critico || 0) + Number(dataFaltas?.prioridad?.critico || 0),
-          alto: Number(dataCitas?.prioridad?.alto || 0) + Number(dataFaltas?.prioridad?.alto || 0),
-          normal: Number(dataCitas?.prioridad?.normal || 0) + Number(dataFaltas?.prioridad?.normal || 0),
-          bajo: Number(dataCitas?.prioridad?.bajo || 0) + Number(dataFaltas?.prioridad?.bajo || 0),
-          atendido: Number(dataCitas?.prioridad?.atendido || 0) + Number(dataFaltas?.prioridad?.atendido || 0),
-          resuelto: Number(dataCitas?.prioridad?.resuelto || 0) + Number(dataFaltas?.prioridad?.resuelto || 0),
+          critico: Number(dataCitas?.prioridad?.critico || 0) + Number(dataFaltas?.prioridad?.critico || 0) + Number(dataReev?.prioridad?.critico || 0),
+          alto: Number(dataCitas?.prioridad?.alto || 0) + Number(dataFaltas?.prioridad?.alto || 0) + Number(dataReev?.prioridad?.alto || 0),
+          normal: Number(dataCitas?.prioridad?.normal || 0) + Number(dataFaltas?.prioridad?.normal || 0) + Number(dataReev?.prioridad?.normal || 0),
+          bajo: Number(dataCitas?.prioridad?.bajo || 0) + Number(dataFaltas?.prioridad?.bajo || 0) + Number(dataReev?.prioridad?.bajo || 0),
+          atendido: Number(dataCitas?.prioridad?.atendido || 0) + Number(dataFaltas?.prioridad?.atendido || 0) + Number(dataReev?.prioridad?.atendido || 0),
+          resuelto: Number(dataCitas?.prioridad?.resuelto || 0) + Number(dataFaltas?.prioridad?.resuelto || 0) + Number(dataReev?.prioridad?.resuelto || 0),
         });
 
         return;
@@ -1139,6 +1159,11 @@ export default function RecordatoriosCitasPage() {
     [items]
   );
 
+  const reevaluacionesAbiertas = useMemo(
+    () => items.filter((item) => esRecordatorioReevaluacion(item)).length,
+    [items]
+  );
+
   const metricas = useMemo(() => ({
     urgentes: Number(statsGlobal.urgentes || 0),
     hoy: Number(statsGlobal.hoy || 0),
@@ -1369,6 +1394,17 @@ export default function RecordatoriosCitasPage() {
     if (dias === 0) cuando = "el día de hoy";
     if (dias === 1) cuando = "mañana";
 
+    if (esRecordatorioReevaluacion(item)) {
+      const horaReev = horaTxt && Number(item?.reevaluacion_sin_hora_fija || 0) !== 1 ? ` a las ${horaTxt}` : "";
+      const medicoReev = medico && medico !== "-" ? ` con ${medico}` : "";
+      return [
+        remitente,
+        `Hola ${paciente},`,
+        `Le recordamos su reevaluación ${cuando}${horaReev}${medicoReev} para revisar su evolución y resultados.`,
+        "Por favor, confirmar su asistencia respondiendo a este mensaje.",
+        "Gracias.",
+      ].join("\n");
+    }
     const citaLinea = horaTxt
       ? `Le recordamos su cita ${cuando} a las ${horaTxt}`
       : `Le recordamos su cita ${cuando}`;
@@ -1421,6 +1457,8 @@ export default function RecordatoriosCitasPage() {
 
     if (esRecordatorioAgendaServicio(item)) {
       await guardarGestionAgenda(item, "contactado");
+    } else if (esRecordatorioReevaluacion(item)) {
+      await guardarGestionReevaluacion(item, "contactado");
     } else {
       await guardarGestion(item, "contactado");
     }
@@ -1713,6 +1751,147 @@ export default function RecordatoriosCitasPage() {
     if (!key) return;
     const filtro = String(filtroTipo || "todos");
     setDetalleTipoFiltroRows((prev) => ({ ...prev, [key]: filtro }));
+  };
+
+  const postReevaluacion = async (payload) => {
+    const res = await authFetch("api_reevaluaciones.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!data?.success) {
+      throw new Error(data?.error || "No se pudo completar la acción sobre la reevaluación");
+    }
+    return data.reevaluacion;
+  };
+
+  // Ejecuta una acción sobre la reevaluación y refresca la lista (el servidor es la fuente de verdad).
+  const ejecutarAccionReevaluacion = async (item, payload, mensajeOk) => {
+    setSavingId(`rev-${item.id}`);
+    setMensaje("");
+    setError("");
+    try {
+      await postReevaluacion({ id: item.id, ...payload });
+      setMensaje(mensajeOk);
+      await cargar();
+      return true;
+    } catch (err) {
+      setError(err.message || "No se pudo completar la acción");
+      return false;
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const guardarGestionReevaluacion = async (item, estado) => {
+    const requiereProximo = estado === "no_contesta" || estado === "reprogramar";
+    const modal = await Swal.fire({
+      title: `Registrar gestion: ${estadoLabel(estado)}`,
+      html: `
+        <div style="display:flex;flex-direction:column;gap:10px;text-align:left;">
+          <label style="font-size:12px;font-weight:600;color:#334155;">Observacion</label>
+          <textarea id="rc_obs_rev" class="swal2-textarea" style="margin:0;width:100%;" placeholder="Detalle breve de la gestion"></textarea>
+          ${requiereProximo ? `
+            <label style="font-size:12px;font-weight:600;color:#334155;">Proximo contacto (opcional)</label>
+            <input id="rc_next_rev" type="datetime-local" class="swal2-input" style="margin:0;width:100%;" />
+          ` : ""}
+        </div>
+      `,
+      didOpen: () => {
+        const obsEl = document.getElementById("rc_obs_rev");
+        if (obsEl) obsEl.value = String(item.observacion || "");
+      },
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: "Guardar",
+      cancelButtonText: "Cancelar",
+      preConfirm: () => ({
+        observacion: String(document.getElementById("rc_obs_rev")?.value || "").trim(),
+        proximo: String(document.getElementById("rc_next_rev")?.value || "").trim(),
+      }),
+    });
+    if (!modal.isConfirmed) return false;
+
+    return ejecutarAccionReevaluacion(
+      item,
+      { accion: "gestion", estado, observacion: modal.value.observacion, fecha_proximo_contacto: modal.value.proximo },
+      "Gestion guardada correctamente."
+    );
+  };
+
+  const reprogramarReevaluacion = async (item) => {
+    const hoy = limaYmd();
+    const maxFecha = String(item?.reevaluacion_fecha_limite || addDaysYmd(hoy, 7)).slice(0, 10);
+    const fechaActual = String(item?.fecha || "").slice(0, 10);
+    const horaActual = Number(item?.reevaluacion_sin_hora_fija || 0) === 1 ? "" : String(item?.hora || "").slice(0, 5);
+
+    const modal = await Swal.fire({
+      title: "Reprogramar reevaluación",
+      html: `
+        <div style="display:flex;flex-direction:column;gap:10px;text-align:left;">
+          <p style="font-size:12px;color:#475569;margin:0;">Hasta el ${maxFecha} (la ventana de reevaluación no se extiende). Para un plazo mayor, el médico debe indicar una próxima cita.</p>
+          <label style="font-size:12px;font-weight:600;color:#334155;">Fecha</label>
+          <input id="rc_rev_fecha" type="date" class="swal2-input" style="margin:0;width:100%;" min="${hoy}" max="${maxFecha}" value="${fechaActual}" />
+          <label style="font-size:12px;font-weight:600;color:#334155;">Hora</label>
+          <input id="rc_rev_hora" type="time" class="swal2-input" style="margin:0;width:100%;" value="${horaActual}" />
+          <label style="font-size:12px;color:#334155;display:flex;gap:6px;align-items:center;">
+            <input id="rc_rev_sinhora" type="checkbox" ${horaActual === "" ? "checked" : ""} /> Sin hora fija (durante el día)
+          </label>
+        </div>
+      `,
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: "Reprogramar",
+      cancelButtonText: "Cancelar",
+      preConfirm: () => {
+        const fecha = String(document.getElementById("rc_rev_fecha")?.value || "").trim();
+        const hora = String(document.getElementById("rc_rev_hora")?.value || "").trim();
+        const sinHora = Boolean(document.getElementById("rc_rev_sinhora")?.checked) || hora === "";
+        if (!fecha) {
+          Swal.showValidationMessage("Indique la fecha");
+          return false;
+        }
+        if (fecha < hoy || fecha > maxFecha) {
+          Swal.showValidationMessage(`La fecha debe estar entre ${hoy} y ${maxFecha}`);
+          return false;
+        }
+        return { fecha, hora: sinHora ? "" : hora, sin_hora_fija: sinHora };
+      },
+    });
+    if (!modal.isConfirmed) return false;
+
+    return ejecutarAccionReevaluacion(item, { accion: "reprogramar", ...modal.value }, "Reevaluación reprogramada.");
+  };
+
+  const cancelarReevaluacion = async (item) => {
+    const modal = await Swal.fire({
+      title: "Cancelar reevaluación",
+      input: "textarea",
+      inputLabel: "Motivo (obligatorio)",
+      inputPlaceholder: "Ej: el paciente indicó que no podrá asistir",
+      showCancelButton: true,
+      confirmButtonText: "Cancelar reevaluación",
+      cancelButtonText: "Volver",
+      inputValidator: (value) => (String(value || "").trim().length < 3 ? "Indique el motivo" : undefined),
+    });
+    if (!modal.isConfirmed) return false;
+
+    return ejecutarAccionReevaluacion(item, { accion: "cancelar", motivo: String(modal.value || "").trim() }, "Reevaluación cancelada.");
+  };
+
+  const marcarNoAsistioReevaluacion = async (item) => {
+    const modal = await Swal.fire({
+      title: "¿El paciente no asistió?",
+      text: "La reevaluación se cerrará como «No asistió». El médico podrá indicar una nueva.",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Sí, no asistió",
+      cancelButtonText: "Volver",
+    });
+    if (!modal.isConfirmed) return false;
+
+    return ejecutarAccionReevaluacion(item, { accion: "no_asistio" }, "Reevaluación cerrada: no asistió.");
   };
 
   const guardarGestion = async (item, estado) => {
@@ -2532,7 +2711,9 @@ export default function RecordatoriosCitasPage() {
             <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700">
               {tipoRecordatorio === "citas"
                 ? `Urgentes (hoy/manana sin confirmar): ${pendientesUrgentes}`
-                : `Faltas pendientes por cobrar: ${faltasPendientes}`}
+                : tipoRecordatorio === "reevaluaciones"
+                  ? `Reevaluaciones abiertas: ${reevaluacionesAbiertas}`
+                  : `Faltas pendientes por cobrar: ${faltasPendientes}`}
             </div>
           </div>
 
@@ -2549,6 +2730,7 @@ export default function RecordatoriosCitasPage() {
                 <option value="todos">Todos</option>
                 <option value="citas">Citas</option>
                 <option value="falta_cancelar">Falta cancelar</option>
+                <option value="reevaluaciones">Reevaluaciones</option>
               </select>
             </div>
 
@@ -2965,7 +3147,11 @@ export default function RecordatoriosCitasPage() {
                                         )}
                                       </div>
                                     </td>
-                                    <td className="p-2 text-slate-600">{cita.origen === "agenda_servicio" ? "Agenda" : "Consulta"}</td>
+                                    <td className="p-2 text-slate-600">
+                                      {cita.origen === "agenda_servicio" ? "Agenda" : cita.origen === "reevaluacion" ? (
+                                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${REEVALUACION_BADGE_CLASSES}`}>🔄 Reevaluación</span>
+                                      ) : "Consulta"}
+                                    </td>
                                     <td className="p-2 text-slate-600">{cita.estado || "-"}</td>
                                     <td className="p-2">
                                       <span
@@ -3121,6 +3307,8 @@ export default function RecordatoriosCitasPage() {
                   const diasRestantes = item.diasRestantes;
                   const esHcProxima = esConsultaHcProxima(item);
                   const esFaltaCancelar = esRecordatorioFaltaCancelar(item);
+                  const esReevaluacion = esRecordatorioReevaluacion(item);
+                  const reevSavingKey = `rev-${Number(item?.id || 0)}`;
                   const esControl = Number(item?.es_control || 0) === 1;
                   const esTipoProgramada = String(item?.tipo_consulta || "").toLowerCase() === "programada";
                   const mostrarBadgeTipo = !(esHcProxima && esTipoProgramada);
@@ -3165,7 +3353,9 @@ export default function RecordatoriosCitasPage() {
                   const colaSavingKey = `cola-${String(item?._rowKey || item?.id || "")}`;
                   const referenciaOrigen = String(item?.origen_consulta || "") === "agenda_servicio"
                     ? `Ref agenda #${Number(item?.id || 0)}`
-                    : `Ref consulta #${Number(item?.id || 0)}`;
+                    : esReevaluacion
+                      ? `Ref reevaluación #${Number(item?.id || 0)} (consulta #${Number(item?.consulta_origen_id || 0)})`
+                      : `Ref consulta #${Number(item?.id || 0)}`;
                   return (
                     <Fragment key={item._rowKey}>
                       <tr
@@ -3179,17 +3369,27 @@ export default function RecordatoriosCitasPage() {
                               <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
                                 Falta cancelar
                               </span>
+                            ) : esReevaluacion ? (
+                              <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${REEVALUACION_BADGE_CLASSES}`}>
+                                🔄 Reevaluación
+                              </span>
                             ) : (
                               <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
                                 Cita
                               </span>
                             )}
                           </div>
-                          <div className="text-xs text-slate-600">{formatFechaHora(item.fecha, item.hora)}</div>
+                          <div className="text-xs text-slate-600">
+                            {esReevaluacion
+                              ? formatReevaluacionCuando(item.fecha, item.hora, Number(item?.reevaluacion_sin_hora_fija || 0) === 1)
+                              : formatFechaHora(item.fecha, item.hora)}
+                          </div>
                           <div className="text-xs font-semibold text-rose-700">
                             {esFaltaCancelar
                               ? "Pendiente cobro"
-                              : diasRestantes === 0
+                              : esReevaluacion && Number.isFinite(diasRestantes) && diasRestantes < 0
+                                ? `Atrasada ${Math.abs(diasRestantes)} d`
+                                : diasRestantes === 0
                                 ? "Hoy"
                                 : diasRestantes === 1
                                   ? "Manana"
@@ -3224,9 +3424,15 @@ export default function RecordatoriosCitasPage() {
                           </div>
                         </td>
                         <td className="p-3">
-                          <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${tipoServicioBadge(item)}`}>
+                          <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${esReevaluacion ? REEVALUACION_BADGE_CLASSES : tipoServicioBadge(item)}`}>
                             {tipoServicioLabel(item)}
                           </span>
+                          {esReevaluacion && (
+                            <div className="mt-1 text-[11px] text-slate-500">
+                              Misma atención{item?.consulta_origen_fecha ? ` del ${formatFecha(item.consulta_origen_fecha)}` : ""}
+                              {item?.reevaluacion_motivo ? ` · ${item.reevaluacion_motivo}` : ""}
+                            </div>
+                          )}
                           {String(item?.origen_consulta || "") === "agenda_servicio" && (
                             <div className="mt-1 text-[11px] text-slate-500">Agenda servicio</div>
                           )}
@@ -3236,15 +3442,23 @@ export default function RecordatoriosCitasPage() {
                             </div>
                           )}
                           <div className="mt-1">
-                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${pagoServicioBadge(item)}`}>
-                              {pagoServicioLabel(item)}
-                            </span>
+                            {esReevaluacion ? (
+                              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                                Sin costo (control)
+                              </span>
+                            ) : (
+                              <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${pagoServicioBadge(item)}`}>
+                                {pagoServicioLabel(item)}
+                              </span>
+                            )}
                           </div>
-                          <div className="mt-1">
-                            <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${origenFinancieroBadge(item)}`}>
-                              {origenFinancieroLabel(item)}
-                            </span>
-                          </div>
+                          {!esReevaluacion && (
+                            <div className="mt-1">
+                              <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${origenFinancieroBadge(item)}`}>
+                                {origenFinancieroLabel(item)}
+                              </span>
+                            </div>
+                          )}
                         </td>
                         <td className="p-3">
                           {cotizacionId > 0 ? (
@@ -3274,6 +3488,7 @@ export default function RecordatoriosCitasPage() {
                           <div className="mt-1 text-xs text-slate-500">
                             Prox: {item.fecha_proximo_contacto ? item.fecha_proximo_contacto.replace("T", " ") : "-"}
                           </div>
+                          {!esReevaluacion && (
                           <div className="mt-1 flex flex-wrap gap-1">
                             <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${colaEstadoBadge(colaEstado)}`}>
                               {colaCorrelativo > 0 ? `N-${colaCorrelativo} · ` : ""}{colaEstadoLabel(colaEstado)}
@@ -3287,6 +3502,7 @@ export default function RecordatoriosCitasPage() {
                               {colaPrioridadLabel(colaPrioridad)}
                             </span>
                           </div>
+                          )}
                           {esFaltaCancelar && Number(item?.saldo_pendiente || 0) > 0 && (
                             <div className="mt-1">
                               <span className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">
@@ -3311,6 +3527,66 @@ export default function RecordatoriosCitasPage() {
                               ) : (
                                 <span className="text-xs text-slate-500">Sin cotización vinculada</span>
                               )
+                            ) : esReevaluacion ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => enviarRecordatorioWhatsApp(item)}
+                                  disabled={!String(item?.paciente_telefono || "").trim() || savingId === reevSavingKey}
+                                  className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                  title={!String(item?.paciente_telefono || "").trim() ? "Paciente sin teléfono" : "Enviar recordatorio por WhatsApp"}
+                                >
+                                  WhatsApp
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => guardarGestionReevaluacion(item, "contactado")}
+                                  disabled={savingId === reevSavingKey}
+                                  className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-100"
+                                >
+                                  Llamado
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => guardarGestionReevaluacion(item, "confirmado")}
+                                  disabled={savingId === reevSavingKey}
+                                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                >
+                                  Confirmo
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => guardarGestionReevaluacion(item, "no_contesta")}
+                                  disabled={savingId === reevSavingKey}
+                                  className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                                >
+                                  No contesta
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => reprogramarReevaluacion(item)}
+                                  disabled={savingId === reevSavingKey}
+                                  className="rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1 text-xs font-semibold text-fuchsia-700 hover:bg-fuchsia-100"
+                                >
+                                  Reprogramar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => marcarNoAsistioReevaluacion(item)}
+                                  disabled={savingId === reevSavingKey}
+                                  className="rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                                >
+                                  No asistió
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => cancelarReevaluacion(item)}
+                                  disabled={savingId === reevSavingKey}
+                                  className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                                >
+                                  Cancelar
+                                </button>
+                              </>
                             ) : (
                               <>
                                 <button
@@ -3432,7 +3708,7 @@ export default function RecordatoriosCitasPage() {
                               </>
                             )}
 
-                            {!esFaltaCancelar && (
+                            {!esFaltaCancelar && !esReevaluacion && (
                               <>
                                 <button
                                   type="button"

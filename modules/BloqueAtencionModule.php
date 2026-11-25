@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/CorrelativoOperativoModule.php';
+require_once __DIR__ . '/ReevaluacionModule.php';
 
 if (!function_exists('bloque_atencion_table_exists')) {
     function bloque_atencion_table_exists($conn, $table)
@@ -715,6 +716,11 @@ if (!function_exists('bloque_atencion_existe_ocupado_en_hora')) {
                     return true;
                 }
             }
+        }
+
+        // Una reevaluación pendiente con hora fija también ocupa ese turno.
+        if (rev_conflicto_reevaluacion($conn, (int)$medicoId, (string)$fechaYmd, (string)$horaHms) !== null) {
+            return true;
         }
 
         return false;

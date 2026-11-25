@@ -16,6 +16,8 @@ import ImpresionRecetaMedicamentos from "../components/print/ImpresionRecetaMedi
 import TriageForm from "../components/enfermero/TriageForm";
 import { usePrintHistoriaClinica, usePrintLaboratorio, usePrintServicios, usePrintInformeProcedimiento, usePrintReceta } from "../hooks/usePrint";
 import { formatColegiatura, formatProfesionalName } from "../utils/profesionalDisplay";
+import ReevaluacionHcCard from "../components/reevaluacion/ReevaluacionHcCard";
+import { DEFAULT_REEVALUACION, buildReevaluacionForm, formatReevaluacionCuando } from "../utils/reevaluacion";
 
 const hcTemplateFlag = String(import.meta.env.VITE_HC_TEMPLATE_ENGINE_READ || "").toLowerCase();
 const HC_TEMPLATE_ENGINE_READ = hcTemplateFlag === "" || ["1", "true", "yes", "on"].includes(hcTemplateFlag);
@@ -27,7 +29,7 @@ const DEFAULT_PROXIMA_CITA = {
   consulta_id: null,
   es_control: false,
 };
-const HC_PREV_EXCLUDED_FIELDS = new Set(["tratamiento", "receta", "diagnosticos", "template", "proxima_cita"]);
+const HC_PREV_EXCLUDED_FIELDS = new Set(["tratamiento", "receta", "diagnosticos", "template", "proxima_cita", "reevaluacion"]);
 const HC_PREV_EXCLUDED_SECTIONS = new Set(["plan", "tratamiento", "receta"]);
 const HC_PREVIAS_CACHE_TTL_MS = 5 * 60 * 1000;
 const HC_PREVIAS_UI_STORAGE_PREFIX = "hc_previas_ui_v1";
@@ -208,6 +210,10 @@ function normalizeHistoriaData(rawDatos) {
     proxima_cita: {
       ...DEFAULT_PROXIMA_CITA,
       ...(rawProxima && typeof rawProxima === "object" ? rawProxima : {}),
+    },
+    reevaluacion: {
+      ...DEFAULT_REEVALUACION,
+      ...(source.reevaluacion && typeof source.reevaluacion === "object" ? source.reevaluacion : {}),
     },
   };
 }
@@ -733,7 +739,9 @@ function HistoriaClinicaPage() {
     recomendaciones: "",
     receta: [],
     proxima_cita: { ...DEFAULT_PROXIMA_CITA },
+    reevaluacion: { ...DEFAULT_REEVALUACION },
   });
+  const [reevaluacionServidor, setReevaluacionServidor] = useState(null);
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState("");
   const [proximaDisponibilidadLoading, setProximaDisponibilidadLoading] = useState(false);
@@ -858,6 +866,9 @@ function HistoriaClinicaPage() {
         if (!readOnly) {
           fromApiHc = enforceManualProximaSelection(fromApiHc);
         }
+        // La reevaluación vigente se toma de la BD (fuente de verdad), no del JSON guardado en la HC.
+        fromApiHc = { ...fromApiHc, reevaluacion: buildReevaluacionForm(data?.reevaluacion) };
+        setReevaluacionServidor(data?.reevaluacion || null);
         const fromApiDiagnosticos = Array.isArray(data?.datos?.diagnosticos) ? data.datos.diagnosticos : [];
         const apiSnapshot = buildHcSnapshot({ hc: fromApiHc, diagnosticos: fromApiDiagnosticos });
         setServerSnapshot(apiSnapshot);
@@ -3193,6 +3204,12 @@ function HistoriaClinicaPage() {
               setMsg("Para programar próxima cita debes indicar fecha y hora.");
               return;
             }
+            const reevaluacionForm = { ...DEFAULT_REEVALUACION, ...(hc.reevaluacion || {}) };
+            const reevaluacionBloqueada = Number(reevaluacionServidor?.abierta) === 1 && reevaluacionServidor?.estado !== "pendiente";
+            if (reevaluacionForm.programar && !reevaluacionBloqueada && !reevaluacionForm.fecha) {
+              setMsg("Para indicar una reevaluación debes elegir la fecha.");
+              return;
+            }
 
             setGuardando(true);
             setMsg("");
@@ -3207,6 +3224,22 @@ function HistoriaClinicaPage() {
               }
               if (!proxima.programar) {
                 delete datos.proxima_cita;
+              }
+              // Reevaluación: se envía solo si se programa, o si se desmarca una pendiente ya guardada.
+              if (reevaluacionForm.programar && !reevaluacionBloqueada) {
+                datos.reevaluacion = {
+                  programar: true,
+                  reevaluacion_id: reevaluacionForm.reevaluacion_id || null,
+                  fecha: reevaluacionForm.fecha,
+                  hora: reevaluacionForm.sin_hora_fija ? "" : reevaluacionForm.hora,
+                  sin_hora_fija: Boolean(reevaluacionForm.sin_hora_fija),
+                  tipo_motivo: reevaluacionForm.tipo_motivo,
+                  motivo: reevaluacionForm.motivo,
+                };
+              } else if (!reevaluacionForm.programar && Number(reevaluacionForm.reevaluacion_id || 0) > 0 && !reevaluacionBloqueada) {
+                datos.reevaluacion = { programar: false, reevaluacion_id: reevaluacionForm.reevaluacion_id };
+              } else {
+                delete datos.reevaluacion;
               }
               // Incluir información de la plantilla para mantener el diseño al imprimir
               if (hcTemplateMeta?.id) {
@@ -3242,7 +3275,25 @@ function HistoriaClinicaPage() {
                   }
                 }
                 setBloqueoGuardadoHasta(Date.now() + 2500);
-                setServerSnapshot(currentSnapshot);
+
+                // Reevaluación: refleja lo guardado en BD y avisa si no se pudo registrar (la HC ya quedó guardada).
+                const reevResultado = data.reevaluacion || null;
+                let snapshotGuardado = currentSnapshot;
+                if (reevResultado?.success && reevResultado.accion !== "bloqueada" && reevResultado.accion !== "sin_cambios") {
+                  const filaReev = reevResultado.reevaluacion || null;
+                  const hcConReev = { ...hc, reevaluacion: buildReevaluacionForm(filaReev) };
+                  setReevaluacionServidor(filaReev);
+                  setHc(hcConReev);
+                  snapshotGuardado = buildHcSnapshot({ hc: hcConReev, diagnosticos });
+                  if (reevResultado.accion === "creada" || reevResultado.accion === "actualizada") {
+                    successMsg += ` Reevaluación indicada para ${formatReevaluacionCuando(filaReev?.fecha_sugerida, filaReev?.hora_sugerida, filaReev?.sin_hora_fija)}.`;
+                  } else if (reevResultado.accion === "cancelada") {
+                    successMsg += " Reevaluación retirada.";
+                  }
+                } else if (reevResultado && reevResultado.success === false) {
+                  successMsg += ` ATENCIÓN: no se pudo registrar la reevaluación (${reevResultado.error || "error desconocido"}). Revise e inténtelo de nuevo.`;
+                }
+                setServerSnapshot(snapshotGuardado);
                 clearDraft();
                 setMensajeModalGuardado(successMsg);
                 setMostrarModalGuardado(true);
@@ -3541,6 +3592,14 @@ function HistoriaClinicaPage() {
               </>
             )}
           </div>
+          <ReevaluacionHcCard
+            value={hc.reevaluacion}
+            onChange={(next) => setHc((current) => ({ ...current, reevaluacion: next }))}
+            servidor={reevaluacionServidor}
+            readOnly={readOnly}
+            medicoId={proximaMedicoId}
+            consultaId={Number(consultaId || 0)}
+          />
           <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg p-6 border-2 border-indigo-200">
             <div className="mb-5 flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
               <div className="w-8 h-8 rounded-full flex items-center justify-center" style={brandActionStyle}>

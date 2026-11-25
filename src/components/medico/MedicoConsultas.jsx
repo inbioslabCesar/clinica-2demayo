@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { authFetch } from "../../utils/apiClient";
+import ReevaluacionBadge from "../reevaluacion/ReevaluacionBadge";
 
 function getTodayYmdLocal() {
   const now = new Date();
@@ -67,6 +68,8 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
   const [filtroEstado, setFiltroEstado] = useState("activas");
   const [filtroPago, setFiltroPago] = useState("solo_pagadas");
   const [filtroSemaforo, setFiltroSemaforo] = useState("todas");
+  const [filtroTipoAtencion, setFiltroTipoAtencion] = useState("todas");
+  const modoReevaluaciones = filtroTipoAtencion === "reevaluaciones";
 
   const formatMoney = (value) => {
     const n = Number(value || 0);
@@ -353,6 +356,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
       if (filtroEstado) params.set('estado_panel', filtroEstado);
       if (filtroPago) params.set('filtro_pago_panel', filtroPago);
       if (filtroSemaforo) params.set('semaforo_panel', filtroSemaforo);
+      if (filtroTipoAtencion === 'reevaluaciones') params.set('tipo_atencion_panel', 'reevaluaciones');
 
       const response = await authFetch(`api_consultas.php?${params.toString()}`, { signal });
       const data = await response.json();
@@ -417,7 +421,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     } finally {
       setLoading(false);
     }
-  }, [busqueda, fechaDesde, fechaHasta, filtroEstado, filtroPago, filtroSemaforo, medicoId, page, rowsPerPage]);
+  }, [busqueda, fechaDesde, fechaHasta, filtroEstado, filtroPago, filtroSemaforo, filtroTipoAtencion, medicoId, page, rowsPerPage]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1241,7 +1245,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
         <div className="bg-white/80 backdrop-blur-sm rounded-xl sm:rounded-2xl shadow-xl p-3 sm:p-4 mb-4 sm:mb-5 border border-white/50">
           <div className="mb-3 sm:mb-4">
             <h3 className="text-sm sm:text-base font-semibold text-gray-800 mb-2">Lista de consultas</h3>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3">
               <div className="rounded-xl border border-sky-200 bg-gradient-to-br from-sky-50 to-blue-100 px-3 py-2">
                 <div className="text-[11px] sm:text-xs font-semibold text-sky-700 uppercase tracking-wide">Total</div>
                 <div className="text-xl sm:text-2xl font-extrabold text-sky-900 leading-tight">{Number(stats.total || 0)}</div>
@@ -1258,6 +1262,18 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                 <div className="text-[11px] sm:text-xs font-semibold text-slate-700 uppercase tracking-wide">Excluidas/Canceladas</div>
                 <div className="text-xl sm:text-2xl font-extrabold text-slate-900 leading-tight">{Number(stats.excluidas_canceladas || 0)}</div>
               </div>
+              <button
+                type="button"
+                onClick={() => { setFiltroTipoAtencion(modoReevaluaciones ? "todas" : "reevaluaciones"); setPage(1); }}
+                className={`text-left rounded-xl border px-3 py-2 bg-gradient-to-br from-violet-50 to-fuchsia-100 transition-all ${modoReevaluaciones ? "border-violet-500 ring-2 ring-violet-300" : "border-violet-200 hover:border-violet-400"}`}
+                title="Ver solo pacientes con reevaluación pendiente"
+              >
+                <div className="text-[11px] sm:text-xs font-semibold text-violet-700 uppercase tracking-wide">🔄 Reevaluaciones</div>
+                <div className="text-xl sm:text-2xl font-extrabold text-violet-900 leading-tight">{Number(stats.reevaluaciones_abiertas || 0)}</div>
+                <div className="text-[11px] text-violet-700">
+                  Hoy: {Number(stats.reevaluaciones_hoy || 0)} · Atrasadas: {Number(stats.reevaluaciones_atrasadas || 0)}
+                </div>
+              </button>
             </div>
           </div>
 
@@ -1388,10 +1404,27 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
               <option value="proxima">Solo Próxima</option>
             </select>
           </div>
+
+          <div>
+            <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1 sm:mb-2">🔄 Tipo de atención</label>
+            <select
+              value={filtroTipoAtencion}
+              onChange={(e) => { setFiltroTipoAtencion(e.target.value); setPage(1); }}
+              className="w-full px-3 sm:px-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:border-transparent transition-all duration-200 bg-white/80"
+            >
+              <option value="todas">Todas</option>
+              <option value="reevaluaciones">Reevaluaciones pendientes</option>
+            </select>
+            {modoReevaluaciones && (
+              <p className="mt-1 text-[11px] text-violet-700">
+                Se muestran las reevaluaciones abiertas (máx. 7 días), sin importar estado, pago, semáforo ni fechas.
+              </p>
+            )}
+          </div>
         </div>
         
         {/* Botón limpiar filtros */}
-        {(busqueda || fechaDesde || fechaHasta) && (
+        {(busqueda || fechaDesde || fechaHasta || modoReevaluaciones) && (
           <div className="mt-2 sm:mt-3 flex justify-center sm:justify-end">
             <button 
               onClick={() => {
@@ -1400,6 +1433,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                 setFechaDesde(hoy);
                 setFechaHasta(hoy);
                 setFiltroSemaforo('todas');
+                setFiltroTipoAtencion('todas');
                 setPage(1);
               }}
               className="inline-flex items-center gap-1 sm:gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-all duration-200 hover:scale-105 text-sm"
@@ -1605,6 +1639,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                                     {contratoMeta.icon} {contratoMeta.label}
                                   </span>
                                 )}
+                                <ReevaluacionBadge consulta={consulta} />
                               </div>
                             </div>
                           </div>
@@ -1916,6 +1951,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
                           {contratoMeta.icon} {contratoMeta.label}
                         </span>
                       )}
+                      <ReevaluacionBadge consulta={consulta} />
                     </p>
                   </div>
                 </div>

@@ -6,6 +6,7 @@ if (!defined('SKIP_PDO_INIT')) {
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/AgendaMedicoRegla.php';
 require_once __DIR__ . '/modules/EpisodioAtencionModule.php';
+require_once __DIR__ . '/modules/ReevaluacionModule.php';
 
 function rc_require_session_roles(array $rolesPermitidos) {
     if (!isset($_SESSION['usuario']) || !is_array($_SESSION['usuario'])) {
@@ -486,6 +487,9 @@ function rc_parse_tipo_recordatorio($value) {
     if ($tipo === 'falta_cancelar') {
         return 'falta_cancelar';
     }
+    if ($tipo === 'reevaluaciones') {
+        return 'reevaluaciones';
+    }
     return 'citas';
 }
 
@@ -849,6 +853,11 @@ function rc_listar_horas_ocupadas_medico_fecha($conn, $medicoId, $fechaYmd, $cot
             }
             $stmtAgenda->close();
         }
+    }
+
+    // Reevaluaciones pendientes con hora fija: ocupan el turno aunque aún no tengan consulta.
+    foreach (rev_horas_ocupadas($conn, $medicoId, $fechaYmd) as $reev) {
+        $registrar($reev['hora'] ?? '', $reev['paciente'] ?? '', 'Reevaluación');
     }
 
     $lista = array_values($ocupadas);
@@ -1953,6 +1962,26 @@ if ($method === 'GET') {
             }
         }
 
+        // Reevaluaciones pendientes con hora fija: ocupan el turno aunque aún no tengan consulta.
+        foreach (rev_horas_ocupadas($conn, $medicoId, $fecha) as $reev) {
+            $citas[] = [
+                'id' => (int)$reev['id'],
+                'hora' => (string)$reev['hora'],
+                'paciente_id' => (int)$reev['paciente_id'],
+                'paciente_nombre' => (string)$reev['paciente'],
+                'servicio' => 'Reevaluación',
+                'origen' => 'reevaluacion',
+                'estado' => 'pendiente',
+                'cotizacion_id' => null,
+                'cotizacion_grupo_id' => null,
+                'consulta_id_ref' => (int)$reev['consulta_origen_id'],
+                'cotizacion_estado' => null,
+                'saldo_pendiente' => null,
+                'es_adicional_dinamico' => 0,
+                'referencia' => 'Reevaluación #' . (int)$reev['id'],
+            ];
+        }
+
         rc_sort_citas_por_hora($citas);
 
         $horasOcupadas = [];
@@ -2028,6 +2057,73 @@ if ($method === 'GET') {
     $joinRasAgenda = $hasRecordatoriosAgendaServicios
         ? 'LEFT JOIN recordatorios_agenda_servicios ras ON ras.cotizacion_id = a.cotizacion_id'
         : '';
+
+    if ($tipoRecordatorio === 'reevaluaciones') {
+        // Reevaluaciones abiertas (continuación de la misma atención). Su ventana máxima es de 7 días,
+        // por eso no aplica el horizonte "dias". Recepción gestiona contacto y fecha, no datos clínicos.
+        $disponibleRev = rev_disponible($conn);
+        $listaRev = rev_listar($conn, [
+            'abiertas' => true,
+            'estado_gestion' => $estadoGestion,
+            'busqueda' => $busqueda,
+            'paciente_id' => $pacienteIdFiltro,
+        ]);
+
+        $hoyRev = date('Y-m-d');
+        $mananaRev = date('Y-m-d', strtotime('+1 day'));
+        $statsRev = ['urgentes' => 0, 'hoy' => 0, 'sin_telefono' => 0, 'confirmadas' => 0, 'atendidas' => 0];
+        $prioridadRev = ['critico' => 0, 'alto' => 0, 'normal' => 0, 'bajo' => 0, 'atendido' => 0, 'resuelto' => 0];
+        $itemsRev = [];
+        foreach ($listaRev['items'] as $filaRev) {
+            $itemRev = rev_item_recordatorio($filaRev);
+            $itemsRev[] = $itemRev;
+
+            $fechaRev = (string)$itemRev['fecha'];
+            $gestionRev = (string)$itemRev['estado_gestion'];
+            $sinGestionRev = in_array($gestionRev, ['pendiente', 'no_contesta'], true);
+            if ($fechaRev === $hoyRev) $statsRev['hoy']++;
+            if ($fechaRev <= $mananaRev && $sinGestionRev) $statsRev['urgentes']++;
+            if (trim((string)$itemRev['paciente_telefono']) === '') $statsRev['sin_telefono']++;
+            if ($gestionRev === 'confirmado') $statsRev['confirmadas']++;
+
+            if ($gestionRev === 'confirmado') {
+                $prioridadRev['resuelto']++;
+            } elseif ($fechaRev <= $hoyRev) {
+                $prioridadRev['critico']++;
+            } elseif ($fechaRev <= date('Y-m-d', strtotime('+3 day'))) {
+                $prioridadRev['alto']++;
+            } else {
+                $prioridadRev['normal']++;
+            }
+        }
+
+        $totalRev = count($itemsRev);
+        if ($usarPaginacion) {
+            $itemsRev = array_slice($itemsRev, ($page - 1) * $perPage, $perPage);
+        }
+
+        $responseRev = [
+            'success' => true,
+            'disponible' => $disponibleRev,
+            'dias' => $dias,
+            'tipo_recordatorio' => $tipoRecordatorio,
+            'count' => count($itemsRev),
+            'total' => $totalRev,
+            'stats' => $statsRev,
+            'prioridad' => $prioridadRev,
+            'items' => $itemsRev,
+        ];
+        if ($usarPaginacion) {
+            $responseRev['pagination'] = [
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $totalRev,
+                'total_pages' => max(1, (int)ceil($totalRev / $perPage)),
+            ];
+        }
+        echo json_encode($responseRev);
+        exit;
+    }
 
     if ($tipoRecordatorio === 'falta_cancelar') {
         if (!rc_table_exists($conn, 'cotizaciones') || !rc_table_exists($conn, 'pacientes') || !rc_table_exists($conn, 'cotizaciones_detalle')) {

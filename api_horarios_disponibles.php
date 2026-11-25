@@ -6,6 +6,7 @@ if (!defined('SKIP_PDO_INIT')) {
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/AgendaMedicoRegla.php';
 require_once __DIR__ . '/modules/EpisodioAtencionModule.php';
+require_once __DIR__ . '/modules/ReevaluacionModule.php';
 
 if (!function_exists('hdisp_table_exists')) {
     function hdisp_table_exists(mysqli $conn, string $table): bool {
@@ -262,6 +263,16 @@ if ($method === 'GET') {
                     }
                 }
                 $stmtAgenda->close();
+            }
+        }
+
+        // Una reevaluación pendiente con hora fija ocupa el turno del médico (sin hora fija no bloquea).
+        // La HC excluye la reevaluación de su propia consulta para no mostrarla como ocupada al editarla.
+        $reevaluacionOrigenExcluir = isset($_GET['reevaluacion_origen_excluir']) ? intval($_GET['reevaluacion_origen_excluir']) : 0;
+        foreach (rev_horas_ocupadas($conn, (int)$medico_id, (string)$fecha, $reevaluacionOrigenExcluir) as $reevOcupada) {
+            $horaNorm = hdisp_normalize_hora_hms($reevOcupada['hora'] ?? null);
+            if ($horaNorm !== null) {
+                $horariosOcupadosSet[$horaNorm] = true;
             }
         }
 

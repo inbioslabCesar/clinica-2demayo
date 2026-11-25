@@ -6,6 +6,7 @@ if (!defined('SKIP_PDO_INIT')) {
 }
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/CorrelativoOperativoModule.php';
+require_once __DIR__ . '/modules/ReevaluacionModule.php';
 
 function consultas_column_exists($conn, $table, $column) {
     $stmt = $conn->prepare('SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1');
@@ -2416,6 +2417,15 @@ switch ($method) {
         $estado_panel = strtolower(trim((string)($_GET['estado_panel'] ?? '')));
         $filtro_pago_panel = strtolower(trim((string)($_GET['filtro_pago_panel'] ?? '')));
         $semaforo_panel = strtolower(trim((string)($_GET['semaforo_panel'] ?? '')));
+        // Modo reevaluaciones: la consulta origen ya está 'completada', así que ignora estado/pago/semáforo y
+        // el rango de fechas (la ventana es de máx. 7 días); solo muestra consultas con reevaluación abierta.
+        $tipo_atencion_panel = strtolower(trim((string)($_GET['tipo_atencion_panel'] ?? '')));
+        $modoReevaluaciones = ($tipo_atencion_panel === 'reevaluaciones') && rev_disponible($conn);
+        if ($modoReevaluaciones) {
+            $estado_panel = 'todas';
+            $filtro_pago_panel = 'todas';
+            $semaforo_panel = 'todas';
+        }
         $solo_activas = isset($_GET['solo_activas'])
             ? in_array(strtolower(trim((string)$_GET['solo_activas'])), ['1', 'true', 'si', 'sí', 'yes'], true)
             : false;
@@ -2903,16 +2913,20 @@ switch ($method) {
             $types .= 'sssssssssssss';
         }
 
-        if ($fecha_desde !== '') {
+        if ($fecha_desde !== '' && !$modoReevaluaciones) {
             $where[] = 'consultas.fecha >= ?';
             $params[] = $fecha_desde;
             $types .= 's';
         }
 
-        if ($fecha_hasta !== '') {
+        if ($fecha_hasta !== '' && !$modoReevaluaciones) {
             $where[] = 'consultas.fecha <= ?';
             $params[] = $fecha_hasta;
             $types .= 's';
+        }
+
+        if ($modoReevaluaciones) {
+            $where[] = 'EXISTS (SELECT 1 FROM hc_reevaluaciones rv WHERE rv.consulta_origen_id = consultas.id AND rv.abierta = 1)';
         }
 
         // Vista ligera para HC: evita stats y joins/subconsultas pesadas cuando
@@ -3275,7 +3289,9 @@ switch ($method) {
             . ' ' . $selectCotEsCostoCeroExpr
             . $fromData
             . $whereSql
-            . ' ORDER BY consultas.fecha ASC, consultas.hora ASC';
+            . ($modoReevaluaciones
+                ? ' ORDER BY (SELECT MIN(rvo.fecha_sugerida) FROM hc_reevaluaciones rvo WHERE rvo.consulta_origen_id = consultas.id AND rvo.abierta = 1) ASC, consultas.hora ASC'
+                : ' ORDER BY consultas.fecha ASC, consultas.hora ASC');
 
         if ($usar_paginacion) {
             $offset = ($page - 1) * $per_page;
@@ -3299,6 +3315,7 @@ switch ($method) {
         }
 
         consultas_enriquecer_correlativo_diario($conn, $rows);
+        rev_enriquecer_consultas($conn, $rows);
 
         $consultaIdsListado = [];
         foreach ($rows as $tmpRow) {
@@ -3479,6 +3496,13 @@ switch ($method) {
         ];
 
         if ($esSesionMedico) {
+            $statsReevaluaciones = rev_stats_medico($conn, (int)$medicoSesionId);
+            $respuesta['stats']['reevaluaciones_abiertas'] = $statsReevaluaciones['abiertas'];
+            $respuesta['stats']['reevaluaciones_hoy'] = $statsReevaluaciones['hoy'];
+            $respuesta['stats']['reevaluaciones_atrasadas'] = $statsReevaluaciones['atrasadas'];
+        }
+
+        if ($esSesionMedico) {
             $hoyYmd = date('Y-m-d');
             $statsConsultasHoy = consultas_stats_consultas_hoy($conn, $medicoSesionId, $hoyYmd);
             $agendaClinicaAbiertaHoy = consultas_stats_agenda_clinica_abierta_hoy($conn, $medicoSesionId, $hoyYmd);
@@ -3653,6 +3677,8 @@ switch ($method) {
                 $cntRow = $stmtCount->get_result()->fetch_assoc();
                 $stmtCount->close();
                 $agendadas = (int)($cntRow['cnt'] ?? 0);
+                // Cada reevaluación con hora fija dentro del bloque consume un cupo.
+                $agendadas += rev_cupos_ocupados_en_bloque($conn, (int)$medico_id, (string)$fecha, (string)$bloque['hora_inicio'], (string)$bloque['hora_fin']);
 
                 if ($agendadas >= $totalSlots) {
                     $conn->rollback();
@@ -3695,6 +3721,17 @@ switch ($method) {
                     'success' => false,
                     'error' => 'El médico ya tiene un servicio programado en ese horario',
                     'detalle' => "Agenda ID {$agendaId} con estado '{$agendaEstado}'",
+                ]);
+                exit;
+            }
+
+            $conflictoReev = rev_conflicto_reevaluacion($conn, (int)$medico_id, (string)$fecha, (string)$hora);
+            if ($conflictoReev) {
+                $conn->rollback();
+                echo json_encode([
+                    'success' => false,
+                    'error' => rev_mensaje_conflicto($conflictoReev),
+                    'detalle' => 'Reevaluación #' . (int)$conflictoReev['id'],
                 ]);
                 exit;
             }
@@ -4075,6 +4112,15 @@ switch ($method) {
                     'success' => false,
                     'error' => 'El médico ya tiene un servicio programado en ese horario',
                     'detalle' => "Agenda ID {$agendaId} con estado '{$agendaEstado}'",
+                ]);
+                exit;
+            }
+            $conflictoReev = rev_conflicto_reevaluacion($conn, (int)$medico_id, (string)$fecha, (string)$hora);
+            if ($conflictoReev) {
+                echo json_encode([
+                    'success' => false,
+                    'error' => rev_mensaje_conflicto($conflictoReev),
+                    'detalle' => 'Reevaluación #' . (int)$conflictoReev['id'],
                 ]);
                 exit;
             }

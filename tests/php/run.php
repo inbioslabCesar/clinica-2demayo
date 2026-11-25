@@ -1185,6 +1185,110 @@ prueba('portal del paciente: informe de imagen en borrador o sin PDF se lista "e
     }
 }, true);
 
+/* ───────── Reevaluación (validación pura, sin BD) ───────── */
+
+require_once $root . '/modules/ReevaluacionModule.php';
+
+prueba('reevaluación: la ventana es de 7 días desde el registro y no admite fechas pasadas', function () {
+    $hoy = date('Y-m-d');
+    $en = static fn(int $d) => date('Y-m-d', strtotime("+$d days"));
+    $falla = static function (array $in, ?array $actual = null, ?string $limite = null) use ($hoy) {
+        try {
+            rev_validar_agenda($in, $hoy, $actual, $limite);
+            return null;
+        } catch (RevError $e) {
+            return $e->getCode();
+        }
+    };
+    iguales($en(7), rev_validar_agenda(['fecha' => $en(7), 'sin_hora_fija' => true], $hoy)['fecha'], 'el día 7 es válido');
+    iguales(400, $falla(['fecha' => $en(8), 'sin_hora_fija' => true]), 'el día 8 se rechaza');
+    iguales(400, $falla(['fecha' => date('Y-m-d', strtotime('-1 day')), 'sin_hora_fija' => true]), 'ayer se rechaza');
+    iguales(400, $falla(['fecha' => 'no-es-fecha']));
+    iguales(400, $falla(['fecha' => $en(1), 'hora' => '25:00']));
+    iguales($en(7), rev_validar_agenda(['fecha' => $en(2), 'sin_hora_fija' => true], $hoy)['fecha_limite'], 'la ventana nace con la reevaluación');
+    iguales(400, $falla(['fecha' => $en(6), 'sin_hora_fija' => true], null, $en(5)), 'reprogramar no extiende el límite original');
+});
+
+prueba('reevaluación: hora vacía o "sin hora fija" no bloquea turno; una hora que ya pasó hoy se rechaza solo si cambió', function () {
+    $hoy = date('Y-m-d');
+    $manana = date('Y-m-d', strtotime('+1 day'));
+    $n = rev_validar_agenda(['fecha' => $manana, 'hora' => ''], $hoy);
+    iguales(1, $n['sin_hora_fija']);
+    iguales(null, $n['hora']);
+    $n = rev_validar_agenda(['fecha' => $manana, 'hora' => '10:30', 'sin_hora_fija' => true], $hoy);
+    iguales(null, $n['hora'], 'sin_hora_fija descarta la hora');
+    iguales('10:30:00', rev_validar_agenda(['fecha' => $manana, 'hora' => '10:30'], $hoy)['hora']);
+
+    $pasada = '00:01';
+    if (date('H:i:s') > '00:01:00') {
+        $rechazada = false;
+        try { rev_validar_agenda(['fecha' => $hoy, 'hora' => $pasada], $hoy); } catch (RevError $e) { $rechazada = true; }
+        verdadero($rechazada, 'una hora de hoy que ya pasó se rechaza al crear');
+        $actual = ['fecha_sugerida' => $hoy, 'hora_sugerida' => '00:01:00'];
+        iguales('00:01:00', rev_validar_agenda(['fecha' => $hoy, 'hora' => $pasada], $hoy, $actual)['hora'], 'si no cambió, guardar la HC otra vez no falla');
+    }
+});
+
+prueba('reevaluación: solo el médico dueño o recepción pueden actuar, y el contacto es solo de recepción', function () {
+    $fila = ['medico_id' => 7];
+    $recep = ['rol' => 'recepcionista', 'medico_id' => 0];
+    $dueno = ['rol' => 'medico', 'medico_id' => 7];
+    $otro = ['rol' => 'medico', 'medico_id' => 8];
+    verdadero(rev_actor_puede($recep, $fila, 'gestion'));
+    verdadero(rev_actor_puede($dueno, $fila, 'cancelar'));
+    verdadero(!rev_actor_puede($dueno, $fila, 'gestion'), 'el médico no gestiona el contacto');
+    verdadero(!rev_actor_puede($otro, $fila, 'cancelar'), 'otro médico no puede');
+    verdadero(!rev_actor_puede(['rol' => 'enfermero', 'medico_id' => 0], $fila, 'cancelar'));
+});
+
+prueba('reevaluación: dos turnos se pisan si distan menos que la duración del turno', function () {
+    verdadero(rev_solapa(630, 630, 30), 'misma hora');
+    verdadero(rev_solapa(630, 645, 30), '15 min dentro de un turno de 30');
+    verdadero(!rev_solapa(630, 660, 30), 'el turno siguiente no se pisa');
+    verdadero(!rev_solapa(null, 660, 30), 'sin hora no choca');
+});
+
+prueba('reevaluación (BD): la hora fija ocupa el turno del médico; sin hora fija, cerrada o de la propia consulta no', function () {
+    $m = $GLOBALS['mysqli'];
+    if (!rev_disponible($m)) {
+        throw new RuntimeException('falta aplicar sql/2026-11-25/001_schema.sql');
+    }
+    $med = (int)$m->query('SELECT id FROM medicos ORDER BY id LIMIT 1')->fetch_assoc()['id'];
+    $pac = (int)$m->query('SELECT id FROM pacientes ORDER BY id LIMIT 1')->fetch_assoc()['id'];
+    $fecha = date('Y-m-d', strtotime('+3 days'));
+    $lim = date('Y-m-d', strtotime('+7 days'));
+    $o1 = 990000001; $o2 = 990000002; $o3 = 990000003;
+    $ins = static function (int $origen, ?string $hora, int $sinHora, string $estado, $abierta) use ($m, $med, $pac, $fecha, $lim) {
+        $h = $hora === null ? 'NULL' : "'$hora'";
+        $ab = $abierta === null ? 'NULL' : (int)$abierta;
+        $m->query("INSERT INTO hc_reevaluaciones (consulta_origen_id, hc_id, paciente_id, medico_id, fecha_sugerida, hora_sugerida, sin_hora_fija, fecha_limite, estado, abierta)
+                   VALUES ($origen, 0, $pac, $med, '$fecha', $h, $sinHora, '$lim', '$estado', $ab)");
+    };
+    try {
+        $ins($o1, '10:30:00', 0, 'pendiente', 1);
+        $ins($o2, null, 1, 'pendiente', 1);
+        $ins($o3, '14:00:00', 0, 'cancelada', null);
+
+        $c = rev_conflicto_reevaluacion($m, $med, $fecha, '10:30:00');
+        verdadero($c !== null && $c['hora'] === '10:30', 'la misma hora choca');
+        verdadero(rev_conflicto_reevaluacion($m, $med, $fecha, '10:45:00') !== null, 'dentro del mismo turno choca');
+        verdadero(rev_conflicto_reevaluacion($m, $med, $fecha, '11:30:00') === null, 'otro turno no choca');
+        verdadero(rev_conflicto_reevaluacion($m, $med, $fecha, '14:00:00') === null, 'una cancelada libera el turno');
+        verdadero(rev_conflicto_reevaluacion($m, $med, $fecha, '10:30:00', $o1) === null, 'la propia consulta se excluye');
+        verdadero(rev_conflicto_reevaluacion($m, $med + 9999, $fecha, '10:30:00') === null, 'otro médico no choca');
+        iguales(1, count(rev_horas_ocupadas($m, $med, $fecha)), 'sin hora fija y cerradas no figuran como ocupadas');
+        iguales(1, rev_cupos_ocupados_en_bloque($m, $med, $fecha, '08:00:00', '12:00:00'), 'consume un cupo del bloque');
+        iguales(0, rev_cupos_ocupados_en_bloque($m, $med, $fecha, '12:00:00', '18:00:00'), 'fuera del bloque no cuenta');
+
+        $falla = null;
+        try { rev_asegurar_hora_libre($m, $med, $fecha, '10:30:00'); } catch (RevError $e) { $falla = $e->getCode(); }
+        iguales(409, $falla, 'crear otra reevaluación a esa hora se rechaza');
+        rev_asegurar_hora_libre($m, $med, $fecha, null);
+    } finally {
+        $m->query("DELETE FROM hc_reevaluaciones WHERE consulta_origen_id IN ($o1, $o2, $o3)");
+    }
+}, true);
+
 /* ───────── Ejecución ───────── */
 
 $bd = null;

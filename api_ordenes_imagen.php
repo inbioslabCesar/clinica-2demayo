@@ -3,6 +3,7 @@ require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/CorrelativoOperativoModule.php';
 require_once __DIR__ . '/modules/AgendaMedicoRegla.php';
+require_once __DIR__ . '/modules/ReevaluacionModule.php';
 
 $medicoSesion = (isset($_SESSION['medico']) && is_array($_SESSION['medico'])) ? $_SESSION['medico'] : null;
 $usuarioSesion = (isset($_SESSION['usuario']) && is_array($_SESSION['usuario'])) ? $_SESSION['usuario'] : null;
@@ -607,6 +608,12 @@ if (!function_exists('oi_slots_ocupados_medico_fecha')) {
                 }
                 $stmtA->close();
             }
+        }
+
+        // Reevaluaciones pendientes con hora fija ocupan el turno del médico.
+        foreach (rev_horas_ocupadas($conn, $medicoId, $fechaYmd) as $reevOcupada) {
+            $min = oi_hora_a_minutos((string)($reevOcupada['hora'] ?? ''));
+            if ($min !== null) $ocupadas[$min] = true;
         }
 
         return $ocupadas;

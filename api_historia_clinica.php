@@ -7,6 +7,7 @@ if (!defined('SKIP_PDO_INIT')) {
 }
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/HcTemplateResolver.php';
+require_once __DIR__ . '/modules/ReevaluacionModule.php';
 $tphPath = __DIR__ . '/tratamientos_programacion_helper.php';
 if (!is_file($tphPath)) {
     http_response_code(500);
@@ -1553,6 +1554,11 @@ function hc_programar_proxima_cita($conn, $consultaIdActual, $proximaData, $hcOr
     $tipoConsulta = trim((string)($proximaData['tipo_consulta'] ?? 'programada'));
     if ($tipoConsulta === '') {
         $tipoConsulta = 'programada';
+    }
+
+    $conflictoReevProxima = rev_conflicto_reevaluacion($conn, $medicoId, $fecha, $hora);
+    if ($conflictoReevProxima) {
+        throw new Exception('La próxima cita choca con otra reevaluación: ' . rev_mensaje_conflicto($conflictoReevProxima));
     }
 
     $consultaProgramadaId = (int)($proximaData['consulta_id'] ?? 0);
@@ -3605,10 +3611,12 @@ switch ($method) {
                 : null;
             $proximaContratoEvento = hc_resolver_proxima_cita_contrato($conn, $targetConsultaId);
             $datos = hc_normalizar_proxima_cita_contrato($datos, $proximaContratoEvento);
+            $reevaluacionActual = rev_obtener_para_hc($conn, $targetConsultaId);
 
             echo json_encode([
                 'success' => true,
                 'hc_id' => (int)($row['id'] ?? 0),
+                'reevaluacion' => $reevaluacionActual,
                 'consulta_id' => $targetConsultaId,
                 'fecha_registro' => (string)($row['fecha_registro'] ?? ''),
                 'datos' => $datos,
@@ -3662,6 +3670,28 @@ switch ($method) {
         if (is_array($datos)) {
             $datos = hc_sanitizar_diagnosticos($datos);
             $datos = hc_prepare_template_for_save($conn, (int)$consulta_id, $datos);
+        }
+
+        // Reevaluación: se valida antes de guardar para fallar sin escrituras parciales.
+        $reevaluacionIn = (is_array($datos) && isset($datos['reevaluacion']) && is_array($datos['reevaluacion']))
+            ? $datos['reevaluacion']
+            : null;
+        if ($reevaluacionIn !== null && !empty($reevaluacionIn['programar'])) {
+            try {
+                rev_pre_validar_hc($conn, (int)$consulta_id, $reevaluacionIn);
+                // Reevaluación y próxima cita de la misma HC no pueden pisarse entre sí.
+                $proximaIn = (is_array($datos) && isset($datos['proxima_cita']) && is_array($datos['proxima_cita'])) ? $datos['proxima_cita'] : null;
+                $horaRevIn = empty($reevaluacionIn['sin_hora_fija']) ? rev_normalizar_hora($reevaluacionIn['hora'] ?? '') : null;
+                if ($proximaIn !== null && !empty($proximaIn['programar']) && $horaRevIn !== null
+                    && trim((string)($proximaIn['fecha'] ?? '')) === trim((string)($reevaluacionIn['fecha'] ?? ''))
+                    && rev_solapa(rev_hora_a_minutos($horaRevIn), rev_hora_a_minutos(hc_normalizar_hora($proximaIn['hora'] ?? '')), rev_duracion_turno_min($conn))) {
+                    throw new RevError('La reevaluación y la próxima cita quedan a la misma hora. Elija horas distintas.', 409);
+                }
+            } catch (RevError $e) {
+                http_response_code($e->getCode() >= 400 ? $e->getCode() : 400);
+                echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+                exit;
+            }
         }
 
         $hasPacienteIdHc = hc_column_exists($conn, 'historia_clinica', 'paciente_id');
@@ -3825,8 +3855,53 @@ switch ($method) {
         // Sincronizar receta/tratamiento al panel de enfermeria
         hc_upsert_tratamiento_enfermeria($conn, (int)$consulta_id, $datos);
 
+        // La HC ya quedó guardada y completada: un fallo de la reevaluación se informa sin revertirla.
+        $reevaluacionResultado = null;
+        if ($reevaluacionIn !== null) {
+            try {
+                $reevaluacionDatos = null;
+                if (!empty($reevaluacionIn['programar'])) {
+                    $guardado = rev_guardar_desde_hc($conn, (int)$consulta_id, (int)$hcActualId, $reevaluacionIn);
+                    $reevaluacionResultado = ['success' => true] + $guardado;
+                    if (($guardado['accion'] ?? '') !== 'bloqueada') {
+                        $rv = $guardado['reevaluacion'];
+                        $reevaluacionDatos = [
+                            'programar' => true,
+                            'reevaluacion_id' => $rv['id'],
+                            'fecha' => $rv['fecha_sugerida'],
+                            'hora' => $rv['hora_sugerida'],
+                            'sin_hora_fija' => (bool)$rv['sin_hora_fija'],
+                            'tipo_motivo' => $rv['tipo_motivo'],
+                            'motivo' => $rv['motivo'],
+                        ];
+                    }
+                } elseif ((int)($reevaluacionIn['reevaluacion_id'] ?? 0) > 0) {
+                    $cancelada = rev_cancelar_desde_hc($conn, (int)$consulta_id);
+                    $reevaluacionResultado = ['success' => true, 'accion' => $cancelada ? 'cancelada' : 'sin_cambios', 'reevaluacion' => $cancelada];
+                    if ($cancelada) {
+                        $reevaluacionDatos = ['programar' => false, 'reevaluacion_id' => $cancelada['id']];
+                    }
+                }
+
+                if ($reevaluacionDatos !== null) {
+                    $datos['reevaluacion'] = $reevaluacionDatos;
+                    $jsonConReevaluacion = json_encode($datos);
+                    $stmtRev = $conn->prepare('UPDATE historia_clinica SET datos = ? WHERE id = ? LIMIT 1');
+                    if ($stmtRev) {
+                        $stmtRev->bind_param('si', $jsonConReevaluacion, $hcActualId);
+                        $stmtRev->execute();
+                        $stmtRev->close();
+                    }
+                }
+            } catch (Throwable $e) {
+                error_log('HC reevaluacion: ' . $e->getMessage());
+                $reevaluacionResultado = ['success' => false, 'error' => $e->getMessage()];
+            }
+        }
+
         echo json_encode([
             'success' => $ok,
+            'reevaluacion' => $reevaluacionResultado,
             'proxima_cita' => $proximaResultado,
             'receta_cotizacion_sync' => $syncReceta,
         ]);
