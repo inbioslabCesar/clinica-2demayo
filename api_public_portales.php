@@ -6,6 +6,7 @@
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/ModulosInstalacion.php';
+require_once __DIR__ . '/modules/PortalPaciente.php';
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
     http_response_code(405);
@@ -14,9 +15,19 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
 }
 
 $conn = $mysqli ?? ($pdo ?? null);
+// Paciente: módulo activo y al menos una categoría (laboratorio / imagenología) encendida por el Engineer.
+$pacientes = ModulosInstalacion::habilitado($conn, 'portal_pacientes');
+if ($pacientes && $conn instanceof mysqli) {
+    try {
+        $cfgPortal = PortalPaciente::config($conn);
+        $pacientes = $cfgPortal['publicar_laboratorio'] || $cfgPortal['publicar_imagenologia'];
+    } catch (Throwable $e) {
+        $pacientes = false;
+    }
+}
 header('Cache-Control: no-store');
 echo json_encode([
     'success' => true,
-    'pacientes' => ModulosInstalacion::habilitado($conn, 'portal_pacientes'),
+    'pacientes' => $pacientes,
     'empresas' => ModulosInstalacion::habilitado($conn, 'ocupacional') && ModulosInstalacion::habilitado($conn, 'portal_empresas'),
 ]);

@@ -2491,6 +2491,14 @@ if ($method === 'POST') {
             exit;
         }
 
+        // Publicación al portal del paciente: solo si el cliente lo pide explícitamente. PDF con "publicar_pdf", imágenes con
+        // "publicar_imagenes"; el DICOM nunca se publica. Si faltan las columnas (esquema sin actualizar) se ignora.
+        $hayColPublicar = oi_column_exists($conn, 'ordenes_imagen_archivos', 'publicar_paciente');
+        $hayColTitulo = oi_column_exists($conn, 'ordenes_imagen_archivos', 'titulo');
+        $publicarPdf = $hayColPublicar && !empty($_POST['publicar_pdf']);
+        $publicarImagenes = $hayColPublicar && !empty($_POST['publicar_imagenes']);
+        $tituloArchivo = mb_substr(trim((string)($_POST['titulo'] ?? '')), 0, 200);
+
         $subidos = 0;
         $fallosEscritura = 0;
         $erroresSubida = [];
@@ -2526,6 +2534,19 @@ if ($method === 'POST') {
             $stmtInsertArchivo->bind_param('issis', $orden_id, $nombreOriginal, $destPath, $tamano, $mimeType);
             if (!$stmtInsertArchivo->execute()) {
                 continue;
+            }
+            $archivoIdNuevo = (int)$stmtInsertArchivo->insert_id;
+            $publicar = $mimeType === 'application/pdf' ? $publicarPdf : (strpos($mimeType, 'image/') === 0 ? $publicarImagenes : false);
+            if ($archivoIdNuevo > 0 && ($publicar || ($hayColTitulo && $tituloArchivo !== ''))) {
+                if ($publicar) {
+                    $conn->query("UPDATE ordenes_imagen_archivos SET publicar_paciente = 1 WHERE id = $archivoIdNuevo");
+                }
+                if ($hayColTitulo && $tituloArchivo !== '') {
+                    $stmtTitulo = $conn->prepare('UPDATE ordenes_imagen_archivos SET titulo = ? WHERE id = ?');
+                    $stmtTitulo->bind_param('si', $tituloArchivo, $archivoIdNuevo);
+                    $stmtTitulo->execute();
+                    $stmtTitulo->close();
+                }
             }
             $subidos++;
         }

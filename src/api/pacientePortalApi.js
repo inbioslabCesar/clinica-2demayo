@@ -48,23 +48,26 @@ export async function listarDocumentosPaciente() {
   return payload.data || [];
 }
 
-// Descarga el PDF como blob: así un bloqueo (deuda, en revisión) se muestra como mensaje y no como JSON en otra pestaña.
+// Descarga el archivo como blob: así un bloqueo (deuda, en revisión) se muestra como mensaje y no como JSON en otra pestaña.
 export async function descargarDocumentoPaciente(tipo, id) {
   const query = new URLSearchParams({ accion: "descargar", tipo, id: String(id) });
   const response = await fetch(`${URL_API}?${query.toString()}`, { credentials: "include", cache: "no-store" });
   const tipoContenido = response.headers.get("Content-Type") || "";
-  if (!response.ok || !tipoContenido.includes("application/pdf")) {
+  const esArchivo = tipoContenido.includes("application/pdf") || tipoContenido.startsWith("image/");
+  if (!response.ok || !esArchivo) {
     const payload = tipoContenido.includes("json") ? await leerJson(response) : null;
     const err = new Error(payload?.error || "No se pudo descargar el documento");
     err.status = response.status;
     err.estado = payload?.estado || "";
     throw err;
   }
+  const disposicion = response.headers.get("Content-Disposition") || "";
+  const nombreServidor = /filename="?([^";]+)"?/i.exec(disposicion)?.[1];
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const enlace = document.createElement("a");
   enlace.href = url;
-  enlace.download = `${tipo}_${id}.pdf`;
+  enlace.download = nombreServidor || `${tipo}_${id}.pdf`;
   document.body.appendChild(enlace);
   enlace.click();
   enlace.remove();

@@ -107,6 +107,19 @@ try {
         ppa_responder(200, ['success' => true, 'data' => PortalPaciente::config($mysqli)]);
     }
 
+    if ($metodo === 'POST' && $accion === 'publicar_archivo') {
+        $d = $cuerpo;
+        $pacienteId = (int)($d['paciente_id'] ?? 0);
+        $tipo = (string)($d['tipo'] ?? '');
+        $refId = (int)($d['ref_id'] ?? 0);
+        $publicar = !empty($d['publicar']);
+        if ($pacienteId <= 0 || $refId <= 0 || !PortalPaciente::publicarArchivo($mysqli, $pacienteId, $tipo, $refId, $publicar)) {
+            ppa_responder(404, ['success' => false, 'error' => 'Archivo no encontrado para este paciente']);
+        }
+        PortalPaciente::registrarEvento($mysqli, $pacienteId, $publicar ? 'archivo_publicado' : 'archivo_retirado', $tipo, $refId, $actor);
+        ppa_responder(200, ['success' => true, 'documentos' => PortalPaciente::documentos($mysqli, $pacienteId, true)]);
+    }
+
     if ($metodo === 'POST' && in_array($accion, ['generar_pin', 'desactivar_acceso', 'liberar'], true)) {
         $d = $cuerpo;
         $pacienteId = (int)($d['paciente_id'] ?? 0);

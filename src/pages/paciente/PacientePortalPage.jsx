@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { BASE_URL, fetchConfigSingleton } from "../../config/config";
 import {
   descargarDocumentoPaciente,
@@ -7,6 +7,7 @@ import {
   logoutPaciente,
   sesionPaciente,
 } from "../../api/pacientePortalApi";
+import { agruparPorAtencion, categoriasPresentes } from "../../utils/agruparResultados";
 
 const ESTADOS = {
   disponible: { texto: "Disponible", clase: "bg-green-100 text-green-800" },
@@ -15,14 +16,23 @@ const ESTADOS = {
 };
 
 const AYUDA_ESTADO = {
-  pendiente_pago: "Regularice su pago en caja para poder descargarlo.",
   en_revision: "La clínica lo habilitará en breve.",
 };
+
+const ETIQUETA_CATEGORIA = { laboratorio: "Laboratorio", imagenologia: "Imagenología" };
+const GRUPOS_VISIBLES = 5;
 
 function formatearFecha(valor) {
   const fecha = new Date(String(valor || "").replace(" ", "T"));
   if (Number.isNaN(fecha.getTime())) return "";
   return fecha.toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+// Con varias atenciones el mismo día, la hora las distingue.
+function formatearFechaHora(valor) {
+  const fecha = new Date(String(valor || "").replace(" ", "T"));
+  if (Number.isNaN(fecha.getTime())) return "";
+  return `${formatearFecha(valor)}, ${fecha.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
 }
 
 // Nombre y logo de la clínica (configuración pública), para que la página se sienta parte del sitio web.
@@ -142,6 +152,16 @@ function ListaResultados({ paciente, onSalir, onSesionExpirada }) {
   const [error, setError] = useState("");
   const [descargando, setDescargando] = useState("");
   const [aviso, setAviso] = useState("");
+  const [categoria, setCategoria] = useState("todas");
+  const [busqueda, setBusqueda] = useState("");
+  const [abiertos, setAbiertos] = useState({}); // id de atención -> abierta (por defecto solo la más reciente)
+  const [verTodas, setVerTodas] = useState(false);
+
+  const categorias = useMemo(() => categoriasPresentes(documentos), [documentos]);
+  const grupos = useMemo(() => agruparPorAtencion(documentos, { categoria, busqueda }), [documentos, categoria, busqueda]);
+  const hayFiltro = categoria !== "todas" || busqueda.trim() !== "";
+  const gruposMostrados = verTodas || hayFiltro ? grupos : grupos.slice(0, GRUPOS_VISIBLES);
+  const estaAbierto = (g, indice) => (g.id in abiertos ? abiertos[g.id] : indice === 0 || hayFiltro);
 
   const cargar = useCallback(async () => {
     try {
@@ -196,36 +216,115 @@ function ListaResultados({ paciente, onSalir, onSesionExpirada }) {
         <p className="rounded-xl bg-white p-6 text-center text-gray-600 shadow">Aún no tiene resultados publicados.</p>
       ) : null}
 
-      <ul className="space-y-3">
-        {(documentos || []).map((doc) => {
-          const estado = ESTADOS[doc.estado] || ESTADOS.en_revision;
-          const clave = `${doc.tipo}:${doc.ref_id}`;
-          return (
-            <li key={clave} className="rounded-xl bg-white p-4 shadow">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">{doc.subtitulo}</p>
-                  <p className="font-semibold text-gray-900 break-words">{doc.titulo}</p>
-                  <p className="text-sm text-gray-500">{formatearFecha(doc.fecha)}</p>
-                </div>
-                <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${estado.clase}`}>{estado.texto}</span>
-              </div>
-              {doc.estado === "disponible" ? (
+      {documentos && documentos.length > 0 ? (
+        <div className="mb-4 space-y-2">
+          {categorias.length > 1 ? (
+            <div className="flex flex-wrap gap-2" role="tablist" aria-label="Filtrar por tipo">
+              {["todas", ...categorias].map((c) => (
                 <button
+                  key={c}
                   type="button"
-                  onClick={() => descargar(doc)}
-                  disabled={descargando === clave}
-                  className="mt-3 w-full rounded-lg bg-sky-700 px-4 py-2.5 font-semibold text-white hover:bg-sky-800 disabled:opacity-60"
+                  onClick={() => setCategoria(c)}
+                  className={`rounded-full px-3 py-1 text-sm font-medium ${categoria === c ? "bg-sky-700 text-white" : "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"}`}
                 >
-                  {descargando === clave ? "Descargando..." : "Descargar PDF"}
+                  {c === "todas" ? "Todos" : ETIQUETA_CATEGORIA[c] || c}
                 </button>
-              ) : (
-                <p className="mt-3 text-sm text-gray-600">{AYUDA_ESTADO[doc.estado]}</p>
-              )}
-            </li>
+              ))}
+            </div>
+          ) : null}
+          <input
+            type="search"
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por nombre del resultado"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+        </div>
+      ) : null}
+
+      {documentos && documentos.length > 0 && grupos.length === 0 ? (
+        <p className="rounded-xl bg-white p-6 text-center text-gray-600 shadow">No hay resultados que coincidan con la búsqueda.</p>
+      ) : null}
+
+      <div className="space-y-4">
+        {gruposMostrados.map((g, indice) => {
+          const abierto = estaAbierto(g, indice);
+          return (
+            <section key={g.id} className="rounded-xl bg-white shadow">
+              <button
+                type="button"
+                onClick={() => setAbiertos((prev) => ({ ...prev, [g.id]: !abierto }))}
+                aria-expanded={abierto}
+                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+              >
+                <span>
+                  <span className="block font-semibold text-gray-900">
+                    {g.id === 0 ? "Otros resultados" : `Atención del ${formatearFechaHora(g.fecha)}`}
+                  </span>
+                  <span className="block text-xs text-gray-500">
+                    {g.documentos.length} resultado{g.documentos.length === 1 ? "" : "s"}
+                  </span>
+                </span>
+                <span className="flex items-center gap-2">
+                  {g.bloqueada ? (
+                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">Saldo pendiente</span>
+                  ) : null}
+                  <span aria-hidden className="text-gray-500">{abierto ? "▲" : "▼"}</span>
+                </span>
+              </button>
+              {abierto ? (
+                <div className="border-t border-gray-100 px-4 pb-4">
+                  {g.bloqueada ? (
+                    <p className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+                      Esta atención tiene un saldo pendiente. Regularice su pago en caja para descargar sus resultados.
+                    </p>
+                  ) : null}
+                  <ul className="mt-3 space-y-3">
+                    {g.documentos.map((doc) => {
+                      const estado = ESTADOS[doc.estado] || ESTADOS.en_revision;
+                      const clave = `${doc.tipo}:${doc.ref_id}`;
+                      return (
+                        <li key={clave} className="rounded-lg border border-gray-200 p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">{doc.subtitulo}</p>
+                              <p className="font-semibold text-gray-900 break-words">{doc.titulo}</p>
+                              <p className="text-sm text-gray-500">{formatearFecha(doc.fecha)}</p>
+                            </div>
+                            <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${estado.clase}`}>{estado.texto}</span>
+                          </div>
+                          {doc.estado === "disponible" ? (
+                            <button
+                              type="button"
+                              onClick={() => descargar(doc)}
+                              disabled={descargando === clave}
+                              className="mt-3 w-full rounded-lg bg-sky-700 px-4 py-2.5 font-semibold text-white hover:bg-sky-800 disabled:opacity-60"
+                            >
+                              {descargando === clave ? "Descargando..." : "Descargar"}
+                            </button>
+                          ) : AYUDA_ESTADO[doc.estado] ? (
+                            <p className="mt-3 text-sm text-gray-600">{AYUDA_ESTADO[doc.estado]}</p>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+            </section>
           );
         })}
-      </ul>
+      </div>
+
+      {!verTodas && !hayFiltro && grupos.length > GRUPOS_VISIBLES ? (
+        <button
+          type="button"
+          onClick={() => setVerTodas(true)}
+          className="mt-4 w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
+          Ver más atenciones ({grupos.length - GRUPOS_VISIBLES})
+        </button>
+      ) : null}
     </Marco>
   );
 }

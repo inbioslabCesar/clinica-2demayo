@@ -646,6 +646,28 @@ if ($method === 'POST') {
     $documentoId = (int)$stmtDoc->insert_id;
     $stmtDoc->close();
 
+    // Publicación al portal del paciente: solo si el cliente lo pide explícitamente (nunca retroactivo ni por defecto).
+    // PDF según "publicar_pdf"; imágenes solo con "publicar_imagenes"; el DICOM nunca se publica. Solo tipos de laboratorio e imagen.
+    $tipoPublicable = in_array(strtolower($tipo), ['laboratorio', 'ecografia', 'rayosx', 'tomografia'], true);
+    $columnaPublicar = false;
+    $chkPub = $conn->query("SHOW COLUMNS FROM documentos_externos_archivos LIKE 'publicar_paciente'");
+    if ($chkPub && $chkPub->num_rows > 0) {
+        $columnaPublicar = true;
+    }
+    $publicarPdf = $tipoPublicable && $columnaPublicar && !empty($_POST['publicar_pdf']);
+    $publicarImagenes = $tipoPublicable && $columnaPublicar && !empty($_POST['publicar_imagenes']);
+
+    $laboratorioOrigen = mb_substr(trim((string)($_POST['laboratorio_origen'] ?? '')), 0, 120);
+    if ($laboratorioOrigen !== '') {
+        $chkOrigen = $conn->query("SHOW COLUMNS FROM documentos_externos_paciente LIKE 'laboratorio_origen'");
+        if ($chkOrigen && $chkOrigen->num_rows > 0) {
+            $stmtOrigen = $conn->prepare('UPDATE documentos_externos_paciente SET laboratorio_origen = ? WHERE id = ?');
+            $stmtOrigen->bind_param('si', $laboratorioOrigen, $documentoId);
+            $stmtOrigen->execute();
+            $stmtOrigen->close();
+        }
+    }
+
     // Guardar archivos en disco
     $pacienteDir = $uploadDir . $pacienteId . '/';
     if (!is_dir($pacienteDir)) mkdir($pacienteDir, 0755, true);
@@ -679,7 +701,12 @@ if ($method === 'POST') {
         );
         $stmtArch->bind_param('issis', $documentoId, $nombreOriginal, $destPath, $tamano, $mimeType);
         $stmtArch->execute();
+        $archivoIdNuevo = (int)$stmtArch->insert_id;
         $stmtArch->close();
+        $publicar = $mimeType === 'application/pdf' ? $publicarPdf : (strpos($mimeType, 'image/') === 0 ? $publicarImagenes : false);
+        if ($publicar && $archivoIdNuevo > 0) {
+            $conn->query("UPDATE documentos_externos_archivos SET publicar_paciente = 1 WHERE id = $archivoIdNuevo");
+        }
         $archivoSubidos++;
     }
 

@@ -36,3 +36,5 @@ export const desactivarAccesoPortal = (pacienteId) =>
   llamar("desactivar_acceso", { method: "POST", body: { paciente_id: pacienteId } });
 export const decidirDocumentoPortal = (pacienteId, tipo, refId, decision, motivo = "") =>
   llamar("liberar", { method: "POST", body: { paciente_id: pacienteId, tipo, ref_id: refId, decision, motivo } });
+export const publicarArchivoPortal = (pacienteId, tipo, refId, publicar) =>
+  llamar("publicar_archivo", { method: "POST", body: { paciente_id: pacienteId, tipo, ref_id: refId, publicar } });

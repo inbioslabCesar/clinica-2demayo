@@ -5,6 +5,7 @@ import {
   engineerListar,
   engineerLogin,
   engineerLogout,
+  engineerPortalPacientesOpciones,
 } from "../api/modulosApi";
 import { ThemeProvider } from "../context/ThemeContext";
 
@@ -38,7 +39,63 @@ function aFormulario(m) {
   };
 }
 
-function TarjetaModulo({ modulo, csrf, mensaje, onResultado, onGuardado, onSesionExpirada }) {
+// Qué categorías muestra el portal del paciente (solo el Engineer lo cambia). Cada una incluye los resultados del sistema
+// y los archivos PDF/imagen que el personal suba y publique.
+function OpcionesPortalPacientes({ opciones, csrf, onGuardado, onSesionExpirada }) {
+  const [valores, setValores] = useState({ laboratorio: Boolean(opciones.laboratorio), imagenologia: Boolean(opciones.imagenologia) });
+  const [guardando, setGuardando] = useState(false);
+  const [resultado, setResultado] = useState(null);
+
+  const guardar = async () => {
+    setGuardando(true);
+    setResultado(null);
+    try {
+      const r = await engineerPortalPacientesOpciones(csrf, valores);
+      if (r.success) {
+        const n = Object.keys(r.cambios || {}).length;
+        setResultado({ ok: true, texto: n ? "Guardado" : "Sin cambios" });
+        onGuardado();
+      } else {
+        if (r.error === "Sesion no valida") onSesionExpirada();
+        setResultado({ ok: false, texto: r.error || "No se pudo guardar" });
+      }
+    } catch {
+      setResultado({ ok: false, texto: "Error de red" });
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded border border-sky-200 bg-sky-50 p-3">
+      <h3 className="text-sm font-semibold text-sky-900">¿Qué ve el paciente en su portal?</h3>
+      <p className="mb-2 text-xs text-sky-800">
+        Lo que se apaga desaparece del portal y deja de poder descargarse. Aplica a los resultados del sistema y a los archivos subidos.
+      </p>
+      <div className="flex flex-wrap items-center gap-4 text-sm">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={valores.laboratorio} onChange={(e) => setValores((v) => ({ ...v, laboratorio: e.target.checked }))} />
+          Laboratorio
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={valores.imagenologia} onChange={(e) => setValores((v) => ({ ...v, imagenologia: e.target.checked }))} />
+          Imagenología
+        </label>
+        <button
+          type="button"
+          onClick={guardar}
+          disabled={guardando}
+          className="rounded bg-sky-700 px-3 py-1 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-50"
+        >
+          {guardando ? "Guardando..." : "Guardar opciones del portal"}
+        </button>
+        {resultado ? <span className={resultado.ok ? "text-green-700" : "text-red-700"}>{resultado.texto}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function TarjetaModulo({ modulo, csrf, mensaje, opcionesPortal, onResultado, onGuardado, onSesionExpirada }) {
   const [form, setForm] = useState(() => aFormulario(modulo));
   const [guardando, setGuardando] = useState(false);
   const efectivo = ESTADO_EFECTIVO[modulo.estado_efectivo] || ESTADO_EFECTIVO.apagado;
@@ -127,6 +184,9 @@ function TarjetaModulo({ modulo, csrf, mensaje, onResultado, onGuardado, onSesio
           <span className={`text-sm ${mensaje.ok ? "text-green-700" : "text-red-700"}`}>{mensaje.texto}</span>
         ) : null}
       </div>
+      {modulo.modulo === "portal_pacientes" && opcionesPortal ? (
+        <OpcionesPortalPacientes opciones={opcionesPortal} csrf={csrf} onGuardado={onGuardado} onSesionExpirada={onSesionExpirada} />
+      ) : null}
     </section>
   );
 }
@@ -140,7 +200,7 @@ export default function EngineerPanelPage() {
   const [enviando, setEnviando] = useState(false);
   const [mensajes, setMensajes] = useState({});
   const [vista, setVista] = useState("modulos");
-  const [datos, setDatos] = useState({ modulos: [], historial: [], gracia_dias: 7 });
+  const [datos, setDatos] = useState({ modulos: [], historial: [], gracia_dias: 7, portalOpciones: null });
   const registrarMensaje = useCallback((modulo, mensaje) => {
     setMensajes((m) => ({ ...m, [modulo]: mensaje }));
   }, []);
@@ -157,7 +217,7 @@ export default function EngineerPanelPage() {
   const cargar = useCallback(async () => {
     const r = await engineerListar();
     if (r.success) {
-      setDatos({ modulos: r.modulos || [], historial: r.historial || [], gracia_dias: r.gracia_dias || 7 });
+      setDatos({ modulos: r.modulos || [], historial: r.historial || [], gracia_dias: r.gracia_dias || 7, portalOpciones: r.portal_pacientes_opciones || null });
       setError("");
       return true;
     }
@@ -315,10 +375,11 @@ export default function EngineerPanelPage() {
         {error ? <p className="text-sm text-red-700">{error}</p> : null}
         {datos.modulos.map((m) => (
           <TarjetaModulo
-            key={`${m.modulo}-${m.updated_at}`}
+            key={`${m.modulo}-${m.updated_at}-${m.modulo === "portal_pacientes" ? JSON.stringify(datos.portalOpciones) : ""}`}
             modulo={m}
             csrf={csrf}
             mensaje={mensajes[m.modulo]}
+            opcionesPortal={datos.portalOpciones}
             onResultado={registrarMensaje}
             onGuardado={cargar}
             onSesionExpirada={() => setFase("login")}

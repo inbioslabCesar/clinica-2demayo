@@ -5,7 +5,7 @@
 //   POST ?accion=login      -> { documento, pin }
 //   POST ?accion=logout
 //   GET  ?accion=listar     -> documentos del paciente con su estado de entrega
-//   GET  ?accion=descargar&tipo=laboratorio|imagenologia&id=N
+//   GET  ?accion=descargar&tipo=laboratorio|imagenologia|archivo_externo|archivo_imagen&id=N
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/ModulosInstalacion.php';
@@ -20,6 +20,7 @@ const PP_HASH_RELLENO = '$2y$10$SC99RdNqs/aOmaH54WoByO3aVidW70gK.b2NJZwur0an1p4Z
 const PP_MENSAJES_ESTADO = [
     'pendiente_pago' => 'Este resultado tiene un saldo pendiente. Regularice su pago en caja para descargarlo.',
     'en_revision' => 'Este resultado aún está en revisión. La clínica lo habilitará en breve.',
+    'no_publicado' => 'Este documento no está disponible.',
 ];
 
 function pp_responder(int $codigo, array $payload): void
@@ -182,6 +183,32 @@ function pp_despachar(mysqli $conn): int
         if ($tipo === 'laboratorio') {
             PortalPaciente::registrarEvento($conn, $pacienteId, 'descarga', $tipo, $refId);
             return $refId;
+        }
+
+        if ($tipo === 'archivo_externo' || $tipo === 'archivo_imagen') {
+            $archivo = PortalPaciente::archivoParaEntregar($conn, $pacienteId, $tipo, $refId);
+            if ($archivo === null) {
+                pp_responder(404, ['success' => false, 'error' => 'El archivo no está disponible']);
+            }
+            PortalPaciente::registrarEvento($conn, $pacienteId, 'descarga', $tipo, $refId);
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            // Nombre de descarga: el título que ve el paciente, limpio, con la extensión real del archivo.
+            $ext = strtolower(pathinfo($archivo['nombre'], PATHINFO_EXTENSION));
+            $base = trim(preg_replace('/[^A-Za-z0-9._ -]+/', '_', (string)iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', (string)$doc['titulo'])), ' _.');
+            $nombreDescarga = ($base !== '' ? $base : 'resultado_' . $refId);
+            if ($ext !== '' && !preg_match('/\.' . preg_quote($ext, '/') . '$/i', $nombreDescarga)) {
+                $nombreDescarga .= '.' . $ext;
+            }
+            header('Content-Type: ' . $archivo['mime']);
+            header('Content-Disposition: attachment; filename="' . $nombreDescarga . '"');
+            header('Content-Length: ' . filesize($archivo['ruta']));
+            header('X-Content-Type-Options: nosniff');
+            header('Cache-Control: private, no-store, no-cache, must-revalidate');
+            header('Pragma: no-cache');
+            readfile($archivo['ruta']);
+            exit;
         }
 
         $ruta = PortalPaciente::rutaPdfInforme($conn, $refId);

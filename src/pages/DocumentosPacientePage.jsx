@@ -9,6 +9,8 @@ import {
   FaFileMedical, FaExclamationTriangle, FaExpand, FaImage,
 } from "react-icons/fa";
 import { MdOutlineUploadFile } from "react-icons/md";
+import usePublicacionPortal from "../hooks/usePublicacionPortal";
+import OpcionesPublicacion from "../components/portal/OpcionesPublicacion";
 
 // ─── Configuración por tipo ───────────────────────────────────────────────────
 const TIPO_CONFIG = {
@@ -315,10 +317,15 @@ const DocumentoCard = React.memo(function DocumentoCard({ doc, onEliminar, puede
 });
 
 // ─── Modal subida ─────────────────────────────────────────────────────────────
+// Solo laboratorio e imagen se pueden publicar al paciente (no informes médicos ni "otro").
+const esTipoPublicable = (tipo) => ["laboratorio", "ecografia", "rayosx", "tomografia"].includes(tipo);
+
 function ModalSubir({ onClose, onSuccess, pacienteId, ordenes, prefill }) {
+  const publicacion = usePublicacionPortal();
   const [form, setForm] = useState({
     tipo: prefill?.tipo || "laboratorio",
     titulo: prefill?.titulo || "",
+    laboratorio_origen: "",
     descripcion: "",
     orden_id: prefill?.orden_id || "",
     cotizacion_id: prefill?.cotizacion_id || "",
@@ -370,6 +377,8 @@ function ModalSubir({ onClose, onSuccess, pacienteId, ordenes, prefill }) {
     fd.append("tipo", form.tipo);
     fd.append("titulo", form.titulo.trim());
     fd.append("descripcion", form.descripcion.trim());
+    if (form.laboratorio_origen.trim()) fd.append("laboratorio_origen", form.laboratorio_origen.trim());
+    if (esTipoPublicable(form.tipo)) publicacion.agregarAFormData(fd);
     if (form.orden_id) fd.append("orden_id", form.orden_id);
     if (form.cotizacion_id) fd.append("cotizacion_id", form.cotizacion_id);
     archivos.forEach((f) => fd.append("archivos[]", f));
@@ -442,6 +451,23 @@ function ModalSubir({ onClose, onSuccess, pacienteId, ordenes, prefill }) {
               className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 outline-none"
             />
           </div>
+
+          {/* Laboratorio de origen (para resultados de otros laboratorios) */}
+          {esTipoPublicable(form.tipo) && (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                Laboratorio o centro de origen <span className="text-gray-400 font-normal">(opcional)</span>
+              </label>
+              <input
+                type="text"
+                maxLength={120}
+                value={form.laboratorio_origen}
+                onChange={(e) => setForm((p) => ({ ...p, laboratorio_origen: e.target.value }))}
+                placeholder="Ej: Lab. Roe Lima"
+                className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 outline-none"
+              />
+            </div>
+          )}
 
           {/* Notas */}
           <div>
@@ -579,6 +605,8 @@ function ModalSubir({ onClose, onSuccess, pacienteId, ordenes, prefill }) {
               </div>
             )}
           </div>
+
+          {esTipoPublicable(form.tipo) && <OpcionesPublicacion estado={publicacion} />}
         </div>
 
         {/* Footer modal */}

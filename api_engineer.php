@@ -65,14 +65,53 @@ if ($accion === 'logout' && $metodo === 'POST') {
 
 if ($accion === 'listar' && $metodo === 'GET') {
     try {
-        engineer_out(200, [
+        $payloadListar = [
             'success' => true,
             'modulos' => ModulosInstalacion::listarCompleto($pdo),
             'historial' => ModulosInstalacion::historial($pdo, 30),
             'gracia_dias' => ModulosInstalacion::GRACIA_DIAS,
-        ]);
+        ];
+        // Interruptores del portal del paciente (laboratorio / imagenología). Si la tabla aún no existe, se omiten.
+        try {
+            require_once __DIR__ . '/modules/PortalPaciente.php';
+            $cfgPortal = PortalPaciente::config($mysqli);
+            $payloadListar['portal_pacientes_opciones'] = [
+                'laboratorio' => $cfgPortal['publicar_laboratorio'],
+                'imagenologia' => $cfgPortal['publicar_imagenologia'],
+            ];
+        } catch (Throwable $e) {
+            $payloadListar['portal_pacientes_opciones'] = null;
+        }
+        engineer_out(200, $payloadListar);
     } catch (PDOException $e) {
         engineer_out(500, ['success' => false, 'error' => 'Faltan las tablas de modulos: aplique sql/2026-11-22/005_modulos_instalacion_schema.sql']);
+    }
+}
+
+if ($accion === 'portal_pacientes_opciones' && $metodo === 'POST') {
+    if (!EngineerAuth::csrfValido((string)($_SERVER['HTTP_X_ENGINEER_CSRF'] ?? ''))) {
+        engineer_out(403, ['success' => false, 'error' => 'Token invalido']);
+    }
+    try {
+        require_once __DIR__ . '/modules/PortalPaciente.php';
+        $datos = (array)($entrada['datos'] ?? []);
+        $valores = [];
+        foreach (PortalPaciente::CATEGORIAS as $cat) {
+            if (array_key_exists($cat, $datos)) {
+                $valores[$cat] = (bool)$datos[$cat];
+            }
+        }
+        $cambios = PortalPaciente::guardarCategorias($mysqli, $valores);
+        if ($cambios) {
+            $h = $pdo->prepare('INSERT INTO modulos_instalacion_historial (modulo, accion, detalle, actor, ip) VALUES (?, ?, ?, ?, ?)');
+            $h->execute(['portal_pacientes', 'opciones', json_encode($cambios, JSON_UNESCAPED_UNICODE), 'engineer', mb_substr($ip, 0, 45)]);
+        }
+        engineer_out(200, ['success' => true, 'cambios' => $cambios]);
+    } catch (Throwable $e) {
+        if (function_exists('api_log_server_error')) {
+            api_log_server_error('api-engineer-portal', $e->getMessage(), $e->getFile(), (int)$e->getLine());
+        }
+        engineer_out(500, ['success' => false, 'error' => 'Error interno']);
     }
 }
 

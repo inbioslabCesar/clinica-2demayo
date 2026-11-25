@@ -8,15 +8,22 @@ import {
   guardarConfigPortal,
   obtenerConfigPortal,
   obtenerPacientePortal,
+  publicarArchivoPortal,
 } from "../api/portalPacienteAdminApi";
 
 const ESTADOS = {
   disponible: { texto: "Disponible", clase: "bg-green-100 text-green-800" },
   pendiente_pago: { texto: "Saldo pendiente", clase: "bg-amber-100 text-amber-800" },
   en_revision: { texto: "En revisión", clase: "bg-gray-200 text-gray-700" },
+  no_publicado: { texto: "Sin publicar", clase: "bg-gray-100 text-gray-600" },
 };
 
-const TIPOS = { laboratorio: "Laboratorio", imagenologia: "Imagenología" };
+const TIPOS = { laboratorio: "Laboratorio", imagenologia: "Imagenología", archivo_externo: "Archivo subido", archivo_imagen: "Archivo de imagen" };
+const MOTIVOS_PENDIENTE = {
+  borrador: "El informe sigue en borrador: complételo en Imagenología.",
+  sin_pdf: "Informe completado, pero falta generar el PDF en Imagenología.",
+  categoria_desactivada: "Esta categoría está desactivada para el portal de esta clínica.",
+};
 
 function urlPortal() {
   return new URL("resultados", `${window.location.origin}${APP_BASE_PATH}`).href;
@@ -220,7 +227,21 @@ export default function PortalPacienteAdminPage() {
     }
   };
 
+  const publicarArchivo = async (doc, publicar) => {
+    setError("");
+    try {
+      const p = await publicarArchivoPortal(seleccion.paciente.id, doc.tipo, doc.ref_id, publicar);
+      setSeleccion((prev) => ({ ...prev, documentos: p.documentos }));
+      setMensaje(publicar ? "Archivo publicado en el portal del paciente." : "Archivo retirado del portal.");
+    } catch (err) {
+      manejarError(err);
+    }
+  };
+
   const p = seleccion?.paciente;
+  // Los archivos subidos (PDF/imagen) solo llegan al paciente si el personal los publica.
+  const documentosPublicados = (seleccion?.documentos || []).filter((d) => !d.es_archivo || d.publicado);
+  const archivosSinPublicar = (seleccion?.documentos || []).filter((d) => d.es_archivo && !d.publicado);
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-4">
@@ -294,8 +315,8 @@ export default function PortalPacienteAdminPage() {
 
           <div>
             <h3 className="mb-2 font-semibold text-gray-800">Resultados del paciente</h3>
-            {seleccion.documentos.length === 0 ? (
-              <p className="text-sm text-gray-600">No hay resultados completados.</p>
+            {documentosPublicados.length === 0 ? (
+              <p className="text-sm text-gray-600">No hay resultados publicados para este paciente.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -309,21 +330,22 @@ export default function PortalPacienteAdminPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {seleccion.documentos.map((d) => {
+                    {documentosPublicados.map((d) => {
                       const estado = ESTADOS[d.estado] || ESTADOS.en_revision;
                       const manual = config?.modo === "manual";
                       return (
                         <tr key={`${d.tipo}:${d.ref_id}`} className="border-b align-top">
                           <td className="py-2 pr-2">{TIPOS[d.tipo] || d.tipo}</td>
                           <td className="py-2 pr-2">{d.titulo}<span className="block text-xs text-gray-500">{d.subtitulo}</span></td>
-                          <td className="py-2 pr-2 whitespace-nowrap">{formatearFecha(d.fecha)}</td>
+                          <td className="py-2 pr-2 whitespace-nowrap">
+                            {formatearFecha(d.fecha)}
+                            {d.atencion_id > 0 ? <span className="block text-xs text-gray-500">Atención {formatearFecha(d.atencion_fecha)}</span> : null}
+                          </td>
                           <td className="py-2 pr-2">
                             <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${estado.clase}`}>{estado.texto}</span>
                             {d.pendiente_motivo ? (
                               <span className="block text-xs text-gray-600">
-                                {d.pendiente_motivo === "borrador"
-                                  ? "El informe sigue en borrador: complételo en Imagenología."
-                                  : "Informe completado, pero falta generar el PDF en Imagenología."}
+                                {MOTIVOS_PENDIENTE[d.pendiente_motivo] || ""}
                               </span>
                             ) : null}
                             {d.saldo_pendiente > 0 ? <span className="block text-xs text-amber-700">Saldo S/ {Number(d.saldo_pendiente).toFixed(2)}</span> : null}
@@ -339,6 +361,9 @@ export default function PortalPacienteAdminPage() {
                               {d.decision_manual !== "automatico" ? (
                                 <button type="button" onClick={() => decidir(d, "automatico")} className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50">Volver a automático</button>
                               ) : null}
+                              {d.es_archivo ? (
+                                <button type="button" onClick={() => publicarArchivo(d, false)} className="rounded border border-gray-400 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50">Retirar del portal</button>
+                              ) : null}
                             </div>
                           </td>
                         </tr>
@@ -351,6 +376,28 @@ export default function PortalPacienteAdminPage() {
             <p className="mt-2 text-xs text-gray-500">
               Liberar no salta el bloqueo por saldo pendiente: el paciente debe regularizar su pago en caja.
             </p>
+
+            {archivosSinPublicar.length > 0 ? (
+              <details className="mt-4 rounded-lg border border-gray-200 p-3">
+                <summary className="cursor-pointer text-sm font-semibold text-gray-800">
+                  Archivos subidos sin publicar ({archivosSinPublicar.length})
+                </summary>
+                <p className="mt-1 text-xs text-gray-500">PDF e imágenes subidos desde Documentos del paciente o Imágenes diagnósticas. El paciente solo ve los que publique.</p>
+                <ul className="mt-2 divide-y">
+                  {archivosSinPublicar.map((d) => (
+                    <li key={`${d.tipo}:${d.ref_id}`} className="flex items-center justify-between gap-3 py-2">
+                      <div className="min-w-0 text-sm">
+                        <p className="font-medium text-gray-900 break-words">{d.titulo}</p>
+                        <p className="text-xs text-gray-500">{d.subtitulo} · {d.archivo} · {formatearFecha(d.fecha)}</p>
+                      </div>
+                      <button type="button" onClick={() => publicarArchivo(d, true)} className="shrink-0 rounded border border-sky-600 px-2 py-1 text-xs text-sky-800 hover:bg-sky-50">
+                        Publicar
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
           </div>
         </section>
       ) : null}

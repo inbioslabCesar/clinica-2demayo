@@ -1,6 +1,6 @@
 {
     "formato": 1,
-    "generado_en": "2026-11-25 06:28",
+    "generado_en": "2026-11-25 19:45",
     "origen_motor": "8.4.3",
     "tablas": {
         "agenda_contrato": {
@@ -13609,6 +13609,19 @@
                     "collation": "utf8mb4_unicode_ci",
                     "comentario": "",
                     "generada": false
+                },
+                "publicar_paciente": {
+                    "orden": 8,
+                    "tipo": "tinyint(1)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
                 }
             },
             "indices": {
@@ -13761,6 +13774,18 @@
                     },
                     "extra": "DEFAULT_GENERATED",
                     "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "laboratorio_origen": {
+                    "orden": 11,
+                    "tipo": "varchar(120)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
                     "comentario": "",
                     "generada": false
                 }
@@ -23808,6 +23833,31 @@
                     },
                     "extra": "DEFAULT_GENERATED",
                     "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "publicar_paciente": {
+                    "orden": 8,
+                    "tipo": "tinyint(1)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "literal",
+                        "v": "0"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "titulo": {
+                    "orden": 9,
+                    "tipo": "varchar(200)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_unicode_ci",
                     "comentario": "",
                     "generada": false
                 }

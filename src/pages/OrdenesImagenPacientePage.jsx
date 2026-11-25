@@ -4,6 +4,8 @@ import { authFetch } from "../utils/apiClient";
 import { normalizeOrdenArchivos } from "../utils/ordenesImagenUrl";
 import Spinner from "../components/comunes/Spinner";
 import CardInformeImagenologia from "../components/imagenologia/CardInformeImagenologia";
+import usePublicacionPortal from "../hooks/usePublicacionPortal";
+import OpcionesPublicacion from "../components/portal/OpcionesPublicacion";
 import Swal from "sweetalert2";
 import {
   FaCloudUploadAlt, FaImage, FaFilePdf, FaFileMedical,
@@ -44,6 +46,8 @@ const cotizEstadoPagado = (cot) => {
 
 // ── Modal de subida de archivos ───────────────────────────────────────────────
 export function ModalSubir({ orden, onClose, onSubido }) {
+  const publicacion = usePublicacionPortal();
+  const [tituloArchivo, setTituloArchivo] = useState("");
   const [archivos, setArchivos]   = useState([]);
   const [subiendo, setSubiendo]   = useState(false);
   const [drag, setDrag]           = useState(false);
@@ -102,6 +106,8 @@ export function ModalSubir({ orden, onClose, onSubido }) {
     setSubiendo(true);
     const fd = new FormData();
     fd.append("orden_id", orden.id);
+    if (tituloArchivo.trim()) fd.append("titulo", tituloArchivo.trim());
+    publicacion.agregarAFormData(fd);
     archivos.forEach((f) => fd.append("archivos[]", f));
     try {
       const res = await authFetch(`api_ordenes_imagen.php`, {
@@ -182,6 +188,24 @@ export function ModalSubir({ orden, onClose, onSubido }) {
           )}
 
           {/* Botones */}
+          {publicacion.activo && (
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">
+                  Título para el paciente <span className="font-normal text-gray-400">(opcional)</span>
+                </label>
+                <input
+                  type="text"
+                  maxLength={200}
+                  value={tituloArchivo}
+                  onChange={(e) => setTituloArchivo(e.target.value)}
+                  placeholder="Ej: Ecografía obstétrica – informe"
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 outline-none"
+                />
+              </div>
+              <OpcionesPublicacion estado={publicacion} />
+            </div>
+          )}
           <div className="flex gap-3 mt-4">
             <button onClick={onClose} disabled={subiendo} className="flex-1 bg-gray-100 text-gray-700 rounded-xl py-2 text-sm hover:bg-gray-200 transition">Cancelar</button>
             <button onClick={handleSubir} disabled={subiendo || !archivos.length} className="flex-1 bg-blue-600 text-white rounded-xl py-2 text-sm font-semibold hover:bg-blue-700 transition disabled:opacity-50">

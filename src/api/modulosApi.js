@@ -50,6 +50,16 @@ export async function engineerActualizar(csrf, modulo, datos) {
   return leerJson(res);
 }
 
+export async function engineerPortalPacientesOpciones(csrf, datos) {
+  const res = await authFetch("api_engineer.php", {
+    ...OPCIONES,
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Engineer-Csrf": csrf },
+    body: JSON.stringify({ accion: "portal_pacientes_opciones", datos }),
+  });
+  return leerJson(res);
+}
+
 export async function engineerLogout(csrf) {
   const res = await authFetch("api_engineer.php", {
     ...OPCIONES,

@@ -12,6 +12,11 @@
 //   - saldo pendiente y bloqueo activado  -> pendiente_pago
 //   - en cualquier otro caso              -> disponible
 // "Liberar" solo levanta la retención; nunca salta el bloqueo por deuda.
+//
+// Archivos subidos (PDF/imagen): 'archivo_externo' (Documentos del paciente) y 'archivo_imagen' (Imágenes diagnósticas).
+// Solo llegan al paciente si el personal los publicó (publicar_paciente = 1); los DICOM nunca. Cada documento trae su
+// categoría ('laboratorio' | 'imagenologia') y su atención (raíz de la cotización): el Engineer puede apagar una categoría
+// completa (config 'publicar_laboratorio' / 'publicar_imagenologia') y el portal agrupa los resultados por atención.
 final class PortalPaciente {
     public const MODO_AUTOMATICO = 'automatico';
     public const MODO_MANUAL = 'manual';
@@ -24,7 +29,15 @@ final class PortalPaciente {
     private const PROVEEDORES = [
         'laboratorio' => 'documentosLaboratorio',
         'imagenologia' => 'documentosImagenologia',
+        // Archivos (PDF o imagen) subidos por el personal: resultados de laboratorios de referencia, informes escaneados, etc.
+        'archivo_externo' => 'documentosArchivosExternos',
+        'archivo_imagen' => 'documentosArchivosImagen',
     ];
+
+    /** Categorías que el Engineer puede encender o apagar en el portal (clave de config 'publicar_<categoria>'). */
+    public const CATEGORIAS = ['laboratorio', 'imagenologia'];
+
+    private const MIMES_PUBLICABLES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp', 'image/tiff'];
 
     public static function tiposValidos(): array {
         return array_keys(self::PROVEEDORES);
@@ -91,9 +104,9 @@ final class PortalPaciente {
 
     // ---------------- Configuración ----------------
 
-    /** @return array{modo:string,bloquear_deuda:bool} valores por defecto si no hay filas */
+    /** @return array{modo:string,bloquear_deuda:bool,publicar_laboratorio:bool,publicar_imagenologia:bool} valores por defecto si no hay filas */
     public static function config(\mysqli $conn): array {
-        $cfg = ['modo' => self::MODO_AUTOMATICO, 'bloquear_deuda' => true];
+        $cfg = ['modo' => self::MODO_AUTOMATICO, 'bloquear_deuda' => true, 'publicar_laboratorio' => true, 'publicar_imagenologia' => true];
         foreach (self::consultar($conn, 'SELECT clave, valor FROM paciente_portal_config') as $fila) {
             if ($fila['clave'] === 'modo_liberacion' && $fila['valor'] === self::MODO_MANUAL) {
                 $cfg['modo'] = self::MODO_MANUAL;
@@ -101,8 +114,38 @@ final class PortalPaciente {
             if ($fila['clave'] === 'bloquear_deuda') {
                 $cfg['bloquear_deuda'] = $fila['valor'] !== '0';
             }
+            foreach (self::CATEGORIAS as $cat) {
+                if ($fila['clave'] === 'publicar_' . $cat) {
+                    $cfg['publicar_' . $cat] = $fila['valor'] !== '0';
+                }
+            }
         }
         return $cfg;
+    }
+
+    /**
+     * Interruptores del Engineer: qué categorías muestra el portal del paciente.
+     * @return array<string,array{antes:bool,despues:bool}> solo lo que cambió
+     */
+    public static function guardarCategorias(\mysqli $conn, array $valores): array {
+        $antes = self::config($conn);
+        $cambios = [];
+        $stmt = $conn->prepare('INSERT INTO paciente_portal_config (clave, valor) VALUES (?, ?) ON DUPLICATE KEY UPDATE valor = VALUES(valor)');
+        foreach (self::CATEGORIAS as $cat) {
+            if (!array_key_exists($cat, $valores)) {
+                continue;
+            }
+            $nuevo = !empty($valores[$cat]);
+            $clave = 'publicar_' . $cat;
+            $valor = $nuevo ? '1' : '0';
+            $stmt->bind_param('ss', $clave, $valor);
+            $stmt->execute();
+            if ($antes[$clave] !== $nuevo) {
+                $cambios[$cat] = ['antes' => $antes[$clave], 'despues' => $nuevo];
+            }
+        }
+        $stmt->close();
+        return $cambios;
     }
 
     public static function guardarConfig(\mysqli $conn, string $modo, bool $bloquearDeuda): void {
@@ -118,14 +161,10 @@ final class PortalPaciente {
     // ---------------- Deuda ----------------
 
     /**
-     * Saldo pendiente de toda la cadena de cotizaciones (raíz + adendas) a la que pertenece la cotización.
-     * Las anuladas no cuentan. Sin cotización asociada no hay deuda que detectar (0).
+     * Ids de la cadena de cotizaciones (raíz + adendas) a la que pertenece la cotización.
+     * @return array{raiz:int,ids:int[]}
      */
-    public static function saldoPendiente(\mysqli $conn, ?int $cotizacionId): float {
-        $cotizacionId = (int)$cotizacionId;
-        if ($cotizacionId <= 0) {
-            return 0.0;
-        }
+    private static function cadenaCotizacion(\mysqli $conn, int $cotizacionId): array {
         $raiz = $cotizacionId;
         for ($i = 0; $i < 20; $i++) {
             $fila = self::consultar($conn, 'SELECT cotizacion_padre_id FROM cotizaciones WHERE id = ? LIMIT 1', 'i', [$raiz])[0] ?? null;
@@ -149,7 +188,19 @@ final class PortalPaciente {
                 }
             }
         }
-        $lista = array_keys($ids);
+        return ['raiz' => $raiz, 'ids' => array_keys($ids)];
+    }
+
+    /**
+     * Saldo pendiente de toda la cadena de cotizaciones (raíz + adendas) a la que pertenece la cotización.
+     * Las anuladas no cuentan. Sin cotización asociada no hay deuda que detectar (0).
+     */
+    public static function saldoPendiente(\mysqli $conn, ?int $cotizacionId): float {
+        $cotizacionId = (int)$cotizacionId;
+        if ($cotizacionId <= 0) {
+            return 0.0;
+        }
+        $lista = self::cadenaCotizacion($conn, $cotizacionId)['ids'];
         $ph = implode(',', array_fill(0, count($lista), '?'));
         $fila = self::consultar(
             $conn,
@@ -158,6 +209,20 @@ final class PortalPaciente {
             $lista
         )[0] ?? ['saldo' => 0];
         return round((float)$fila['saldo'], 2);
+    }
+
+    /**
+     * La atención a la que pertenece una cotización (su raíz): el portal agrupa los resultados por atención.
+     * @return array{id:int,fecha:?string,numero:string}  id 0 = sin atención asociada
+     */
+    public static function atencion(\mysqli $conn, ?int $cotizacionId): array {
+        $cotizacionId = (int)$cotizacionId;
+        if ($cotizacionId <= 0) {
+            return ['id' => 0, 'fecha' => null, 'numero' => ''];
+        }
+        $raiz = self::cadenaCotizacion($conn, $cotizacionId)['raiz'];
+        $fila = self::consultar($conn, 'SELECT fecha, numero_comprobante FROM cotizaciones WHERE id = ? LIMIT 1', 'i', [$raiz])[0] ?? null;
+        return ['id' => $raiz, 'fecha' => $fila['fecha'] ?? null, 'numero' => (string)($fila['numero_comprobante'] ?? '')];
     }
 
     // ---------------- Documentos ----------------
@@ -175,30 +240,55 @@ final class PortalPaciente {
         }
 
         $saldos = [];
+        $atenciones = [];
         $docs = [];
         foreach (self::PROVEEDORES as $tipo => $metodo) {
             foreach (self::$metodo($conn, $pacienteId) as $d) {
+                $categoria = $d['categoria'] ?? ($tipo === 'laboratorio' ? 'laboratorio' : 'imagenologia');
+                $categoriaActiva = $cfg['publicar_' . $categoria] ?? true;
+                $publicado = $d['publicado'] ?? true;
+                // El paciente nunca ve lo no publicado ni una categoría apagada por el Engineer; el personal sí, con el motivo.
+                if (!$paraStaff && (!$publicado || !$categoriaActiva)) {
+                    continue;
+                }
                 $cot = (int)($d['cotizacion_id'] ?? 0);
                 if (!isset($saldos[$cot])) {
                     $saldos[$cot] = $cfg['bloquear_deuda'] || $paraStaff ? self::saldoPendiente($conn, $cot) : 0.0;
+                    $atenciones[$cot] = self::atencion($conn, $cot);
                 }
                 $override = $overrides[$tipo . ':' . $d['ref_id']] ?? null;
                 $pendiente = $d['pendiente_motivo'] ?? null;
+                if ($pendiente === null && !$categoriaActiva) {
+                    $pendiente = 'categoria_desactivada';
+                }
+                if (!$publicado) {
+                    $estado = 'no_publicado';
+                } elseif ($pendiente !== null) {
+                    // Sin PDF listo o categoría apagada: nunca está disponible, ni liberándolo a mano.
+                    $estado = 'en_revision';
+                } else {
+                    $estado = self::decidirEstado($cfg['modo'], $override, $saldos[$cot], $cfg['bloquear_deuda']);
+                }
+                $at = $atenciones[$cot];
                 $doc = [
                     'tipo' => $tipo,
                     'ref_id' => (int)$d['ref_id'],
+                    'categoria' => $categoria,
                     'titulo' => (string)$d['titulo'],
                     'subtitulo' => (string)($d['subtitulo'] ?? ''),
                     'fecha' => $d['fecha'],
-                    // Sin PDF listo nunca está disponible, ni liberándolo a mano.
-                    'estado' => $pendiente !== null
-                        ? 'en_revision'
-                        : self::decidirEstado($cfg['modo'], $override, $saldos[$cot], $cfg['bloquear_deuda']),
+                    'atencion_id' => $at['id'],
+                    'atencion_fecha' => $at['fecha'],
+                    'atencion_numero' => $at['numero'],
+                    'estado' => $estado,
                 ];
                 if ($paraStaff) {
                     $doc['decision_manual'] = $override ?? 'automatico';
                     $doc['saldo_pendiente'] = $saldos[$cot];
                     $doc['pendiente_motivo'] = $pendiente;
+                    $doc['es_archivo'] = isset($d['publicado']);
+                    $doc['publicado'] = $publicado;
+                    $doc['archivo'] = (string)($d['archivo'] ?? '');
                 }
                 $docs[] = $doc;
             }
@@ -214,6 +304,177 @@ final class PortalPaciente {
             }
         }
         return null;
+    }
+
+    // ---------------- Archivos subidos (PDF / imagen) ----------------
+
+    private static function columnaExiste(\mysqli $conn, string $tabla, string $columna): bool {
+        static $cache = [];
+        $k = $tabla . '.' . $columna;
+        if (!isset($cache[$k])) {
+            $cache[$k] = (bool)self::consultar($conn, 'SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1', 'ss', [$tabla, $columna]);
+        }
+        return $cache[$k];
+    }
+
+    private static function sqlMimesPublicables(): string {
+        return "'" . implode("','", self::MIMES_PUBLICABLES) . "'";
+    }
+
+    /** Ruta del archivo si existe y está dentro de la carpeta de subidas esperada (evita rutas manipuladas). */
+    private static function resolverRutaSubida(string $rutaGuardada, string $subcarpeta, int $pacienteId): ?string {
+        $base = realpath(dirname(__DIR__) . '/uploads/' . $subcarpeta);
+        if ($base === false) {
+            return null;
+        }
+        $candidatas = [$rutaGuardada, $base . '/' . $pacienteId . '/' . basename(str_replace('\\', '/', $rutaGuardada))];
+        foreach ($candidatas as $c) {
+            $real = $c !== '' ? realpath($c) : false;
+            if ($real !== false && is_file($real) && strncmp($real, $base . DIRECTORY_SEPARATOR, strlen($base) + 1) === 0) {
+                return $real;
+            }
+        }
+        return null;
+    }
+
+    private static function sinExtension(string $nombre): string {
+        $n = pathinfo($nombre, PATHINFO_FILENAME);
+        return $n !== '' ? $n : $nombre;
+    }
+
+    private static function etiquetaTipoExterno(string $tipo): string {
+        $mapa = ['laboratorio' => 'Laboratorio', 'ecografia' => 'Ecografía', 'rayosx' => 'Rayos X', 'tomografia' => 'Tomografía'];
+        return $mapa[strtolower($tipo)] ?? 'Documento';
+    }
+
+    /** Resultados externos (laboratorios de referencia, ecografías de otro centro...) subidos desde "Documentos del paciente". */
+    private static function documentosArchivosExternos(\mysqli $conn, int $pacienteId): array {
+        if (!self::columnaExiste($conn, 'documentos_externos_archivos', 'publicar_paciente')) {
+            return [];
+        }
+        $origen = self::columnaExiste($conn, 'documentos_externos_paciente', 'laboratorio_origen') ? 'dep.laboratorio_origen' : "'' ";
+        $filas = self::consultar($conn, "
+            SELECT dea.id, dea.documento_id, dea.nombre_original, dea.archivo_path, dea.fecha AS archivo_fecha, dea.publicar_paciente,
+                   dep.titulo, dep.tipo, dep.fecha AS doc_fecha, $origen AS laboratorio_origen,
+                   COALESCE(NULLIF(dep.cotizacion_id, 0), ol.cotizacion_id) AS cotizacion_id,
+                   (SELECT COUNT(*) FROM documentos_externos_archivos x WHERE x.documento_id = dep.id) AS n_archivos
+            FROM documentos_externos_archivos dea
+            INNER JOIN documentos_externos_paciente dep ON dep.id = dea.documento_id
+            LEFT JOIN ordenes_laboratorio ol ON ol.id = dep.orden_id
+            WHERE dep.paciente_id = ? AND dep.tipo IN ('laboratorio', 'ecografia', 'rayosx', 'tomografia')
+              AND dea.mime_type IN (" . self::sqlMimesPublicables() . ")
+            ORDER BY dep.fecha DESC, dea.id ASC", 'i', [$pacienteId]);
+
+        $docs = [];
+        foreach ($filas as $f) {
+            $publicado = (int)$f['publicar_paciente'] === 1;
+            // Un archivo publicado que ya no existe en disco no se ofrece al paciente.
+            if ($publicado && self::resolverRutaSubida((string)$f['archivo_path'], 'documentos_externos', $pacienteId) === null) {
+                continue;
+            }
+            $titulo = trim((string)$f['titulo']) !== '' ? trim((string)$f['titulo']) : self::sinExtension((string)$f['nombre_original']);
+            if ((int)$f['n_archivos'] > 1) {
+                $titulo .= ' – ' . $f['nombre_original'];
+            }
+            $etiqueta = self::etiquetaTipoExterno((string)$f['tipo']);
+            $docs[] = [
+                'ref_id' => (int)$f['id'],
+                'categoria' => strtolower((string)$f['tipo']) === 'laboratorio' ? 'laboratorio' : 'imagenologia',
+                'titulo' => $titulo,
+                'subtitulo' => $etiqueta . (trim((string)$f['laboratorio_origen']) !== '' ? ' · ' . trim((string)$f['laboratorio_origen']) : ''),
+                'fecha' => $f['doc_fecha'] ?: $f['archivo_fecha'],
+                'cotizacion_id' => (int)($f['cotizacion_id'] ?? 0),
+                'publicado' => $publicado,
+                'archivo' => (string)$f['nombre_original'],
+            ];
+        }
+        return $docs;
+    }
+
+    /** Archivos subidos a una orden de imagenología ("Subir archivos" en Imágenes diagnósticas). */
+    private static function documentosArchivosImagen(\mysqli $conn, int $pacienteId): array {
+        if (!self::columnaExiste($conn, 'ordenes_imagen_archivos', 'publicar_paciente')) {
+            return [];
+        }
+        $tituloSql = self::columnaExiste($conn, 'ordenes_imagen_archivos', 'titulo') ? 'a.titulo' : "'' ";
+        $filas = self::consultar($conn, "
+            SELECT a.id, a.orden_id, a.nombre_original, a.archivo_path, a.fecha, a.publicar_paciente, $tituloSql AS titulo, o.tipo, o.cotizacion_id
+            FROM ordenes_imagen_archivos a
+            INNER JOIN ordenes_imagen o ON o.id = a.orden_id
+            WHERE o.paciente_id = ? AND a.mime_type IN (" . self::sqlMimesPublicables() . ")
+            ORDER BY a.fecha DESC, a.id ASC", 'i', [$pacienteId]);
+
+        $porOrden = [];
+        foreach ($filas as $f) {
+            $porOrden[(int)$f['orden_id']] = ($porOrden[(int)$f['orden_id']] ?? 0) + 1;
+        }
+
+        $docs = [];
+        foreach ($filas as $f) {
+            $publicado = (int)$f['publicar_paciente'] === 1;
+            if ($publicado && self::resolverRutaSubida((string)$f['archivo_path'], 'imagenes_diagnostico', $pacienteId) === null) {
+                continue;
+            }
+            $titulo = trim((string)($f['titulo'] ?? ''));
+            // Con varios archivos en la misma orden, un título común se distingue con el nombre del archivo.
+            if ($titulo !== '' && $porOrden[(int)$f['orden_id']] > 1) {
+                $titulo .= ' – ' . $f['nombre_original'];
+            }
+            $docs[] = [
+                'ref_id' => (int)$f['id'],
+                'categoria' => 'imagenologia',
+                'titulo' => $titulo !== '' ? $titulo : self::sinExtension((string)$f['nombre_original']),
+                'subtitulo' => self::etiquetaImagen((string)($f['tipo'] ?? '')),
+                'fecha' => $f['fecha'],
+                'cotizacion_id' => (int)($f['cotizacion_id'] ?? 0),
+                'publicado' => $publicado,
+                'archivo' => (string)$f['nombre_original'],
+            ];
+        }
+        return $docs;
+    }
+
+    /**
+     * Archivo listo para entregar: ruta absoluta validada, tipo de contenido y nombre de descarga.
+     * La propiedad del archivo ya debe haberse comprobado con buscarDocumento().
+     * @return array{ruta:string,mime:string,nombre:string}|null
+     */
+    public static function archivoParaEntregar(\mysqli $conn, int $pacienteId, string $tipo, int $refId): ?array {
+        if ($tipo === 'archivo_externo') {
+            $f = self::consultar($conn, 'SELECT archivo_path, nombre_original, mime_type FROM documentos_externos_archivos WHERE id = ? LIMIT 1', 'i', [$refId])[0] ?? null;
+            $carpeta = 'documentos_externos';
+        } elseif ($tipo === 'archivo_imagen') {
+            $f = self::consultar($conn, 'SELECT archivo_path, nombre_original, mime_type FROM ordenes_imagen_archivos WHERE id = ? LIMIT 1', 'i', [$refId])[0] ?? null;
+            $carpeta = 'imagenes_diagnostico';
+        } else {
+            return null;
+        }
+        if (!$f || !in_array((string)$f['mime_type'], self::MIMES_PUBLICABLES, true)) {
+            return null;
+        }
+        $ruta = self::resolverRutaSubida((string)$f['archivo_path'], $carpeta, $pacienteId);
+        return $ruta === null ? null : ['ruta' => $ruta, 'mime' => (string)$f['mime_type'], 'nombre' => (string)$f['nombre_original']];
+    }
+
+    /** Publica o retira del portal un archivo del paciente. Devuelve false si el archivo no es de ese paciente o no es PDF/imagen. */
+    public static function publicarArchivo(\mysqli $conn, int $pacienteId, string $tipo, int $refId, bool $publicar): bool {
+        if ($tipo === 'archivo_externo') {
+            $sql = 'UPDATE documentos_externos_archivos dea INNER JOIN documentos_externos_paciente dep ON dep.id = dea.documento_id
+                    SET dea.publicar_paciente = ? WHERE dea.id = ? AND dep.paciente_id = ? AND dea.mime_type IN (' . self::sqlMimesPublicables() . ")
+                    AND dep.tipo IN ('laboratorio', 'ecografia', 'rayosx', 'tomografia')";
+        } elseif ($tipo === 'archivo_imagen') {
+            $sql = 'UPDATE ordenes_imagen_archivos a INNER JOIN ordenes_imagen o ON o.id = a.orden_id
+                    SET a.publicar_paciente = ? WHERE a.id = ? AND o.paciente_id = ? AND a.mime_type IN (' . self::sqlMimesPublicables() . ')';
+        } else {
+            return false;
+        }
+        $v = $publicar ? 1 : 0;
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param('iii', $v, $refId, $pacienteId);
+        $stmt->execute();
+        $ok = $stmt->errno === 0 && self::buscarDocumento($conn, $pacienteId, $tipo, $refId) !== null;
+        $stmt->close();
+        return $ok;
     }
 
     /** Resultados de laboratorio: orden completada con resultado, del paciente (directo, por cotización o por consulta). */

@@ -1,5 +1,8 @@
 RewriteEngine On
 
+# Archivos de pacientes: solo se entregan por la API con sesion (staff o portal del paciente), nunca por URL directa
+RewriteRule ^uploads/(documentos_externos|imagenes_diagnostico)/ - [F,L]
+
 # Permitir acceso a archivos PHP reales
 RewriteCond %{REQUEST_FILENAME} -f
 RewriteCond %{REQUEST_URI} \.php$ [NC]

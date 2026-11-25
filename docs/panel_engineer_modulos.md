@@ -110,6 +110,13 @@ Todo queda **detrás del módulo**: una clínica con `ocupacional` apagado no ve
   el permiso `gestionar_portal_pacientes`) genera el PIN, lo envía por WhatsApp y libera/retiene resultados en `/portal-paciente` (`api_paciente_portal_gestion.php`).
   Liberación `automatico` (al completarse) o `manual`; con saldo pendiente en la cadena de cotizaciones la descarga se bloquea (configurable). Tablas y activación:
   `sql/2026-11-24/`. Otros tipos de informe se agregan registrándolos en `PortalPaciente::PROVEEDORES`.
+  **Archivos subidos:** los PDF de "Documentos del paciente" (`archivo_externo`, solo laboratorio/ecografía/rayos X/tomografía) y los PDF/imágenes de órdenes de imagen
+  (`archivo_imagen`, nunca DICOM) pueden publicarse al portal con la casilla "Publicar en el portal del paciente" al subir (PDF marcado por defecto, imágenes solo si se marcan);
+  el personal puede publicar o retirar después en `/portal-paciente`. Columnas `publicar_paciente`, `titulo` y `laboratorio_origen`: `sql/2026-11-25/004` (aditivo; sin ellas el portal los ignora).
+  **Interruptores del Engineer** (`paciente_portal_config`: `publicar_laboratorio`, `publicar_imagenologia`, por defecto activos) apagan una categoría completa; solo se cambian desde el panel Engineer
+  (con historial). Una categoría apagada devuelve 404 al paciente. El paciente ve los resultados agrupados por atención (cotización raíz con sus adendas); el saldo pendiente se avisa una vez por atención, sin montos.
+  Las carpetas `uploads/documentos_externos/` y `uploads/imagenes_diagnostico/` quedan cerradas al acceso directo por `.htaccess` (`RewriteRule ^uploads/(documentos_externos|imagenes_diagnostico)/ - [F,L]`);
+  como `.htaccess` no se publica en el deploy hay que copiarlo a mano a cada servidor y comprobar que una URL directa responde 403.
   La web pública (`public-site/`) muestra el botón "Iniciar sesión" como menú **"Iniciar sesión como: Paciente · Médico o personal · Empresa"** según los módulos activos
   (`api_public_portales.php`: `pacientes` = `portal_pacientes`; `empresas` = `ocupacional` + `portal_empresas`). Sin ninguno activo es el enlace directo de siempre.
   "Médico o personal" mantiene la URL del sistema de siempre; "Empresa" abre el mismo login con `?acceso=empresa` (solo cambian los textos); "Paciente" abre `/resultados`.

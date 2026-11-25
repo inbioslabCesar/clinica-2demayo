@@ -1428,6 +1428,94 @@ prueba('reevaluación (BD, fase 2): una visita abandonada de un día anterior vu
     }
 }, true);
 
+prueba('portal del paciente: archivos subidos se publican por archivo, agrupan por atención y respetan los interruptores del Engineer', function () {
+    global $mysqli, $marcador, $root;
+    $m = $mysqli;
+    $obs = $m->real_escape_string($marcador);
+    $pac = 987654;
+    $otro = 987655;
+    $dirExt = $root . '/uploads/documentos_externos/' . $pac;
+    $dirImg = $root . '/uploads/imagenes_diagnostico/' . $pac;
+    foreach ([$dirExt, $dirImg] as $d) { if (!is_dir($d)) mkdir($d, 0775, true); }
+    $fExtPdf = $dirExt . '/phptest_a.pdf';
+    $fExtJpg = $dirExt . '/phptest_b.jpg';
+    $fImgPdf = $dirImg . '/phptest_c.pdf';
+    file_put_contents($fExtPdf, '%PDF-1.4');
+    file_put_contents($fExtJpg, 'jpg');
+    file_put_contents($fImgPdf, '%PDF-1.4');
+    $esc = fn(string $s) => $m->real_escape_string($s);
+
+    $m->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, saldo_pendiente, estado, observaciones) VALUES ($pac, 18, 50, 0, 'pagado', '$obs')");
+    $c1 = (int)$m->insert_id;
+    $m->query("INSERT INTO cotizaciones (paciente_id, usuario_id, total, saldo_pendiente, estado, observaciones, cotizacion_padre_id, es_adenda) VALUES ($pac, 18, 30, 0, 'pagado', '$obs', $c1, 1)");
+    $c2 = (int)$m->insert_id;
+    $m->query("INSERT INTO documentos_externos_paciente (paciente_id, tipo, titulo, cotizacion_id, laboratorio_origen) VALUES ($pac, 'laboratorio', 'PHPTEST perfil externo', $c2, 'Lab Roe')");
+    $dep = (int)$m->insert_id;
+    $m->query("INSERT INTO documentos_externos_archivos (documento_id, nombre_original, archivo_path, tamano, mime_type, publicar_paciente) VALUES ($dep, 'a.pdf', '" . $esc($fExtPdf) . "', 8, 'application/pdf', 1)");
+    $aPdf = (int)$m->insert_id;
+    $m->query("INSERT INTO documentos_externos_archivos (documento_id, nombre_original, archivo_path, tamano, mime_type, publicar_paciente) VALUES ($dep, 'b.jpg', '" . $esc($fExtJpg) . "', 3, 'image/jpeg', 0)");
+    $aJpg = (int)$m->insert_id;
+    $m->query("INSERT INTO ordenes_imagen (paciente_id, tipo, indicaciones, estado, cotizacion_id) VALUES ($pac, 'ecografia', 'PHPTEST', 'completado', $c1)");
+    $oi = (int)$m->insert_id;
+    $m->query("INSERT INTO ordenes_imagen_archivos (orden_id, nombre_original, archivo_path, tamano, mime_type, publicar_paciente, titulo) VALUES ($oi, 'eco.pdf', '" . $esc($fImgPdf) . "', 8, 'application/pdf', 1, 'PHPTEST eco informe')");
+    $iPdf = (int)$m->insert_id;
+    $porClave = static function (array $docs): array { $r = []; foreach ($docs as $d) { $r[$d['tipo'] . ':' . $d['ref_id']] = $d; } return $r; };
+    try {
+        $p = $porClave(PortalPaciente::documentos($m, $pac));
+        verdadero(isset($p["archivo_externo:$aPdf"]) && isset($p["archivo_imagen:$iPdf"]), 'los PDF publicados aparecen');
+        verdadero(!isset($p["archivo_externo:$aJpg"]), 'la imagen no publicada no llega al paciente');
+        iguales('disponible', $p["archivo_externo:$aPdf"]['estado']);
+        iguales($c1, $p["archivo_externo:$aPdf"]['atencion_id'], 'una adenda se agrupa en la atención raíz');
+        iguales($c1, $p["archivo_imagen:$iPdf"]['atencion_id'], 'lab externo e imagen de la misma atención van juntos');
+        iguales('laboratorio', $p["archivo_externo:$aPdf"]['categoria']);
+        iguales('imagenologia', $p["archivo_imagen:$iPdf"]['categoria']);
+        iguales('PHPTEST eco informe', $p["archivo_imagen:$iPdf"]['titulo']);
+        verdadero(strpos($p["archivo_externo:$aPdf"]['subtitulo'], 'Lab Roe') !== false, 'muestra el laboratorio de origen');
+        verdadero(!array_key_exists('archivo', $p["archivo_externo:$aPdf"]), 'el paciente no recibe datos internos');
+
+        $s = $porClave(PortalPaciente::documentos($m, $pac, true));
+        iguales('no_publicado', $s["archivo_externo:$aJpg"]['estado'], 'el personal ve el archivo sin publicar');
+
+        // Descarga: ruta validada y nada fuera de uploads
+        verdadero(PortalPaciente::archivoParaEntregar($m, $pac, 'archivo_externo', $aPdf) !== null, 'entrega un archivo propio');
+        $m->query("UPDATE documentos_externos_archivos SET archivo_path = '" . $esc($root . '/config.php') . "' WHERE id = $aPdf");
+        iguales(null, PortalPaciente::archivoParaEntregar($m, $pac, 'archivo_externo', $aPdf), 'una ruta fuera de uploads no se entrega');
+        $m->query("UPDATE documentos_externos_archivos SET archivo_path = '" . $esc($fExtPdf) . "' WHERE id = $aPdf");
+        iguales(null, PortalPaciente::archivoParaEntregar($m, $pac, 'laboratorio', 1), 'solo los tipos de archivo');
+
+        // Publicar / retirar
+        iguales(false, PortalPaciente::publicarArchivo($m, $otro, 'archivo_externo', $aJpg, true), 'otro paciente no puede publicar este archivo');
+        iguales(true, PortalPaciente::publicarArchivo($m, $pac, 'archivo_externo', $aJpg, true));
+        verdadero(isset($porClave(PortalPaciente::documentos($m, $pac))["archivo_externo:$aJpg"]), 'publicada, llega al paciente');
+        PortalPaciente::publicarArchivo($m, $pac, 'archivo_externo', $aJpg, false);
+
+        // Interruptores del Engineer
+        $cambios = PortalPaciente::guardarCategorias($m, ['imagenologia' => false]);
+        iguales(['imagenologia' => ['antes' => true, 'despues' => false]], $cambios);
+        $p = $porClave(PortalPaciente::documentos($m, $pac));
+        verdadero(!isset($p["archivo_imagen:$iPdf"]), 'categoría apagada: no se ve');
+        verdadero(isset($p["archivo_externo:$aPdf"]), 'laboratorio sigue visible');
+        $s = $porClave(PortalPaciente::documentos($m, $pac, true));
+        iguales('en_revision', $s["archivo_imagen:$iPdf"]['estado']);
+        iguales('categoria_desactivada', $s["archivo_imagen:$iPdf"]['pendiente_motivo']);
+        iguales('en_revision', PortalPaciente::buscarDocumento($m, $pac, 'archivo_imagen', $iPdf)['estado'], 'tampoco se descarga');
+        PortalPaciente::guardarCategorias($m, ['laboratorio' => false, 'imagenologia' => true]);
+        $p = $porClave(PortalPaciente::documentos($m, $pac));
+        verdadero(isset($p["archivo_imagen:$iPdf"]) && !isset($p["archivo_externo:$aPdf"]), 'solo imagenología');
+        iguales([], PortalPaciente::guardarCategorias($m, ['laboratorio' => false]), 'sin cambios no registra nada');
+    } finally {
+        $m->query("DELETE FROM paciente_portal_config WHERE clave LIKE 'publicar\\_%'");
+        $m->query("DELETE FROM ordenes_imagen_archivos WHERE orden_id = $oi");
+        $m->query("DELETE FROM ordenes_imagen WHERE id = $oi");
+        $m->query("DELETE FROM documentos_externos_archivos WHERE documento_id = $dep");
+        $m->query("DELETE FROM documentos_externos_paciente WHERE id = $dep");
+        $m->query("DELETE FROM cotizaciones WHERE id IN ($c1, $c2)");
+        foreach ([$fExtPdf, $fExtJpg, $fImgPdf] as $f) { @unlink($f); }
+        @rmdir($dirExt);
+        @rmdir($dirImg);
+    }
+}, true);
+
 /* ───────── Ejecución ───────── */
 
 $bd = null;
