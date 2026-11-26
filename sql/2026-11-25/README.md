@@ -13,4 +13,4 @@ Esta carpeta agrupa varias lógicas del día; cada script indica su tema.
 **Orden de despliegue:** primero el schema en cada clínica (con respaldo), luego el código. El código tolera la ausencia de columnas, pero la función no opera hasta que existan.
 
 **No viaja en el build:** el módulo `portal_pacientes` y los interruptores `publicar_laboratorio` / `publicar_imagenologia` (`paciente_portal_config`, por defecto activos) viven en la BD de cada clínica.
-Además, la regla de `.htaccess` que cierra `uploads/documentos_externos/` y `uploads/imagenes_diagnostico/` debe copiarse a mano a cada servidor.
+La regla de `.htaccess` que cierra `uploads/documentos_externos/` y `uploads/imagenes_diagnostico/` sí viaja en el deploy; verificar después que una URL directa responde 403.

@@ -116,7 +116,7 @@ Todo queda **detrás del módulo**: una clínica con `ocupacional` apagado no ve
   **Interruptores del Engineer** (`paciente_portal_config`: `publicar_laboratorio`, `publicar_imagenologia`, por defecto activos) apagan una categoría completa; solo se cambian desde el panel Engineer
   (con historial). Una categoría apagada devuelve 404 al paciente. El paciente ve los resultados agrupados por atención (cotización raíz con sus adendas); el saldo pendiente se avisa una vez por atención, sin montos.
   Las carpetas `uploads/documentos_externos/` y `uploads/imagenes_diagnostico/` quedan cerradas al acceso directo por `.htaccess` (`RewriteRule ^uploads/(documentos_externos|imagenes_diagnostico)/ - [F,L]`);
-  como `.htaccess` no se publica en el deploy hay que copiarlo a mano a cada servidor y comprobar que una URL directa responde 403.
+  el `.htaccess` raíz viaja en el deploy (el rsync no lo excluye); tras desplegar, comprobar que una URL directa de esas carpetas responde 403.
   La web pública (`public-site/`) muestra el botón "Iniciar sesión" como menú **"Iniciar sesión como: Paciente · Médico o personal · Empresa"** según los módulos activos
   (`api_public_portales.php`: `pacientes` = `portal_pacientes`; `empresas` = `ocupacional` + `portal_empresas`). Sin ninguno activo es el enlace directo de siempre.
   "Médico o personal" mantiene la URL del sistema de siempre; "Empresa" abre el mismo login con `?acceso=empresa` (solo cambian los textos); "Paciente" abre `/resultados`.
