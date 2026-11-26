@@ -21,6 +21,7 @@ Los médicos pueden editar protocolos de receta (también los compartidos con la
 
 - `006_schema_receta_protocolos.sql`: agrega 3 columnas a `receta_protocolos` (`autor_medico_id`, `creado_por_nombre`, `actualizado_por_nombre`). Idempotente; no modifica datos. Requiere `DELIMITER` (cliente `mysql`).
   Ya está en `db/esquema_referencia/esquema_referencia.json`, así que el actualizador de esquema también lo aplica.
-- `007_verify_receta_protocolos.sql`: verificación de solo lectura.
+- `007_verify_receta_protocolos.sql`: verificación de solo lectura (debe devolver 3 filas). Ejecutarla sola: en phpMyAdmin, junto a otra consulta que lea una tabla normal, muestra un error falso `#1109 Tabla desconocida ... en information_schema`.
+- `008_info_protocolos_por_alcance.sql`: informativo (conteo de protocolos activos por alcance).
 
 **Orden de despliegue:** primero el schema en cada clínica (con respaldo), luego el código. Sin las columnas el código sigue funcionando (guardar y editar sin marca de autor), pero un protocolo compartido solo lo puede eliminar el administrador.
