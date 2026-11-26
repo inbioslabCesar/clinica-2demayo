@@ -14,3 +14,13 @@ Esta carpeta agrupa varias lógicas del día; cada script indica su tema.
 
 **No viaja en el build:** el módulo `portal_pacientes` y los interruptores `publicar_laboratorio` / `publicar_imagenologia` (`paciente_portal_config`, por defecto activos) viven en la BD de cada clínica.
 La regla de `.htaccess` que cierra `uploads/documentos_externos/` y `uploads/imagenes_diagnostico/` sí viaja en el deploy; verificar después que una URL directa responde 403.
+
+## Protocolos de receta editables y compartidos — **cambia schema, solo aditivo**
+
+Los médicos pueden editar protocolos de receta (también los compartidos con la especialidad o con todos) y reordenar la receta de cada paciente.
+
+- `006_schema_receta_protocolos.sql`: agrega 3 columnas a `receta_protocolos` (`autor_medico_id`, `creado_por_nombre`, `actualizado_por_nombre`). Idempotente; no modifica datos. Requiere `DELIMITER` (cliente `mysql`).
+  Ya está en `db/esquema_referencia/esquema_referencia.json`, así que el actualizador de esquema también lo aplica.
+- `007_verify_receta_protocolos.sql`: verificación de solo lectura.
+
+**Orden de despliegue:** primero el schema en cada clínica (con respaldo), luego el código. Sin las columnas el código sigue funcionando (guardar y editar sin marca de autor), pero un protocolo compartido solo lo puede eliminar el administrador.

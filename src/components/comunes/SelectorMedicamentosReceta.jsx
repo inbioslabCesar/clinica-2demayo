@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { authFetch } from "../../utils/apiClient";
 import { calcularCantidadTotalReceta } from "../../utils/calcularCantidadReceta";
+import { agregarAlFinal, alternarSeleccion, itemsEnOrdenDeSeleccion, moverItem } from "../../utils/ordenReceta";
+import ProtocolosReceta from "./ProtocolosReceta";
 
 const emptyDetalle = {
   dosis: "",
@@ -80,12 +82,9 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
   const [modoManual, setModoManual] = useState(false);
   const [manualNombre, setManualNombre] = useState("");
   const [detalle, setDetalle] = useState(emptyDetalle);
-  const [seleccionSugeridos, setSeleccionSugeridos] = useState({});
+  const [seleccionSugeridos, setSeleccionSugeridos] = useState([]);
   const [cantidadDispensacion, setCantidadDispensacion] = useState("");
   const [unidadDispensacion, setUnidadDispensacion] = useState("unidad");
-  const [protocolos, setProtocolos] = useState([]);
-  const [loadingProtocolos, setLoadingProtocolos] = useState(false);
-  const [deletingProtocoloId, setDeletingProtocoloId] = useState(0);
   const searchAbortRef = useRef(null);
   const searchReqRef = useRef(0);
   const searchCacheRef = useRef(new Map());
@@ -99,37 +98,6 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
     const presentacion = medicamentoSel?.presentacion || "";
     setUnidadDispensacion(inferUnidadDispensacion(presentacion));
   }, [medicamentoSel, modoManual]);
-
-  useEffect(() => {
-    const consulta = Number(consultaId || 0);
-    if (consulta <= 0) {
-      setProtocolos([]);
-      return;
-    }
-
-    let cancelled = false;
-    setLoadingProtocolos(true);
-
-    authFetch(`api_receta_protocolos.php?consulta_id=${consulta}`, { cache: "no-store" })
-      .then((res) => res.json())
-      .then((data) => {
-        if (cancelled) return;
-        const rows = Array.isArray(data?.data) ? data.data : [];
-        setProtocolos(rows);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setProtocolos([]);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLoadingProtocolos(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [consultaId]);
 
   useEffect(() => {
     const termino = String(busqueda || "").trim();
@@ -268,7 +236,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
       origen: modoManual ? "manual" : "catalogo",
     };
 
-    setReceta((prev) => [nuevo, ...prev]);
+    setReceta((prev) => agregarAlFinal(prev, [nuevo]));
     resetFormulario();
   };
 
@@ -337,27 +305,18 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
   };
 
   const toggleSugerido = (key, checked) => {
-    setSeleccionSugeridos((prev) => {
-      const next = { ...prev };
-      if (checked) {
-        next[key] = true;
-      } else {
-        delete next[key];
-      }
-      return next;
-    });
+    setSeleccionSugeridos((prev) => alternarSeleccion(prev, key, checked));
   };
 
   const agregarSugeridosSeleccionados = () => {
-    const seleccionados = [];
-
+    const itemsPorClave = new Map();
     gruposSugerencias.forEach((grupo) => {
       grupo.items.forEach((item, idx) => {
-        const k = buildSugeridoKey(grupo.key, item, idx);
-        if (!seleccionSugeridos[k]) return;
-        seleccionados.push(item);
+        itemsPorClave.set(buildSugeridoKey(grupo.key, item, idx), item);
       });
     });
+    // El orden de la receta es el orden de los clics, no el del listado de sugerencias.
+    const seleccionados = itemsEnOrdenDeSeleccion(seleccionSugeridos, itemsPorClave);
 
     if (seleccionados.length === 0) return;
 
@@ -436,18 +395,11 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
 
     if (nuevos.length === 0) return;
 
-    setReceta((prev) => [...nuevos, ...prev]);
-    setSeleccionSugeridos({});
+    setReceta((prev) => agregarAlFinal(prev, nuevos));
+    setSeleccionSugeridos([]);
   };
 
-  const aplicarProtocolo = (protocolo) => {
-    const items = Array.isArray(protocolo?.items) ? protocolo.items : [];
-    if (items.length === 0) return;
-
-    const existentes = new Set(
-      recetaArray.map((r) => `${String(r.codigo || "").trim().toLowerCase()}|${String(r.nombre || "").trim().toLowerCase()}`)
-    );
-
+  const construirItemsProtocolo = (items, existentes) => {
     const nuevos = [];
     items.forEach((item, idx) => {
       const codigo = String(item?.codigo || "").trim();
@@ -511,143 +463,45 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
       });
     });
 
+    return nuevos;
+  };
+
+  // Un protocolo se agrega al final de la lista, en el orden en que fue guardado.
+  const aplicarProtocolo = (protocolo) => {
+    const items = Array.isArray(protocolo?.items) ? protocolo.items : [];
+    if (items.length === 0) return;
+
+    const existentes = new Set(
+      recetaArray.map((r) => `${String(r.codigo || "").trim().toLowerCase()}|${String(r.nombre || "").trim().toLowerCase()}`)
+    );
+    const nuevos = construirItemsProtocolo(items, existentes);
     if (nuevos.length === 0) return;
-    setReceta((prev) => [...nuevos, ...prev]);
+    setReceta((prev) => agregarAlFinal(prev, nuevos));
   };
 
-  const guardarComoProtocolo = async () => {
+  const normalizarItemsProtocolo = (items) => construirItemsProtocolo(Array.isArray(items) ? items : [], new Set());
+
+  const vaciarLista = () => {
     if (recetaArray.length === 0) return;
-    const nombre = window.prompt("Nombre del protocolo de receta");
-    if (!nombre || !String(nombre).trim()) return;
-
-    const scopeRaw = window.prompt("Alcance del protocolo: medico, especialidad o general", "medico");
-    const scope = ["medico", "especialidad", "general"].includes(String(scopeRaw || "").trim().toLowerCase())
-      ? String(scopeRaw).trim().toLowerCase()
-      : "medico";
-
-    const items = recetaArray.map((m) => ({
-      codigo: m?.codigo || "",
-      nombre: m?.nombre || "",
-      presentacion: m?.presentacion || "",
-      concentracion: m?.concentracion || "",
-      laboratorio: m?.laboratorio || "",
-      dosis: m?.dosis || "",
-      frecuencia: m?.frecuencia || "",
-      frecuencia_tipo: m?.frecuencia_tipo || "intervalo_horas",
-      frecuencia_valor: m?.frecuencia_valor ?? null,
-      frecuencia_horas: Array.isArray(m?.frecuencia_horas) ? m.frecuencia_horas : [],
-      duracion: m?.duracion || "",
-      duracion_valor: m?.duracion_valor || 5,
-      duracion_unidad: m?.duracion_unidad || "dias",
-      observaciones: m?.observaciones || "",
-      cantidad_dispensacion: parsePositiveInteger(m?.cantidad_dispensacion || 0) || 1,
-      unidad_dispensacion: m?.unidad_dispensacion || "unidad",
-      manual: Boolean(m?.manual),
-      origen: m?.origen || "catalogo",
-    }));
-
-    const res = await authFetch("api_receta_protocolos.php", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "save",
-        consulta_id: Number(consultaId || 0),
-        nombre: String(nombre).trim(),
-        scope,
-        items,
-      }),
-    });
-
-    const data = await res.json();
-    if (!data?.success) {
-      window.alert(data?.error || "No se pudo guardar el protocolo");
-      return;
-    }
-
-    const consulta = Number(consultaId || 0);
-    if (consulta > 0) {
-      const refresh = await authFetch(`api_receta_protocolos.php?consulta_id=${consulta}`, { cache: "no-store" });
-      const payload = await refresh.json();
-      setProtocolos(Array.isArray(payload?.data) ? payload.data : []);
-    }
+    if (!window.confirm("¿Quitar todos los medicamentos de la lista?")) return;
+    setReceta([]);
   };
 
-  const eliminarProtocolo = async (protocolo) => {
-    const id = Number(protocolo?.id || 0);
-    if (id <= 0) return;
-
-    const nombre = String(protocolo?.nombre || "este protocolo");
-    const ok = window.confirm(`¿Eliminar protocolo "${nombre}"?`);
-    if (!ok) return;
-
-    setDeletingProtocoloId(id);
-    try {
-      const res = await authFetch("api_receta_protocolos.php", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", id }),
-      });
-
-      const data = await res.json();
-      if (!data?.success) {
-        window.alert(data?.error || "No se pudo eliminar el protocolo");
-        return;
-      }
-
-      setProtocolos((prev) => prev.filter((p) => Number(p?.id || 0) !== id));
-    } catch {
-      window.alert("No se pudo eliminar el protocolo");
-    } finally {
-      setDeletingProtocoloId(0);
-    }
+  const moverMedicamento = (idx, delta) => {
+    setReceta((prev) => moverItem(prev, idx, delta));
   };
 
   return (
     <div className="mb-4">
       <h3 className="text-lg font-semibold mb-2 mt-4">Receta médica</h3>
 
-      <div className="mb-3 border rounded p-3 bg-sky-50">
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-          <h4 className="text-sm font-semibold text-sky-900">Protocolos de receta</h4>
-          <button
-            type="button"
-            className="text-xs sm:text-sm bg-sky-600 hover:bg-sky-700 text-white px-3 py-1 rounded"
-            onClick={guardarComoProtocolo}
-            disabled={recetaArray.length === 0}
-          >
-            Guardar receta actual como protocolo
-          </button>
-        </div>
-        {loadingProtocolos && <p className="text-xs text-sky-700">Cargando protocolos...</p>}
-        {!loadingProtocolos && protocolos.length === 0 && (
-          <p className="text-xs text-sky-700">Sin protocolos aun para este contexto.</p>
-        )}
-        {!loadingProtocolos && protocolos.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {protocolos.map((p) => (
-              <div key={p.id} className="inline-flex items-center rounded border border-sky-300 bg-white overflow-hidden">
-                <button
-                  type="button"
-                  className="text-xs hover:bg-sky-100 text-sky-800 px-2 py-1"
-                  onClick={() => aplicarProtocolo(p)}
-                  title={`Aplicar ${p.nombre}`}
-                >
-                  {p.nombre}
-                </button>
-                <button
-                  type="button"
-                  className="text-xs px-2 py-1 border-l border-sky-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
-                  onClick={() => eliminarProtocolo(p)}
-                  title={`Eliminar ${p.nombre}`}
-                  disabled={deletingProtocoloId === Number(p.id)}
-                >
-                  {deletingProtocoloId === Number(p.id) ? "..." : "X"}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <ProtocolosReceta
+        consultaId={consultaId}
+        receta={recetaArray}
+        setReceta={setReceta}
+        onAplicar={aplicarProtocolo}
+        normalizarItems={normalizarItemsProtocolo}
+      />
 
       {totalSugeridos > 0 && (
         <div className="mb-3 border rounded p-3 bg-emerald-50">
@@ -675,18 +529,24 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
                       const enCatalogo = Boolean(item?.en_catalogo);
                       const activo = item?.activo !== false;
                       const bloqueado = enCatalogo && !activo;
+                      const posicion = seleccionSugeridos.indexOf(k) + 1;
                       return (
                         <label
                           key={k}
-                          className={`rounded border px-2 py-1 text-[11px] leading-tight flex items-start gap-1.5 ${bloqueado ? "bg-gray-100 border-gray-200 text-gray-500" : "bg-white border-emerald-200 text-gray-700 cursor-pointer"}`}
+                          className={`rounded border px-2 py-1 text-[11px] leading-tight flex items-start gap-1.5 ${bloqueado ? "bg-gray-100 border-gray-200 text-gray-500" : "bg-white border-emerald-200 text-gray-700 cursor-pointer"} ${posicion > 0 ? "ring-1 ring-emerald-400" : ""}`}
                         >
                           <input
                             type="checkbox"
                             className="mt-0.5 scale-90"
-                            checked={Boolean(seleccionSugeridos[k])}
+                            checked={posicion > 0}
                             onChange={(e) => toggleSugerido(k, e.target.checked)}
                             disabled={bloqueado}
                           />
+                          {posicion > 0 && (
+                            <span className="mt-0.5 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white" title={`Se agregará en la posición ${posicion}`}>
+                              {posicion}
+                            </span>
+                          )}
                           <span className="flex-1 min-w-0">
                             <span className="font-semibold block truncate" title={item?.nombre || "Medicamento"}>{item?.nombre || "Medicamento"}</span>
                             <span className="text-gray-500 block truncate">{item?.codigo ? `(${item.codigo})` : ""}</span>
@@ -955,11 +815,19 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
       </div>
 
       <div className="mt-2">
-        <h4 className="text-xs text-gray-600 font-medium mb-2">Medicamentos seleccionados:</h4>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h4 className="text-xs text-gray-600 font-medium">Medicamentos seleccionados (el orden de la lista es el de la receta):</h4>
+          {recetaArray.length > 0 && (
+            <button type="button" className="text-xs text-red-600 hover:text-red-800 underline" onClick={vaciarLista}>
+              Vaciar lista
+            </button>
+          )}
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs border rounded min-w-max">
             <thead>
               <tr className="bg-blue-100">
+                <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold w-20">Orden</th>
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Medicamento</th>
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Frecuencia</th>
                 <th className="px-2 py-1 whitespace-nowrap text-xs text-gray-700 font-semibold">Duración</th>
@@ -972,7 +840,29 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
               {recetaArray.length > 0 ? (
                 recetaArray.map((m, idx) => (
                   <tr key={`${m.codigo || "sin-codigo"}-${idx}`}>
-                    <td className="border px-2 py-1 max-w-xs">
+                    <td className="border px-1 py-1 whitespace-nowrap text-center">
+                      <span className="mr-1 font-semibold text-gray-600">{idx + 1}</span>
+                      <button
+                        type="button"
+                        className="px-1 text-gray-600 hover:text-blue-700 disabled:opacity-30"
+                        onClick={() => moverMedicamento(idx, -1)}
+                        disabled={idx === 0}
+                        title="Subir"
+                        aria-label={`Subir ${m.nombre}`}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="px-1 text-gray-600 hover:text-blue-700 disabled:opacity-30"
+                        onClick={() => moverMedicamento(idx, 1)}
+                        disabled={idx === recetaArray.length - 1}
+                        title="Bajar"
+                        aria-label={`Bajar ${m.nombre}`}
+                      >
+                        ↓
+                      </button>
+                    </td>                    <td className="border px-2 py-1 max-w-xs">
                       <div className="truncate" title={`${m.nombre} (${m.codigo || "SIN-CODIGO"})`}>
                         {m.nombre} {m.codigo && <span className="text-gray-500">({m.codigo})</span>}
                       </div>
@@ -1027,7 +917,7 @@ export default function SelectorMedicamentosReceta({ receta, setReceta, sugerenc
                 ))
               ) : (
                 <tr>
-                  <td className="border px-2 py-1 text-center text-gray-500 italic" colSpan={6}>
+                  <td className="border px-2 py-1 text-center text-gray-500 italic" colSpan={7}>
                     No hay medicamentos seleccionados
                   </td>
                 </tr>

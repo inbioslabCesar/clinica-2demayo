@@ -30,6 +30,7 @@ require_once $root . '/modules/OcupacionalSesion.php';
 require_once $root . '/modules/LimiteIntentos.php';
 require_once $root . '/modules/PermisoAnulacion.php';
 require_once $root . '/modules/PortalPaciente.php';
+require_once $root . '/modules/RecetaProtocolos.php';
 require_once $root . '/modules/LicenciaSistema.php';
 
 function licFila(array $extra = []): array {
@@ -173,6 +174,52 @@ prueba('portal del paciente: PIN, documento y permiso del personal', function ()
     iguales(false, PortalPaciente::staffPermitido(['rol' => 'recepcionista', 'permisos' => ['ver_pacientes']]));
     iguales(false, PortalPaciente::staffPermitido(['rol' => 'laboratorista', 'permisos' => [PortalPaciente::PERMISO]]));
     iguales(false, PortalPaciente::staffPermitido(null));
+});
+
+prueba('protocolos de receta: los compartidos los edita cualquier médico; eliminar y cambiar el alcance solo el autor o el administrador', function () {
+    $medA = ['admin' => false, 'gestiona' => true, 'medico_id' => 7, 'usuario_id' => 0];
+    $medB = ['admin' => false, 'gestiona' => true, 'medico_id' => 9, 'usuario_id' => 0];
+    $admin = ['admin' => true, 'gestiona' => true, 'medico_id' => 0, 'usuario_id' => 1];
+    $recep = ['admin' => false, 'gestiona' => false, 'medico_id' => 0, 'usuario_id' => 5];
+
+    $personal = ['medico_id' => 7, 'especialidad' => 'Cardiología'];
+    iguales(true, RecetaProtocolos::puedeEditar($personal, $medA), 'dueño edita el personal');
+    iguales(false, RecetaProtocolos::puedeEditar($personal, $medB), 'otro médico no edita un personal');
+    iguales(true, RecetaProtocolos::puedeEditar($personal, $admin));
+    iguales(true, RecetaProtocolos::puedeEliminar($personal, $medA));
+    iguales(false, RecetaProtocolos::puedeEliminar($personal, $medB));
+
+    $compartido = ['medico_id' => null, 'especialidad' => '', 'autor_medico_id' => 7];
+    iguales('general', RecetaProtocolos::alcance(null, ''));
+    iguales('especialidad', RecetaProtocolos::alcance(null, 'Pediatría'));
+    iguales(true, RecetaProtocolos::puedeEditar($compartido, $medB), 'cualquier médico edita un compartido');
+    iguales(true, RecetaProtocolos::puedeEliminar($compartido, $medA), 'el autor elimina');
+    iguales(false, RecetaProtocolos::puedeEliminar($compartido, $medB), 'otro médico no elimina un compartido');
+    iguales(false, RecetaProtocolos::puedeCambiarAlcance($compartido, $medB), 'otro médico no cambia quién lo ve');
+    iguales(true, RecetaProtocolos::puedeEliminar($compartido, $admin));
+
+    $antiguo = ['medico_id' => null, 'especialidad' => 'Pediatría', 'creado_por' => 0];
+    iguales(false, RecetaProtocolos::puedeEliminar($antiguo, $medA), 'sin autor registrado solo el administrador elimina');
+    iguales(true, RecetaProtocolos::puedeEliminar($antiguo, $admin));
+
+    iguales(false, RecetaProtocolos::puedeEditar($compartido, $recep), 'otros roles solo consultan');
+    iguales(false, RecetaProtocolos::puedeEliminar($personal, $recep));
+
+    iguales(true, RecetaProtocolos::visibleEn($personal, 7, 'cardiología'));
+    iguales(false, RecetaProtocolos::visibleEn($personal, 9, 'cardiología'));
+    iguales(true, RecetaProtocolos::visibleEn($antiguo, 9, 'pediatría'), 'misma especialidad');
+    iguales(false, RecetaProtocolos::visibleEn($antiguo, 9, 'cardiología'), 'otra especialidad');
+    iguales(true, RecetaProtocolos::visibleEn($compartido, 9, 'cardiología'), 'general: todos');
+});
+
+prueba('protocolos de receta: alcance por defecto y limpieza de items conservan el orden', function () {
+    iguales('medico', RecetaProtocolos::normalizarAlcance('cualquiera'));
+    iguales('general', RecetaProtocolos::normalizarAlcance(' GENERAL '));
+    $items = RecetaProtocolos::limpiarItems([['nombre' => 'B'], 'x', ['nombre' => ' '], ['nombre' => 'A'], ['otro' => 1]]);
+    iguales(['B', 'A'], array_column($items, 'nombre'), 'orden recibido, sin items inválidos');
+    $muchos = array_fill(0, 100, ['nombre' => 'X']);
+    iguales(RecetaProtocolos::MAX_ITEMS, count(RecetaProtocolos::limpiarItems($muchos)));
+    iguales([], RecetaProtocolos::limpiarItems('no es arreglo'));
 });
 
 prueba('portal del paciente: solo se entregan PDF dentro de uploads/informes_imagenologia', function () {

@@ -1,6 +1,6 @@
 {
     "formato": 1,
-    "generado_en": "2026-11-25 19:45",
+    "generado_en": "2026-11-25 23:30",
     "origen_motor": "8.4.3",
     "tablas": {
         "agenda_contrato": {
@@ -28716,6 +28716,42 @@
                     },
                     "extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
                     "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "autor_medico_id": {
+                    "orden": 10,
+                    "tipo": "int",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "creado_por_nombre": {
+                    "orden": 11,
+                    "tipo": "varchar(150)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_general_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "actualizado_por_nombre": {
+                    "orden": 12,
+                    "tipo": "varchar(150)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_general_ci",
                     "comentario": "",
                     "generada": false
                 }
