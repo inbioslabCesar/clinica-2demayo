@@ -5,11 +5,19 @@
  * 
  * POST /api_imagenologia_generar_pdf.php
  * Body: { informe_id: 456 }
+ *
+ * Modo interno: PortalPaciente::generarPdfImagenologia() lo incluye definiendo IMAGENOLOGIA_PDF_INTERNO y
+ * $informeIdInterno (el paciente ya fue validado por el portal). En ese modo no exige sesión de personal,
+ * no emite cabeceras ni JSON y devuelve el array de resultado en lugar de terminar el script.
  */
+
+$pdfInterno = defined('IMAGENOLOGIA_PDF_INTERNO');
 
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
-require_once __DIR__ . '/auth_check.php';
+if (!$pdfInterno) {
+    require_once __DIR__ . '/auth_check.php';
+}
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/imagenologia_encoding.php';
 require_once __DIR__ . '/modules/EpisodioAtencionModule.php';
@@ -18,32 +26,41 @@ use Mpdf\Mpdf;
 use Mpdf\Config\ConfigVariables;
 use Mpdf\Config\FontVariables;
 
-header('Content-Type: application/json; charset=utf-8');
+if (!$pdfInterno) {
+    header('Content-Type: application/json; charset=utf-8');
 
-// Validar autenticación
-$usuario = $_SESSION['usuario'] ?? $_SESSION['medico'] ?? null;
-$usuarioId = (int)($usuario['id'] ?? 0);
-$usuarioNombre = trim((string)($usuario['nombre'] ?? 'Sistema'));
-$rol = strtolower(trim((string)($usuario['rol'] ?? '')));
+    // Validar autenticación
+    $usuario = $_SESSION['usuario'] ?? $_SESSION['medico'] ?? null;
+    $usuarioId = (int)($usuario['id'] ?? 0);
+    $usuarioNombre = trim((string)($usuario['nombre'] ?? 'Sistema'));
+    $rol = strtolower(trim((string)($usuario['rol'] ?? '')));
 
-if (!$usuario || !in_array($rol, ['medico', 'administrador'])) {
-    http_response_code(403);
-    echo json_encode(['success' => false, 'error' => 'Acceso denegado']);
-    exit;
+    if (!$usuario || !in_array($rol, ['medico', 'administrador'])) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'error' => 'Acceso denegado']);
+        exit;
+    }
+
+    $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
+    if ($method !== 'POST') {
+        http_response_code(405);
+        echo json_encode(['success' => false, 'error' => 'Método no permitido']);
+        exit;
+    }
+
+    $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    $informeId = (int)($input['informe_id'] ?? 0);
+} else {
+    $usuarioId = 0;
+    $usuarioNombre = 'Portal del paciente';
+    $informeId = (int)($informeIdInterno ?? 0);
 }
-
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-
-if ($method !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['success' => false, 'error' => 'Método no permitido']);
-    exit;
-}
-
-$input = json_decode(file_get_contents('php://input'), true) ?? [];
-$informeId = (int)($input['informe_id'] ?? 0);
 
 if ($informeId <= 0) {
+    if ($pdfInterno) {
+        return null;
+    }
     http_response_code(400);
     echo json_encode(['success' => false, 'error' => 'informe_id es requerido']);
     exit;
@@ -106,6 +123,9 @@ $informe = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 
 if (!$informe) {
+    if ($pdfInterno) {
+        return null;
+    }
     http_response_code(404);
     echo json_encode(['success' => false, 'error' => 'Informe no encontrado']);
     exit;
@@ -1282,6 +1302,10 @@ try {
         $stmtHist->close();
     }
     
+    if ($pdfInterno) {
+        return ['pdf_path' => $rutaRelativa];
+    }
+
     echo json_encode([
         'success' => true,
         'pdf_url' => '/' . $rutaRelativa,
@@ -1291,6 +1315,10 @@ try {
     ]);
     
 } catch (\Exception $e) {
+    if ($pdfInterno) {
+        error_log('Portal: no se pudo generar el PDF del informe ' . $informeId . ': ' . $e->getMessage());
+        return null;
+    }
     http_response_code(500);
     echo json_encode([
         'success' => false,
