@@ -6,9 +6,9 @@ import { detectarCruceConCarrito, validarAgendaAntesDeCotizar } from "../../util
 import DisponibilidadMedicos from "../medico/DisponibilidadMedicos";
 import FormularioAgendarConsulta from "./FormularioAgendarConsulta";
 import ResumenConsultaAgendada from "../comunes/ResumenConsultaAgendada";
+import BotonVolver from "../comunes/BotonVolver";
 import { useQuoteCart } from "../../context/QuoteCartContext";
 import {
-  FaArrowLeft,
   FaCalendarAlt,
   FaUserMd,
   FaClipboardList,
@@ -1785,20 +1785,18 @@ function AgendarConsulta({ pacienteId, pacienteTemporal = null, consultaId = nul
   return (
     <div className={`w-full flex flex-col py-4 px-2 md:px-0 bg-gradient-to-br from-gray-50 to-blue-50 min-h-[80vh] transition-all ${cartCount > 0 ? "xl:pr-[24rem]" : ""}`}>
       {!(new URLSearchParams(window.location.search).get('cobro_id') || new URLSearchParams(window.location.search).get('cotizacion_id')) && (
-        <button
-          type="button"
+        <BotonVolver
+          ariaLabel="Volver al selector de servicios"
+          className="self-start mb-3"
           onClick={() => navigate('/seleccionar-servicio', {
             state: {
               pacienteId: pacienteIdNum,
               ...(pacienteTemporalInfo ? { pacienteTemporal: pacienteTemporalInfo } : {}),
             },
           })}
-          className="group inline-flex items-center gap-2 self-start mb-3 rounded-full border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:shadow focus:outline-none focus:ring-2 focus:ring-blue-300 active:scale-95"
-          aria-label="Volver al selector de servicios"
         >
-          <FaArrowLeft className="text-xs transition-transform group-hover:-translate-x-0.5" aria-hidden="true" />
           Volver
-        </button>
+        </BotonVolver>
       )}
       <div className="w-full max-w-[1500px] mx-auto grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px] gap-5 xl:gap-6 items-start">
         {/* Tarjeta disponibilidad */}

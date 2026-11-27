@@ -5,6 +5,8 @@ import PacienteListSearch from "../components/paciente-list/PacienteListSearch.j
 import { useQuoteCart } from "../context/QuoteCartContext";
 import Swal from "sweetalert2";
 import { authFetch } from "../utils/apiClient";
+import BotonVolver from "../components/comunes/BotonVolver";
+import BotonVolverServicio from "../components/comunes/BotonVolverServicio";
 // import withReactContent from "sweetalert2-react-content";
 
 export default function FarmaciaCotizadorPage({ usuario }) {
@@ -1201,46 +1203,26 @@ export default function FarmaciaCotizadorPage({ usuario }) {
           )}
         </h2>
         {/* Mostrar el botón solo si hay pacienteId en la URL, si no, mostrar botón para ir al panel principal del químico */}
-        {pacienteId && !(new URLSearchParams(location.search).get('cobro_id') || new URLSearchParams(location.search).get('cotizacion_id')) ? (
-          <button
-            className="bg-blue-100 text-blue-800 px-4 py-2 rounded font-semibold border border-blue-300 hover:bg-blue-200 transition"
-            onClick={() => navigate("/seleccionar-servicio", {
-              state: Number(pacienteId || 0) <= 0
-                ? {
-                    pacienteId: 0,
-                    pacienteTemporal: { nombre: 'Particular', apellido: '', dni: '' },
-                  }
-                : { pacienteId },
-            })}
-          >
-            ← Volver a Servicios
-          </button>
-        ) : (
-          <button
-            className="bg-purple-100 text-purple-800 px-4 py-2 rounded font-semibold border border-purple-300 hover:bg-purple-200 transition"
-            onClick={() => {
-              const sp = new URLSearchParams(location.search);
-              const isEditing = Boolean(sp.get('cobro_id') || sp.get('cotizacion_id'));
-              const cotizacionId = sp.get('cotizacion_id');
-              const pid = pacienteId || pacienteDatos?.id;
-              if (cotizacionId && !sp.get('cobro_id')) {
-                navigate(`/seleccionar-servicio?paciente_id=${Number(pid)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
-                  state: { pacienteId: Number(pid), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
-                });
-              } else if (isEditing) {
-                navigate(pid ? `/consumo-paciente/${pid}` : '/pacientes');
-              } else {
-                navigate('/medicamentos');
-              }
-            }}
-          >
-            {(() => {
-              const sp = new URLSearchParams(location.search);
-              const isEditing = Boolean(sp.get('cobro_id') || sp.get('cotizacion_id'));
-              return isEditing ? '← Volver a Servicios' : '← Ir a Lista de Medicamentos';
-            })()}
-          </button>
-        )}
+        {(() => {
+          const sp = new URLSearchParams(location.search);
+          const cobroId = sp.get('cobro_id');
+          const cotizacionId = sp.get('cotizacion_id');
+          // Sin paciente en la URL (flujo del químico) se vuelve a la lista de medicamentos.
+          if (!pacienteId && !cobroId && !cotizacionId) {
+            return (
+              <BotonVolver ariaLabel="Ir a la lista de medicamentos" onClick={() => navigate('/medicamentos')}>
+                Ir a Lista de Medicamentos
+              </BotonVolver>
+            );
+          }
+          return (
+            <BotonVolverServicio
+              pacienteId={pacienteId || pacienteDatos?.id}
+              cotizacionId={cotizacionId}
+              cobroId={cobroId}
+            />
+          );
+        })()}
       </div>
       {/* Buscador de paciente */}
   <div className="mb-4">

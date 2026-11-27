@@ -1,5 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { AgendarConsulta } from "../components/paciente";
+import BotonVolver from "../components/comunes/BotonVolver";
 
 function AgendarConsultaPage() {
   const location = useLocation();
@@ -21,12 +22,7 @@ function AgendarConsultaPage() {
           <p className="text-lg font-bold text-red-600 mb-2">
             No se ha seleccionado un paciente.
           </p>
-          <button
-            onClick={() => navigate(-1)}
-            className="bg-blue-500 text-white px-4 py-2 rounded"
-          >
-            Volver
-          </button>
+          <BotonVolver onClick={() => navigate(-1)}>Volver</BotonVolver>
         </div>
       </div>
     );
