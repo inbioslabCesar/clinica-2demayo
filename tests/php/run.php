@@ -31,6 +31,7 @@ require_once $root . '/modules/LimiteIntentos.php';
 require_once $root . '/modules/PermisoAnulacion.php';
 require_once $root . '/modules/PortalPaciente.php';
 require_once $root . '/modules/RecetaProtocolos.php';
+require_once $root . '/modules/SeguimientoClinico.php';
 require_once $root . '/modules/LicenciaSistema.php';
 
 function licFila(array $extra = []): array {
@@ -221,6 +222,115 @@ prueba('protocolos de receta: alcance por defecto y limpieza de items conservan 
     iguales(RecetaProtocolos::MAX_ITEMS, count(RecetaProtocolos::limpiarItems($muchos)));
     iguales([], RecetaProtocolos::limpiarItems('no es arreglo'));
 });
+
+prueba('seguimiento clínico: actor, búsqueda y paginación se interpretan con reglas estrictas', function () {
+    $med = SeguimientoClinico::actorDesdeSesion(['medico_id' => 7, 'medico' => ['nombre' => 'Ana', 'apellido' => 'Paz']]);
+    iguales(['medico', false, 7, 'Ana Paz'], [$med['rol'], $med['admin'], $med['medico_id'], $med['nombre']], 'login de médico');
+    $adm = SeguimientoClinico::actorDesdeSesion(['usuario' => ['rol' => 'administrador', 'id' => 3, 'nombre' => 'Admin']]);
+    iguales([true, 0, 3], [$adm['admin'], $adm['medico_id'], $adm['usuario_id']]);
+    $usrMed = SeguimientoClinico::actorDesdeSesion(['usuario' => ['rol' => 'medico', 'id' => 9, 'medico_id' => 5]]);
+    iguales(5, $usrMed['medico_id'], 'usuario con rol médico');
+    iguales(null, SeguimientoClinico::actorDesdeSesion(['usuario' => ['rol' => 'recepcionista', 'id' => 1]]), 'recepción no entra');
+    iguales(null, SeguimientoClinico::actorDesdeSesion([]));
+
+    iguales(['dni', '12345678'], array_values(SeguimientoClinico::normalizarBusqueda(' 12345678 ')));
+    iguales(null, SeguimientoClinico::normalizarBusqueda('123'), 'dígitos insuficientes');
+    iguales(null, SeguimientoClinico::normalizarBusqueda('ab'), 'texto insuficiente');
+    iguales(['texto', 'maria perez'], array_values(SeguimientoClinico::normalizarBusqueda("maria   perez")), 'espacios repetidos');
+    iguales(null, SeguimientoClinico::normalizarBusqueda('   '));
+
+    iguales([1, 10, 0], array_values(SeguimientoClinico::paginar(0, 0)), 'por defecto');
+    iguales([3, 20, 40], array_values(SeguimientoClinico::paginar(3, 500)), 'tope de 20 por página');
+    iguales(10, SeguimientoClinico::paginar(1, -5)['por_pagina']);
+});
+
+prueba('seguimiento clínico: resumen de diagnóstico, receta y resultados de laboratorio', function () {
+    $dx = SeguimientoClinico::resumenDiagnostico(['diagnosticos' => [
+        ['codigo' => 'A1', 'nombre' => 'Presuntivo uno', 'tipo' => 'presuntivo'],
+        ['codigo' => 'B2', 'nombre' => 'Definitivo dos', 'tipo' => 'Definitivo'],
+    ]]);
+    iguales(['B2', 2], [$dx['principal']['codigo'], $dx['total']], 'prefiere el definitivo');
+    iguales('Solo uno', SeguimientoClinico::resumenDiagnostico(['diagnosticos' => [['nombre' => 'Solo uno']]])['principal']['nombre']);
+    iguales('Resistencia a la insulina', SeguimientoClinico::resumenDiagnostico(['diagnosticos' => [], 'diagnostico' => ' Resistencia a la insulina '])['principal']['nombre'], 'plantilla con texto libre');
+    iguales([null, 0], array_values(SeguimientoClinico::resumenDiagnostico(null)));
+    iguales(2, SeguimientoClinico::contarReceta(['receta' => [['nombre' => 'A'], ['nombre' => ' '], ['nombre' => 'B'], 'x']]));
+    iguales(0, SeguimientoClinico::contarReceta(['receta' => 'texto']));
+
+    $examenes = [['id' => 10, 'nombre' => 'GLUCOSA', 'valores_referenciales' => [
+        ['tipo' => 'Parámetro', 'nombre' => 'GLUCOSA ', 'codigo_interno' => 'glucosa', 'unidad' => 'mg/dl', 'referencias' => [['valor' => '70-115']]],
+        ['tipo' => 'Parámetro', 'nombre' => 'SIN VALOR', 'codigo_interno' => 'sv'],
+        ['tipo' => 'Sección', 'nombre' => 'ENCABEZADO'],
+    ]]];
+    $res = SeguimientoClinico::resultadosLaboratorio($examenes, ['10__imprimir_examen' => 1, '10__GLUCOSA ' => '100', '10__glucosa' => '100', '10__SIN VALOR' => '']);
+    iguales(1, count($res[0]['parametros']), 'omite parámetros sin valor, secciones y claves de formato');
+    iguales(['GLUCOSA', '100', 'mg/dl', '70-115'], array_values($res[0]['parametros'][0]));
+    $porCodigo = SeguimientoClinico::resultadosLaboratorio($examenes, ['10__glucosa' => '95']);
+    iguales('95', $porCodigo[0]['parametros'][0]['valor'], 'usa el código interno si falta el nombre');
+});
+
+prueba('seguimiento clínico (BD): busca en toda la clínica, historial ligero y paginado, detalle completo y registro de acceso', function () {
+    global $mysqli, $marcador;
+    $medicoId = (int)($mysqli->query('SELECT id FROM medicos ORDER BY id LIMIT 1')->fetch_assoc()['id'] ?? 0);
+    verdadero($medicoId > 0, 'se necesita al menos un médico en la BD de pruebas');
+    $dni = 'T9999947';
+    $mysqli->query("DELETE FROM pacientes WHERE dni = '$dni'");
+    $mysqli->query("INSERT INTO pacientes (nombre, apellido, historia_clinica, dni, sexo) VALUES ('SEGUIMIENTO', 'PHPTEST', 'HCSEGPHP1', '$dni', 'F')");
+    $pacienteId = (int)$mysqli->insert_id;
+    $ids = [];
+    try {
+        $datos1 = json_encode(['diagnosticos' => [['codigo' => 'N95.2', 'nombre' => 'Vaginitis atrófica', 'tipo' => 'definitivo']], 'receta' => [['nombre' => 'FENAZOPIRIDINA'], ['nombre' => 'IBUPROFENO']], 'recomendaciones' => 'Reposo', 'plantilla_libre' => 'Texto propio de la especialidad'], JSON_UNESCAPED_UNICODE);
+        foreach ([['2026-01-10', 'completada'], ['2026-02-10', 'completada'], ['2026-03-10', 'cancelada'], ['2026-04-10', 'pendiente']] as [$f, $est]) {
+            $mysqli->query("INSERT INTO consultas (paciente_id, medico_id, fecha, hora, estado) VALUES ($pacienteId, $medicoId, '$f', '09:00:00', '$est')");
+            $ids[$f] = (int)$mysqli->insert_id;
+        }
+        $st = $mysqli->prepare('INSERT INTO historia_clinica (consulta_id, paciente_id, datos) VALUES (?, ?, ?)');
+        $st->bind_param('iis', $ids['2026-02-10'], $pacienteId, $datos1);
+        $st->execute();
+        $examenes = json_encode([['id' => 10, 'nombre' => 'GLUCOSA', 'valores_referenciales' => [['tipo' => 'Parámetro', 'nombre' => 'GLUCOSA ', 'codigo_interno' => 'glucosa', 'unidad' => 'mg/dl']]]]);
+        $mysqli->query("INSERT INTO ordenes_laboratorio (consulta_id, paciente_id, examenes, fecha, estado) VALUES ({$ids['2026-02-10']}, $pacienteId, '" . $mysqli->real_escape_string($examenes) . "', NOW(), 'completado')");
+        $ordenId = (int)$mysqli->insert_id;
+        $mysqli->query("INSERT INTO resultados_laboratorio (consulta_id, orden_id, tipo_examen, resultados, fecha) VALUES ({$ids['2026-02-10']}, $ordenId, 'varios', '{\"10__GLUCOSA \":\"101\"}', NOW())");
+
+        // Búsqueda en toda la clínica (sin relación previa con el médico), por DNI exacto, prefijo y nombre.
+        iguales($pacienteId, SeguimientoClinico::buscarPacientes($mysqli, $dni)[0]['id'], 'por DNI exacto');
+        verdadero(in_array($pacienteId, array_column(SeguimientoClinico::buscarPacientes($mysqli, 'T99999'), 'id'), true), 'por prefijo de DNI');
+        verdadero(in_array($pacienteId, array_column(SeguimientoClinico::buscarPacientes($mysqli, 'seguimiento phptest'), 'id'), true), 'por nombre y apellido');
+        iguales([], SeguimientoClinico::buscarPacientes($mysqli, 'ab'), 'consulta muy corta no busca');
+        iguales([], SeguimientoClinico::buscarPacientes($mysqli, '%%%%'), 'los comodines se escapan');
+
+        // Historial ligero: más reciente primero, sin canceladas, paginado, sin el contenido de la HC.
+        $h = SeguimientoClinico::historial($mysqli, $pacienteId, 1, 2, $medicoId);
+        iguales(3, $h['total'], 'no cuenta la cancelada');
+        iguales([$ids['2026-04-10'], $ids['2026-02-10']], array_column($h['items'], 'consulta_id'), 'orden cronológico inverso, página 1');
+        $h2 = SeguimientoClinico::historial($mysqli, $pacienteId, 2, 2, $medicoId);
+        iguales([$ids['2026-01-10']], array_column($h2['items'], 'consulta_id'), 'página 2');
+        $conHc = $h['items'][1];
+        iguales(['N95.2', true, 2, 1, true], [$conHc['diagnostico_principal']['codigo'], $conHc['tiene_hc'], $conHc['recetas'], $conHc['laboratorio'], $conHc['es_mia']]);
+        verdadero(!array_key_exists('datos', $conHc) && !array_key_exists('hc_datos', $conHc), 'la línea de tiempo no trae la HC completa');
+        iguales(false, SeguimientoClinico::historial($mysqli, $pacienteId, 1, 5, $medicoId + 9999)['items'][0]['es_mia'], 'es_mia solo para el médico de la consulta');
+
+        // Detalle completo bajo demanda: se entrega TODO lo guardado, incluidas claves propias de la plantilla.
+        $d = SeguimientoClinico::detalleConsulta($mysqli, $ids['2026-02-10']);
+        iguales('Texto propio de la especialidad', $d['historia_clinica']['datos']['plantilla_libre']);
+        iguales(2, count($d['historia_clinica']['datos']['receta']));
+        iguales('101', $d['laboratorio'][0]['resultados'][0]['parametros'][0]['valor'], 'resultado de laboratorio legible');
+        iguales(null, SeguimientoClinico::detalleConsulta($mysqli, 999999999), 'consulta inexistente');
+        iguales(null, SeguimientoClinico::detalleConsulta($mysqli, $ids['2026-04-10'])['historia_clinica'], 'consulta sin HC');
+
+        // Registro de acceso: queda constancia de quién abrió qué.
+        $actor = ['rol' => 'medico', 'admin' => false, 'medico_id' => $medicoId, 'usuario_id' => 0, 'nombre' => 'Médico de prueba'];
+        verdadero(SeguimientoClinico::registrarAcceso($mysqli, $actor, $pacienteId, $ids['2026-02-10'], 'detalle', '127.0.0.1'), 'se registra el acceso');
+        $a = $mysqli->query("SELECT rol, medico_id, usuario_id, paciente_id, consulta_id, accion FROM seguimiento_clinico_accesos WHERE paciente_id = $pacienteId ORDER BY id DESC LIMIT 1")->fetch_assoc();
+        iguales(['medico', $medicoId, null, $pacienteId, $ids['2026-02-10'], 'detalle'], [$a['rol'], (int)$a['medico_id'], $a['usuario_id'], (int)$a['paciente_id'], (int)$a['consulta_id'], $a['accion']]);
+    } finally {
+        $mysqli->query("DELETE FROM seguimiento_clinico_accesos WHERE paciente_id = $pacienteId");
+        $mysqli->query("DELETE FROM resultados_laboratorio WHERE consulta_id IN (" . (implode(',', $ids) ?: '0') . ")");
+        $mysqli->query("DELETE FROM ordenes_laboratorio WHERE paciente_id = $pacienteId");
+        $mysqli->query("DELETE FROM historia_clinica WHERE paciente_id = $pacienteId");
+        $mysqli->query("DELETE FROM consultas WHERE paciente_id = $pacienteId");
+        $mysqli->query("DELETE FROM pacientes WHERE id = $pacienteId");
+    }
+}, true);
 
 prueba('portal del paciente: solo se entregan PDF dentro de uploads/informes_imagenologia', function () {
     global $root;
