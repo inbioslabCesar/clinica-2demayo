@@ -105,6 +105,10 @@ Todo queda **detrás del módulo**: una clínica con `ocupacional` apagado no ve
   si el módulo está apagado o no son credenciales de empresa, continúa el login habitual sin cambios. Sesión `empresa_portal` independiente de usuarios y médicos
   (cada login clínico la descarta; `api_auth_status.php` la reconoce solo si no hay otra sesión). La empresa solo ve `/empresa/panel`.
 - **Laboratorio:** pestaña "Ocupacional Lab" en `LaboratorioPanelPage` (solo con el módulo activo; enlace contextual `?tab=ocupacional_lab&orden_id=`).
+- **Seguimiento clínico** (`seguimiento_clinico`, independiente de los demás): vista del Panel del Médico (`/seguimiento-clinico`) para buscar pacientes por DNI, ver su historial cronológico y generar consultas de seguimiento (con o sin cobro).
+  **Fase 1 (base):** solo registra el módulo y su control. Nace **apagado**; se activa por clínica desde el panel Engineer. Con el módulo apagado no aparece "Seguimiento Clínico" en el menú del médico, el enlace directo redirige a Mis Consultas y `api_seguimiento_clinico.php` responde 403 (guardia `ModulosInstalacion::exigir`; 401 sin sesión, 403 para roles que no son médico ni administrador).
+  La guarda de ruta reutilizable es `RutaModulo` (`src/components/comunes/RutaModulo.jsx`, lógica en `src/utils/rutaModulo.js`): espera mientras se consulta el módulo y, ante cualquier fallo, lo considera apagado. No toca la creación de consultas ni cotizaciones.
+  No requiere cambios de esquema: el módulo es una fila de `modulos_instalacion` que se crea al activarlo desde el Engineer, y **no viaja en el build** (se activa clínica por clínica).
 - **Portal del paciente** (`portal_pacientes`, independiente de `ocupacional`): el paciente entra en `/resultados` con DNI + PIN de 6 dígitos
   (`api_paciente_portal.php`, sesión `paciente_portal` aislada, límite de intentos) y descarga laboratorio e imagenología. El personal (administrador, o recepción con
   el permiso `gestionar_portal_pacientes`) genera el PIN, lo envía por WhatsApp y libera/retiene resultados en `/portal-paciente` (`api_paciente_portal_gestion.php`).

@@ -324,6 +324,23 @@ prueba('tabla vacía o fila de clínico ausente: clínico siempre activo, el res
     iguales(false, $conOcup['portal_empresas']['activo'], 'un módulo sin fila sigue apagado');
 });
 
+prueba('seguimiento_clínico: módulo registrado, apagado por defecto, configurable desde el Engineer y con falla segura', function () {
+    verdadero(in_array('seguimiento_clinico', ModulosInstalacion::MODULOS, true), 'registrado en la lista de módulos');
+    $vacio = ModulosInstalacion::completarMapa([], '2026-11-26');
+    iguales(false, $vacio['seguimiento_clinico']['activo'], 'sin fila nace apagado (una clínica sin el módulo no cambia)');
+    iguales('apagado', $vacio['seguimiento_clinico']['estado']);
+    $on = ModulosInstalacion::completarMapa(['seguimiento_clinico' => ['habilitado' => 1, 'estado' => 'activo', 'fecha_fin' => null]], '2026-11-26');
+    iguales(true, $on['seguimiento_clinico']['activo']);
+    iguales(false, $on['ocupacional']['activo'], 'activarlo no abre otros módulos');
+    $vencido = ModulosInstalacion::completarMapa(['seguimiento_clinico' => ['habilitado' => 1, 'estado' => 'activo', 'fecha_fin' => '2026-11-01']], '2026-11-26');
+    iguales(false, $vencido['seguimiento_clinico']['activo'], 'vencido y fuera de gracia se suspende como los demás');
+    $ok = ModulosInstalacion::validarCambio('seguimiento_clinico', ['habilitado' => 1, 'estado' => 'activo', 'plan' => 'mensual', 'precio' => '90']);
+    iguales(1, $ok['habilitado']);
+    ModulosInstalacion::reiniciarCache();
+    iguales(false, ModulosInstalacion::habilitado(null, 'seguimiento_clinico'), 'sin conexión o sin tabla queda apagado');
+    ModulosInstalacion::reiniciarCache();
+});
+
 prueba('sin conexión o sin tabla solo el módulo clínico queda activo', function () {
     ModulosInstalacion::reiniciarCache();
     $mapa = ModulosInstalacion::mapa(null, '2026-11-22');
