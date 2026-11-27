@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { authFetch } from "../../utils/apiClient";
 import { fetchConfigSingleton, getCachedAgendaSlotMinutes } from "../../config/config";
+import { bloquesParaFecha, indexarDisponibilidad } from "../../utils/disponibilidadAgenda";
 import Calendar from "react-calendar";
 import "react-calendar/dist/Calendar.css";
 
@@ -66,6 +67,11 @@ function waitMs(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+// Si ya está vacío conserva el mismo objeto: un {} nuevo cada vez provocaría otro render.
+function limpiarOcupados(prev) {
+  return Object.keys(prev).length > 0 ? {} : prev;
+}
+
 async function fetchJsonWithRetry(url, options = {}, { attempts = 3, baseDelayMs = 220 } = {}) {
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -92,6 +98,19 @@ async function fetchJsonWithRetry(url, options = {}, { attempts = 3, baseDelayMs
   throw lastError || new Error("No se pudo completar la solicitud");
 }
 
+const COLOR_PALETTE = [
+  "#22c55e",
+  "#3b82f6",
+  "#f59e42",
+  "#e11d48",
+  "#a21caf",
+  "#facc15",
+  "#0ea5e9",
+  "#14b8a6",
+  "#6366f1",
+  "#f472b6",
+];
+
 function DisponibilidadMedicos({ refreshKey = 0 }) {
   const [medicos, setMedicos] = useState([]);
   const [consultas, setConsultas] = useState([]);
@@ -104,24 +123,11 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
 
   const monthRange = useMemo(() => getMonthDateRange(activeStartDate), [activeStartDate]);
 
-  const colorPalette = [
-    "#22c55e",
-    "#3b82f6",
-    "#f59e42",
-    "#e11d48",
-    "#a21caf",
-    "#facc15",
-    "#0ea5e9",
-    "#14b8a6",
-    "#6366f1",
-    "#f472b6",
-  ];
-
-  const medicosSafe = Array.isArray(medicos) ? medicos : [];
+  const medicosSafe = useMemo(() => (Array.isArray(medicos) ? medicos : []), [medicos]);
   const medicoColors = useMemo(
     () =>
       medicosSafe.reduce((acc, m, i) => {
-        acc[m.id] = colorPalette[i % colorPalette.length];
+        acc[m.id] = COLOR_PALETTE[i % COLOR_PALETTE.length];
         return acc;
       }, {}),
     [medicosSafe]
@@ -174,30 +180,10 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
     };
   }, [refreshKey, monthRange.key, monthRange.from, monthRange.to]);
 
-  const disponibilidadPorFecha = useMemo(() => {
-    const mapa = {};
-    (Array.isArray(disponibilidad) ? disponibilidad : []).forEach((bloque) => {
-      const fechaBloque = normalizeDateYMD(bloque?.fecha);
-      if (fechaBloque) {
-        if (!mapa[fechaBloque]) mapa[fechaBloque] = [];
-        mapa[fechaBloque].push(bloque);
-      }
-    });
-    return mapa;
-  }, [disponibilidad]);
-
-  const disponibilidadRecurrentePorDia = useMemo(() => {
-    const mapa = {};
-    (Array.isArray(disponibilidad) ? disponibilidad : []).forEach((bloque) => {
-      const dia = String(bloque?.dia_semana || "").trim().toLowerCase();
-      const fecha = normalizeDateYMD(bloque?.fecha);
-      if (!fecha && dia) {
-        if (!mapa[dia]) mapa[dia] = [];
-        mapa[dia].push(bloque);
-      }
-    });
-    return mapa;
-  }, [disponibilidad]);
+  const { porFecha: disponibilidadPorFecha, recurrentePorDia: disponibilidadRecurrentePorDia } = useMemo(
+    () => indexarDisponibilidad(disponibilidad),
+    [disponibilidad]
+  );
 
   const consultasPorMedicoFecha = useMemo(() => {
     const index = new Map();
@@ -239,14 +225,7 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
   };
 
   function getBloquesParaFecha(date) {
-    const yyyyMMdd = formatDateLimaYMD(date);
-    const bloquesFecha = disponibilidadPorFecha[yyyyMMdd] || [];
-    if (bloquesFecha.length > 0) {
-      return bloquesFecha;
-    }
-    const dias = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
-    const dia = dias[date.getDay()];
-    return disponibilidadRecurrentePorDia[dia] || [];
+    return bloquesParaFecha(formatDateLimaYMD(date), date.getDay(), disponibilidadPorFecha, disponibilidadRecurrentePorDia);
   }
 
   const bloquesHoy = getBloquesParaFecha(selectedDate);
@@ -270,7 +249,7 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
   useEffect(() => {
     const bloquesVisibles = Array.isArray(bloquesPagina) ? bloquesPagina : [];
     if (bloquesVisibles.length === 0) {
-      setOcupadosPorMedicoFecha({});
+      setOcupadosPorMedicoFecha(limpiarOcupados);
       return undefined;
     }
 
@@ -287,7 +266,7 @@ function DisponibilidadMedicos({ refreshKey = 0 }) {
     });
 
     if (claves.size === 0) {
-      setOcupadosPorMedicoFecha({});
+      setOcupadosPorMedicoFecha(limpiarOcupados);
       return undefined;
     }
 
