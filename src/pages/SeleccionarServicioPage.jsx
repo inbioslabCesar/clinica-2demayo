@@ -1,8 +1,15 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import { useLocation, useNavigate } from "react-router-dom";
 import { authFetch } from "../utils/apiClient";
 import { useQuoteCart } from "../context/QuoteCartContext";
+import {
+  etiquetaVolver,
+  guardarOrigenPacientes,
+  leerOrigenPacientes,
+  olvidarOrigenPacientes,
+  resolverRutaVolver,
+} from "../utils/rutaVolverServicios";
 
 export default function SeleccionarServicioPage() {
   const themeGradient = {
@@ -89,22 +96,28 @@ export default function SeleccionarServicioPage() {
   const consultaSuffix = isEditCotizacion
     ? `?paciente_id=${paciente?.id || pacienteId}&cotizacion_id=${cotizacionId}&modo=${modoCotizacion}&back_to=/cotizaciones`
     : (cobroId ? `?cobro_id=${cobroId}` : '');
-  const rutaVolver = useMemo(() => {
-    const fromState = location.state?.backTo || location.state?.from;
-    const fromQuery = qs.get('back_to');
-    const candidata = (typeof fromState === 'string' && fromState.trim())
-      ? fromState.trim()
-      : (typeof fromQuery === 'string' && fromQuery.trim() ? fromQuery.trim() : '');
+  const origenExplicito = String(location.state?.backTo || location.state?.from || qs.get('back_to') || '').trim();
+  const rutaVolver = resolverRutaVolver({
+    state: location.state,
+    query: qs.get('back_to'),
+    pacienteId,
+    guardada: leerOrigenPacientes(window.sessionStorage, pacienteIdNum),
+  });
+  const textoVolver = etiquetaVolver(rutaVolver);
 
-    if (candidata && candidata.startsWith('/')) return candidata;
-    if (pacienteId) return '/pacientes';
-    return '/';
-  }, [location.state, pacienteId, qs]);
-  const textoVolver = rutaVolver === '/pacientes'
-    ? 'Volver a Pacientes'
-    : rutaVolver === '/cotizaciones'
-      ? 'Volver a Atenciones'
-      : 'Volver al Dashboard';
+  // Los módulos regresan aquí sin el origen: se recuerda la lista de Pacientes (con sus filtros) durante la visita.
+  useEffect(() => {
+    guardarOrigenPacientes(window.sessionStorage, pacienteIdNum, origenExplicito);
+  }, [pacienteIdNum, origenExplicito]);
+
+  const volverAlOrigen = () => {
+    if (isEditCotizacion) {
+      navigate('/cotizaciones');
+      return;
+    }
+    olvidarOrigenPacientes(window.sessionStorage, pacienteIdNum);
+    navigate(rutaVolver);
+  };
 
     const [procedimientos, setProcedimientos] = useState([]);
 
@@ -272,7 +285,7 @@ export default function SeleccionarServicioPage() {
             <button
               className="text-white px-4 py-2 rounded font-bold"
               style={themeGradient}
-              onClick={() => navigate(isEditCotizacion ? '/cotizaciones' : (rutaVolver === '/pacientes' ? -1 : rutaVolver))}
+              onClick={volverAlOrigen}
             >{isEditCotizacion ? 'Volver a Atenciones' : textoVolver}</button>
           </div>
           {pacienteMostrado ? (

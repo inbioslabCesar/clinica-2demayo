@@ -19,11 +19,13 @@ export default function usePacientes({ initialBusqueda = "", initialPage = 1, in
   // Debounce: cuando busqueda cambia, esperar 400 ms antes de disparar la petición
   // y resetear la página a 1 para que los resultados sean consistentes
   useEffect(() => {
+    if (busqueda === debouncedBusqueda) return undefined; // sin cambio (p. ej. al montar con ?page=3): no resetear la página
     const timer = setTimeout(() => {
       setPage(1);
       setDebouncedBusqueda(busqueda);
     }, 400);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busqueda]);
 
   // Petición principal: solo dispara cuando los filtros "estabilizados" cambian

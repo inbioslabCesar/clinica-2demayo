@@ -150,8 +150,10 @@ function PacienteList() {
       return;
     }
 
-    navigate(`/seleccionar-servicio?paciente_id=${pacienteId}`);
-  }, [contextoAgendarDesdeDisponibilidad, navigate]);
+    navigate(`/seleccionar-servicio?paciente_id=${pacienteId}`, {
+      state: { pacienteId, backTo: `${location.pathname}${location.search}` },
+    });
+  }, [contextoAgendarDesdeDisponibilidad, navigate, location.pathname, location.search]);
 
   const cancelarContextoAgendarDisponibilidad = useCallback(() => {
     setSearchParams((prev) => {
