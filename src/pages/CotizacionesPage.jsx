@@ -622,7 +622,7 @@ function agruparFilasOperativasPorEpisodio(rows) {
     const esHcProximaProgramada = items.some((row) => Number(row?.es_hc_proxima_programada || 0) === 1) ? 1 : 0;
     const consultaEsControl = items.some((row) => Number(row?.consulta_es_control || 0) === 1) ? 1 : 0;
     const estadoGrupo = resolverEstadoGrupoCotizacion(items);
-    const grupoIncluyePagadas = items.some((row) => ["pagado", "completado", "control", "contrato"].includes(String(row?.estado || "").toLowerCase()));
+    const grupoIncluyePagadas = items.some((row) => ["pagado", "completado", "control", "exonerada", "contrato"].includes(String(row?.estado || "").toLowerCase()));
 
     grouped.push({
       ...base,
@@ -893,7 +893,7 @@ const CotizacionRow = memo(function CotizacionRow({ row, canAnular, onCobrar, on
     [row.paquetes_resumen]
   );
 
-  const cotizacionPagada = ["pagado", "completado", "control", "contrato"].includes(estadoRow);
+  const cotizacionPagada = ["pagado", "completado", "control", "exonerada", "contrato"].includes(estadoRow);
   const esGrupoEpisodio = Number(row?.es_grupo_episodio || 0) === 1 || Number(row?.adendas_count || 0) > 0;
   const grupoIncluyePagadas = Number(row?.grupo_incluye_pagadas || 0) === 1;
   const bloquearEdicionPorGrupoPagado = esGrupoEpisodio && grupoIncluyePagadas;
@@ -2357,6 +2357,7 @@ export default function CotizacionesPage({ usuario }) {
     if (st === "parcial") return "bg-amber-100 text-amber-700";
     if (st === "informativo") return "bg-slate-100 text-slate-700";
     if (st === "control" || st === "contrato") return "bg-sky-100 text-sky-700";
+    if (st === "exonerada") return "bg-fuchsia-100 text-fuchsia-800";
     if (st === "anulada") return "bg-red-100 text-red-700";
     return "bg-blue-100 text-blue-700";
   };
@@ -2369,6 +2370,7 @@ export default function CotizacionesPage({ usuario }) {
     if (st === "pagado" && Number(row?.pagado_con_descuento || 0) === 1) return "pagado con descuento";
     if (st === "pagado" && Number(row?.pagado_con_devolucion || 0) === 1) return "pagado con devolucion";
     if (st === "informativo") return "informativo";
+    if (st === "exonerada") return "exonerada (sin cobro)";
     return row?.estado;
   };
 

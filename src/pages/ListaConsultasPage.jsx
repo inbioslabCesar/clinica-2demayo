@@ -69,6 +69,7 @@ function origenLabel(origenRaw) {
   if (origen === "agenda_servicio") return "Agenda";
   if (origen === "cotizador") return "Cotizador";
   if (origen === "hc_proxima") return "HC próxima";
+  if (origen === "seguimiento_clinico") return "Seguimiento clínico";
   if (origen === "reservada_sin_turno") return "Reservada sin turno";
   return "Consulta";
 }
@@ -79,6 +80,7 @@ function estadoCobroLabel(estadoCotizacionRaw, saldoRaw, cobroAnulado = 0) {
   if (Number(cobroAnulado || 0) === 1 && !estadoCot) return "Anulado / devuelto";
   if (saldo > 0.00001) return "Con saldo";
   if (["pagado", "pagada", "control", "completado", "completada"].includes(estadoCot)) return "Pagado";
+  if (estadoCot === "exonerada") return "Exonerada (sin cobro)";
   if (!estadoCot) return "Sin cobro";
   return estadoCot;
 }

@@ -410,7 +410,7 @@ if (!function_exists('bloque_atencion_resumen_por_id')) {
                     $estadoCotizacion = strtolower(trim((string)($rowEvento['estado_cotizacion'] ?? '')));
 
                     $estadoOperativo = $estadoEvento;
-                    if ($estadoOperativo === 'pendiente' && in_array($estadoCotizacion, ['parcial', 'pagado', 'pagada', 'completado', 'completada', 'control', 'contrato'], true)) {
+                    if ($estadoOperativo === 'pendiente' && in_array($estadoCotizacion, ['parcial', 'pagado', 'pagada', 'completado', 'completada', 'control', 'exonerada', 'contrato'], true)) {
                         $estadoOperativo = 'confirmado';
                     }
 

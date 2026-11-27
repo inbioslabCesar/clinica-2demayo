@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/ConsultasAgendaCore.php';
+
 /**
  * Seguimiento clínico (módulo opcional 'seguimiento_clinico'): lectura del historial de pacientes desde el Panel del Médico.
  *
@@ -427,5 +429,304 @@ final class SeguimientoClinico {
             ];
         }
         return $salida;
+    }
+
+    // ---------------- Generar consulta de seguimiento (con cobro / sin cobro) ----------------
+
+    public const MODOS = ['con_cobro', 'sin_cobro'];
+    public const MOTIVO_MIN = 10;
+    public const MOTIVO_MAX = 255;
+    public const ORIGEN_CONSULTA = 'seguimiento_clinico';
+
+    /**
+     * Valida la solicitud de generar una consulta (sin tocar la BD). Siempre programada, dentro de la disponibilidad del médico.
+     * @param array<string,mixed> $in
+     * @return array{ok:bool,error?:string,datos?:array<string,mixed>}
+     */
+    public static function validarSolicitud(array $in, ?\DateTimeImmutable $ahora = null): array {
+        $ahora = $ahora ?? new \DateTimeImmutable('now', new \DateTimeZone('America/Lima'));
+        $pacienteId = (int)($in['paciente_id'] ?? 0);
+        if ($pacienteId <= 0) return ['ok' => false, 'error' => 'Selecciona un paciente'];
+
+        $fecha = trim((string)($in['fecha'] ?? ''));
+        $f = \DateTimeImmutable::createFromFormat('!Y-m-d', $fecha, new \DateTimeZone('America/Lima'));
+        if (!$f || $f->format('Y-m-d') !== $fecha) return ['ok' => false, 'error' => 'La fecha no es válida'];
+        if ($fecha < $ahora->format('Y-m-d')) return ['ok' => false, 'error' => 'La fecha ya pasó'];
+
+        $hora = trim((string)($in['hora'] ?? ''));
+        if (!preg_match('/^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/', $hora, $m)) return ['ok' => false, 'error' => 'La hora no es válida'];
+        $hora = $m[1] . ':' . $m[2] . ':' . ($m[3] ?? '00');
+        if ($fecha === $ahora->format('Y-m-d') && $hora < $ahora->format('H:i:s')) return ['ok' => false, 'error' => 'La hora ya pasó'];
+
+        $modo = trim((string)($in['modo'] ?? ''));
+        if (!in_array($modo, self::MODOS, true)) return ['ok' => false, 'error' => 'Elige si la consulta es con cobro o sin cobro'];
+
+        $motivo = null;
+        if ($modo === 'sin_cobro') {
+            $motivo = trim(preg_replace('/\s+/u', ' ', (string)($in['motivo'] ?? '')) ?? '');
+            $largo = mb_strlen($motivo, 'UTF-8');
+            if ($largo < self::MOTIVO_MIN) return ['ok' => false, 'error' => 'Indica el motivo de la exoneración (mínimo ' . self::MOTIVO_MIN . ' caracteres)'];
+            if ($largo > self::MOTIVO_MAX) return ['ok' => false, 'error' => 'El motivo es demasiado largo (máximo ' . self::MOTIVO_MAX . ' caracteres)'];
+        }
+
+        $solicitud = trim((string)($in['client_request_id'] ?? ''));
+        if (!preg_match('/^[A-Za-z0-9_.:\-]{8,64}$/', $solicitud)) return ['ok' => false, 'error' => 'Falta el identificador de la solicitud'];
+
+        return ['ok' => true, 'datos' => ['paciente_id' => $pacienteId, 'fecha' => $fecha, 'hora' => $hora, 'modo' => $modo, 'motivo' => $motivo, 'client_request_id' => $solicitud]];
+    }
+
+    public static function asegurarTablaConsultas(\mysqli $conn): bool {
+        return (bool)$conn->query("CREATE TABLE IF NOT EXISTS seguimiento_clinico_consultas (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            consulta_id INT NOT NULL,
+            cotizacion_id INT NOT NULL,
+            paciente_id INT NOT NULL,
+            medico_id INT NOT NULL,
+            modo VARCHAR(12) NOT NULL,
+            motivo VARCHAR(255) NULL,
+            client_request_id VARCHAR(64) NOT NULL,
+            creado_por_nombre VARCHAR(150) NULL,
+            ip VARCHAR(45) NULL,
+            fecha_hora DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uq_scc_consulta (consulta_id),
+            UNIQUE KEY uq_scc_solicitud (medico_id, client_request_id),
+            KEY idx_scc_cotizacion (cotizacion_id),
+            KEY idx_scc_paciente (paciente_id, fecha_hora),
+            KEY idx_scc_modo (modo, fecha_hora)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    }
+
+    /** ¿Esta cotización es una exoneración generada desde Seguimiento? Mantiene su estado 'exonerada' en los recálculos financieros. */
+    public static function cotizacionEsExonerada(\mysqli $conn, int $cotizacionId): bool {
+        static $tablaExiste = null;
+        if ($cotizacionId <= 0) return false;
+        if ($tablaExiste === null) {
+            $tablaExiste = consultas_table_exists($conn, 'seguimiento_clinico_consultas');
+        }
+        if (!$tablaExiste) return false;
+        $stmt = $conn->prepare("SELECT 1 FROM seguimiento_clinico_consultas WHERE cotizacion_id = ? AND modo = 'sin_cobro' LIMIT 1");
+        if (!$stmt) return false;
+        $stmt->bind_param('i', $cotizacionId);
+        $stmt->execute();
+        $existe = (bool)$stmt->get_result()->fetch_row();
+        $stmt->close();
+        return $existe;
+    }
+
+    /**
+     * Ids (entre los dados) de cotizaciones exoneradas desde Seguimiento clínico.
+     * @param array<int,mixed> $ids
+     * @return array<int,true>
+     */
+    public static function cotizacionesExoneradas(\mysqli $conn, array $ids): array {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn($i) => $i > 0)));
+        if ($ids === [] || !consultas_table_exists($conn, 'seguimiento_clinico_consultas')) return [];
+        $res = $conn->query("SELECT cotizacion_id FROM seguimiento_clinico_consultas WHERE modo = 'sin_cobro' AND cotizacion_id IN (" . implode(',', $ids) . ')');
+        $mapa = [];
+        while ($res && ($fila = $res->fetch_assoc())) {
+            $mapa[(int)$fila['cotizacion_id']] = true;
+        }
+        return $mapa;
+    }
+
+    /**
+     * Etiqueta como 'exonerada' el estado de las filas cuya cotización fue exonerada desde Seguimiento. La BD guarda esas cotizaciones
+     * como 'pagado' (los triggers de saldo fuerzan 'pagado' cuando el saldo es 0, igual que con los controles), así que se deriva al leer.
+     * @param array<int,array<string,mixed>> $filas
+     */
+    public static function marcarFilasExoneradas(\mysqli $conn, array &$filas, string $campoId = 'cotizacion_id', string $campoEstado = 'cotizacion_estado'): void {
+        $mapa = self::cotizacionesExoneradas($conn, array_column($filas, $campoId));
+        if ($mapa === []) return;
+        foreach ($filas as &$fila) {
+            if (isset($mapa[(int)($fila[$campoId] ?? 0)])) {
+                $fila[$campoEstado] = 'exonerada';
+            }
+        }
+        unset($fila);
+    }
+
+    /** Tarifa vigente de consulta del médico (o la general si no tiene propia), la misma regla que la próxima cita de la HC. */
+    public static function tarifaConsulta(\mysqli $conn, int $medicoId): ?array {
+        $consultas = [
+            ['SELECT id, precio_particular, descripcion FROM tarifas WHERE medico_id = ? AND servicio_tipo = "consulta" AND activo = 1 ORDER BY id DESC LIMIT 1', true],
+            ['SELECT id, precio_particular, descripcion FROM tarifas WHERE servicio_tipo = "consulta" AND activo = 1 AND (medico_id IS NULL OR medico_id = 0) ORDER BY id DESC LIMIT 1', false],
+        ];
+        foreach ($consultas as [$sql, $porMedico]) {
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) continue;
+            if ($porMedico) $stmt->bind_param('i', $medicoId);
+            $stmt->execute();
+            $fila = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if ($fila && isset($fila['precio_particular'])) {
+                return [
+                    'id' => (int)$fila['id'],
+                    'precio' => round((float)$fila['precio_particular'], 2),
+                    'descripcion' => trim((string)($fila['descripcion'] ?? '')) !== '' ? trim((string)$fila['descripcion']) : 'Consulta médica',
+                ];
+            }
+        }
+        return null;
+    }
+
+    /** Estado de la consulta pendiente de pago ('falta_cancelar', como la próxima cita de la HC) o 'pendiente' si el esquema aún no lo admite. */
+    public static function estadoConsultaConCobro(\mysqli $conn): string {
+        $res = $conn->query("SHOW COLUMNS FROM consultas LIKE 'estado'");
+        $tipo = $res && ($fila = $res->fetch_assoc()) ? strtolower((string)($fila['Type'] ?? '')) : '';
+        return strpos($tipo, "'falta_cancelar'") !== false ? 'falta_cancelar' : 'pendiente';
+    }
+
+    /** @return array<string,mixed>|null */
+    private static function buscarGenerada(\mysqli $conn, int $medicoId, string $solicitud): ?array {
+        $stmt = $conn->prepare('SELECT s.consulta_id, s.cotizacion_id, s.modo, c.fecha, c.hora, c.estado AS estado_consulta, ct.estado AS estado_cotizacion
+            FROM seguimiento_clinico_consultas s
+            LEFT JOIN consultas c ON c.id = s.consulta_id
+            LEFT JOIN cotizaciones ct ON ct.id = s.cotizacion_id
+            WHERE s.medico_id = ? AND s.client_request_id = ? LIMIT 1');
+        $stmt->bind_param('is', $medicoId, $solicitud);
+        $stmt->execute();
+        $fila = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$fila) return null;
+        return [
+            'success' => true,
+            'consulta_id' => (int)$fila['consulta_id'],
+            'cotizacion_id' => (int)$fila['cotizacion_id'],
+            'modo' => (string)$fila['modo'],
+            'fecha' => $fila['fecha'],
+            'hora' => $fila['hora'],
+            'estado_consulta' => (string)$fila['estado_consulta'],
+            'estado_cotizacion' => $fila['modo'] === 'sin_cobro' ? 'exonerada' : (string)$fila['estado_cotizacion'],
+            'reutilizado' => true,
+        ];
+    }
+
+    /**
+     * Genera, en UNA transacción, la consulta (con la misma reserva de agenda que recepción), su cotización y el registro de auditoría.
+     * Con cobro: consulta 'falta_cancelar' + cotización pendiente con la tarifa del médico (recepción cobra; el honorario nace al cobrar, como siempre).
+     * Sin cobro: consulta 'pendiente' + cotización de S/ 0.00 (guardada como 'pagado'; se muestra "exonerada") con motivo y médico responsable; no hay cobro, por tanto no hay honorario.
+     * Un reintento con el mismo client_request_id devuelve lo ya creado.
+     * @param array<string,mixed> $datos resultado de validarSolicitud()['datos']
+     * @return array{http:int,payload:array<string,mixed>}
+     */
+    public static function generarConsulta(\mysqli $conn, array $actor, array $datos, string $ip): array {
+        if ((int)$actor['medico_id'] <= 0) {
+            return ['http' => 403, 'payload' => ['success' => false, 'error' => 'Solo un médico puede generar consultas de seguimiento']];
+        }
+        $medicoId = (int)$actor['medico_id'];
+        $pacienteId = (int)$datos['paciente_id'];
+        if (self::obtenerPaciente($conn, $pacienteId) === null) {
+            return ['http' => 404, 'payload' => ['success' => false, 'error' => 'Paciente no encontrado']];
+        }
+        if (!consultas_medico_existe($conn, $medicoId)) {
+            return ['http' => 403, 'payload' => ['success' => false, 'error' => 'El médico no existe o ya no está disponible']];
+        }
+        if (!self::asegurarTablaConsultas($conn) || !self::asegurarTablaAccesos($conn)) {
+            return ['http' => 500, 'payload' => ['success' => false, 'error' => 'No se pudo preparar el registro de seguimiento']];
+        }
+
+        $existente = self::buscarGenerada($conn, $medicoId, (string)$datos['client_request_id']);
+        if ($existente !== null) {
+            return ['http' => 200, 'payload' => $existente];
+        }
+
+        $sinCobro = $datos['modo'] === 'sin_cobro';
+        $tarifa = self::tarifaConsulta($conn, $medicoId);
+        if (!$sinCobro && ($tarifa === null || $tarifa['precio'] <= 0)) {
+            return ['http' => 409, 'payload' => ['success' => false, 'error' => 'No hay una tarifa de consulta vigente para este médico. Configúrala en Gestión de Tarifas o genera la consulta sin cobro.']];
+        }
+
+        $estadoConsulta = $sinCobro ? 'pendiente' : self::estadoConsultaConCobro($conn);
+        // Sin cobro se guarda como 'pagado' de S/ 0.00 (así lo fuerza la BD con saldo 0 y lo entienden todos los flujos);
+        // "exonerada" es la etiqueta que se deriva al leer desde seguimiento_clinico_consultas.
+        $estadoCotizacion = $sinCobro ? 'pagado' : 'pendiente';
+        $total = $sinCobro ? 0.0 : (float)$tarifa['precio'];
+        $observaciones = mb_substr(
+            $sinCobro
+                ? 'Seguimiento clínico - SIN COBRO (exonerada): ' . $datos['motivo']
+                : 'Seguimiento clínico - consulta con cobro generada por ' . $actor['nombre'],
+            0, 255, 'UTF-8'
+        );
+        $descripcion = $sinCobro ? 'Consulta exonerada (sin cobro)' : (string)$tarifa['descripcion'];
+        $servicioId = $tarifa !== null ? (int)$tarifa['id'] : $medicoId;
+
+        $conn->begin_transaction();
+        try {
+            $reserva = consultas_reservar_horario($conn, [
+                'paciente_id' => $pacienteId,
+                'medico_id' => $medicoId,
+                'fecha' => $datos['fecha'],
+                'hora' => $datos['hora'],
+                'tipo_consulta' => 'programada',
+                'origen_creacion' => self::ORIGEN_CONSULTA,
+                'omitir_validacion_disponibilidad' => false,
+                'estado' => $estadoConsulta,
+            ], false);
+            if (!($reserva['success'] ?? false)) {
+                $conn->rollback();
+                return ['http' => 409, 'payload' => $reserva];
+            }
+            $consultaId = (int)$reserva['id'];
+
+            $stmt = $conn->prepare('INSERT INTO cotizaciones (paciente_id, usuario_id, total, total_pagado, saldo_pendiente, estado, observaciones) VALUES (?, 0, ?, 0, ?, ?, ?)');
+            $stmt->bind_param('iddss', $pacienteId, $total, $total, $estadoCotizacion, $observaciones);
+            $stmt->execute();
+            $cotizacionId = (int)$conn->insert_id;
+            $stmt->close();
+
+            if (consultas_column_exists($conn, 'cotizaciones', 'numero_comprobante')) {
+                $numero = sprintf('Q%06d', $cotizacionId);
+                $stmtNum = $conn->prepare('UPDATE cotizaciones SET numero_comprobante = ? WHERE id = ?');
+                $stmtNum->bind_param('si', $numero, $cotizacionId);
+                $stmtNum->execute();
+                $stmtNum->close();
+            }
+
+            $stmtDet = $conn->prepare('INSERT INTO cotizaciones_detalle (cotizacion_id, servicio_tipo, servicio_id, descripcion, cantidad, precio_unitario, subtotal, medico_id, consulta_id) VALUES (?, "consulta", ?, ?, 1, ?, ?, ?, ?)');
+            $stmtDet->bind_param('iisddii', $cotizacionId, $servicioId, $descripcion, $total, $total, $medicoId, $consultaId);
+            $stmtDet->execute();
+            $stmtDet->close();
+
+            $stmtAud = $conn->prepare('INSERT INTO seguimiento_clinico_consultas (consulta_id, cotizacion_id, paciente_id, medico_id, modo, motivo, client_request_id, creado_por_nombre, ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $nombre = mb_substr((string)$actor['nombre'], 0, 150, 'UTF-8');
+            $ipCorta = mb_substr($ip, 0, 45);
+            $stmtAud->bind_param('iiiisssss', $consultaId, $cotizacionId, $pacienteId, $medicoId, $datos['modo'], $datos['motivo'], $datos['client_request_id'], $nombre, $ipCorta);
+            $stmtAud->execute();
+            $stmtAud->close();
+
+            if (!self::registrarAcceso($conn, $actor, $pacienteId, $consultaId, 'generar_' . $datos['modo'], $ip)) {
+                throw new \RuntimeException('No se pudo registrar el acceso');
+            }
+
+            $conn->commit();
+        } catch (\Throwable $e) {
+            @$conn->rollback();
+            // Dos envíos simultáneos con el mismo identificador: el segundo choca con el índice único y devuelve lo del primero.
+            if ($e instanceof \mysqli_sql_exception && (int)$e->getCode() === 1062) {
+                $existente = self::buscarGenerada($conn, $medicoId, (string)$datos['client_request_id']);
+                if ($existente !== null) {
+                    return ['http' => 200, 'payload' => $existente];
+                }
+            }
+            error_log('Seguimiento clínico, generar consulta: ' . $e->getMessage());
+            return ['http' => 500, 'payload' => ['success' => false, 'error' => 'No se pudo generar la consulta; no se guardó nada']];
+        }
+
+        $respuesta = [
+            'success' => true,
+            'consulta_id' => $consultaId,
+            'cotizacion_id' => $cotizacionId,
+            'modo' => $datos['modo'],
+            'fecha' => $datos['fecha'],
+            'hora' => $datos['hora'],
+            'estado_consulta' => $estadoConsulta,
+            'estado_cotizacion' => $sinCobro ? 'exonerada' : 'pendiente',
+            'reutilizado' => false,
+        ];
+        if (isset($reserva['cupos_restantes'])) {
+            $respuesta['cupos_restantes'] = (int)$reserva['cupos_restantes'];
+        }
+        return ['http' => 201, 'payload' => $respuesta];
     }
 }

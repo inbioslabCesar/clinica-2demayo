@@ -7,6 +7,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/AgendaMedicoRegla.php';
 require_once __DIR__ . '/modules/EpisodioAtencionModule.php';
 require_once __DIR__ . '/modules/ReevaluacionModule.php';
+require_once __DIR__ . '/modules/SeguimientoClinico.php';
 
 function rc_require_session_roles(array $rolesPermitidos) {
     if (!isset($_SESSION['usuario']) || !is_array($_SESSION['usuario'])) {
@@ -1982,6 +1983,7 @@ if ($method === 'GET') {
             ];
         }
 
+        SeguimientoClinico::marcarFilasExoneradas($conn, $citas);
         rc_sort_citas_por_hora($citas);
 
         $horasOcupadas = [];
@@ -2320,6 +2322,7 @@ if ($method === 'GET') {
             ];
         }
 
+        SeguimientoClinico::marcarFilasExoneradas($conn, $response['items']);
         echo json_encode($response);
         exit;
     }
@@ -2872,6 +2875,7 @@ if ($method === 'GET') {
         ];
     }
 
+    SeguimientoClinico::marcarFilasExoneradas($conn, $response['items']);
     echo json_encode($response);
     exit;
 }

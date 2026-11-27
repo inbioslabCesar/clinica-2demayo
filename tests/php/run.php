@@ -332,6 +332,133 @@ prueba('seguimiento clínico (BD): busca en toda la clínica, historial ligero y
     }
 }, true);
 
+prueba('seguimiento clínico: la solicitud de generar consulta se valida de forma estricta', function () {
+    $ahora = new DateTimeImmutable('2026-11-26 10:30:00', new DateTimeZone('America/Lima'));
+    $base = ['paciente_id' => 5, 'fecha' => '2026-12-01', 'hora' => '09:20', 'modo' => 'con_cobro', 'client_request_id' => 'seg-abc12345'];
+    $r = SeguimientoClinico::validarSolicitud($base, $ahora);
+    iguales(true, $r['ok']);
+    iguales(['09:20:00', null], [$r['datos']['hora'], $r['datos']['motivo']], 'normaliza la hora y no pide motivo con cobro');
+
+    $falla = function (array $cambios, string $esperado) use ($base, $ahora) {
+        $r = SeguimientoClinico::validarSolicitud($cambios + $base, $ahora);
+        iguales(false, $r['ok'], $esperado);
+        verdadero(stripos($r['error'], $esperado) !== false, "mensaje '{$r['error']}' debía mencionar '$esperado'");
+    };
+    $falla(['paciente_id' => 0], 'paciente');
+    $falla(['fecha' => '2026-02-30'], 'fecha');
+    $falla(['fecha' => '2026-11-25'], 'pasó');
+    $falla(['fecha' => '2026-11-26', 'hora' => '09:00'], 'pasó');
+    iguales(true, SeguimientoClinico::validarSolicitud(['fecha' => '2026-11-26', 'hora' => '11:00'] + $base, $ahora)['ok'], 'hoy con hora futura sí');
+    $falla(['hora' => '24:00'], 'hora');
+    $falla(['modo' => 'gratis'], 'cobro');
+    $falla(['client_request_id' => 'corto'], 'identificador');
+    $falla(['client_request_id' => 'seg abc 12345'], 'identificador');
+
+    $sin = ['modo' => 'sin_cobro'] + $base;
+    $falla(['modo' => 'sin_cobro', 'motivo' => ''], 'motivo');
+    $falla(['modo' => 'sin_cobro', 'motivo' => 'corto'], 'motivo');
+    $falla(['modo' => 'sin_cobro', 'motivo' => str_repeat('x', 300)], 'largo');
+    $ok = SeguimientoClinico::validarSolicitud(['motivo' => "  Control   posquirúrgico del paciente  "] + $sin, $ahora);
+    iguales([true, 'Control posquirúrgico del paciente'], [$ok['ok'], $ok['datos']['motivo']], 'motivo normalizado');
+});
+
+prueba('seguimiento clínico (BD): genera consulta con cobro o sin cobro en una sola operación, sin honorarios y sin duplicar', function () {
+    global $mysqli;
+    $mysqli->query("DELETE FROM medicos WHERE email = 'phptest.seguimiento@test.local'");
+    $mysqli->query("INSERT INTO medicos (nombre, apellido, especialidad, email, password, rol) VALUES ('SEGUIMIENTO', 'PHPTEST', 'EspPhpTest', 'phptest.seguimiento@test.local', 'x', 'medico')");
+    $medicoId = (int)$mysqli->insert_id;
+    $dni = 'T9999948';
+    $mysqli->query("DELETE FROM pacientes WHERE dni = '$dni'");
+    $mysqli->query("INSERT INTO pacientes (nombre, apellido, historia_clinica, dni, sexo) VALUES ('GENERAR', 'PHPTEST', 'HCSEGPHP2', '$dni', 'M')");
+    $pacienteId = (int)$mysqli->insert_id;
+    $fecha = '2027-03-15';
+    $tarifaId = 0;
+    try {
+        $mysqli->query("INSERT INTO disponibilidad_medicos (medico_id, fecha, dia_semana, hora_inicio, hora_fin) VALUES ($medicoId, '$fecha', 'lunes', '08:00:00', '09:00:00')");
+        $mysqli->query("INSERT INTO tarifas (servicio_tipo, servicio_id, descripcion, precio_particular, precio_seguro, precio_convenio, activo, medico_id, porcentaje_medico, porcentaje_clinica, monto_medico, monto_clinica) VALUES ('consulta', 0, 'Consulta PHPTEST', 80.00, 80.00, 80.00, 1, $medicoId, 50, 50, 0, 0)");
+        $tarifaId = (int)$mysqli->insert_id;
+        $actor = ['rol' => 'medico', 'admin' => false, 'medico_id' => $medicoId, 'usuario_id' => 0, 'nombre' => 'Seguimiento Phptest'];
+        $honorarios = function () use ($mysqli, $medicoId) {
+            $a = (int)$mysqli->query("SELECT COUNT(*) n FROM honorarios_por_cobrar WHERE medico_id = $medicoId")->fetch_assoc()['n'];
+            $b = (int)$mysqli->query("SELECT COUNT(*) n FROM honorarios_medicos_movimientos WHERE medico_id = $medicoId")->fetch_assoc()['n'];
+            return $a + $b;
+        };
+        $datos = fn(array $c) => SeguimientoClinico::validarSolicitud($c + ['paciente_id' => $pacienteId, 'fecha' => $fecha, 'hora' => '08:00', 'modo' => 'con_cobro', 'client_request_id' => 'seg-con-cobro-1'], new DateTimeImmutable('2026-11-26', new DateTimeZone('America/Lima')))['datos'];
+
+        // Con cobro: consulta falta_cancelar + cotización pendiente con la tarifa del médico, enlazadas por el detalle.
+        $r = SeguimientoClinico::generarConsulta($mysqli, $actor, $datos([]), '127.0.0.1');
+        iguales(201, $r['http'], json_encode($r['payload']));
+        $p = $r['payload'];
+        iguales(['con_cobro', 'pendiente', false], [$p['modo'], $p['estado_cotizacion'], $p['reutilizado']]);
+        $c = $mysqli->query("SELECT estado, origen_creacion, tipo_consulta, es_control, medico_id FROM consultas WHERE id = {$p['consulta_id']}")->fetch_assoc();
+        iguales(['seguimiento_clinico', 'programada', '0', $medicoId], [$c['origen_creacion'], $c['tipo_consulta'], (string)$c['es_control'], (int)$c['medico_id']]);
+        verdadero(in_array($c['estado'], ['falta_cancelar', 'pendiente'], true), 'consulta pendiente de pago');
+        $ct = $mysqli->query("SELECT total, total_pagado, saldo_pendiente, estado, usuario_id FROM cotizaciones WHERE id = {$p['cotizacion_id']}")->fetch_assoc();
+        iguales([80.0, 0.0, 80.0, 'pendiente', 0], [(float)$ct['total'], (float)$ct['total_pagado'], (float)$ct['saldo_pendiente'], $ct['estado'], (int)$ct['usuario_id']]);
+        $d = $mysqli->query("SELECT servicio_tipo, medico_id, consulta_id, subtotal FROM cotizaciones_detalle WHERE cotizacion_id = {$p['cotizacion_id']}")->fetch_assoc();
+        iguales(['consulta', $medicoId, $p['consulta_id'], 80.0], [$d['servicio_tipo'], (int)$d['medico_id'], (int)$d['consulta_id'], (float)$d['subtotal']]);
+        iguales(false, SeguimientoClinico::cotizacionEsExonerada($mysqli, $p['cotizacion_id']), 'con cobro no es exonerada');
+        iguales(0, $honorarios(), 'agendar no crea honorarios: nacen al cobrar');
+
+        // Reintento / doble clic con el mismo identificador: devuelve lo creado, no duplica.
+        $conteo = fn() => (int)$mysqli->query("SELECT COUNT(*) n FROM consultas WHERE medico_id = $medicoId")->fetch_assoc()['n'] . '/' . (int)$mysqli->query("SELECT COUNT(*) n FROM seguimiento_clinico_consultas WHERE medico_id = $medicoId")->fetch_assoc()['n'];
+        $antes = $conteo();
+        $r2 = SeguimientoClinico::generarConsulta($mysqli, $actor, $datos([]), '127.0.0.1');
+        iguales([200, true, $p['consulta_id'], $p['cotizacion_id']], [$r2['http'], $r2['payload']['reutilizado'], $r2['payload']['consulta_id'], $r2['payload']['cotizacion_id']]);
+        iguales($antes, $conteo(), 'sin filas nuevas');
+
+        // Mismo horario con otra solicitud: conflicto; no deja consulta ni cotización a medias.
+        $cotAntes = (int)$mysqli->query("SELECT COUNT(*) n FROM cotizaciones WHERE paciente_id = $pacienteId")->fetch_assoc()['n'];
+        $r3 = SeguimientoClinico::generarConsulta($mysqli, $actor, $datos(['client_request_id' => 'seg-choque-0001']), '127.0.0.1');
+        iguales([409, false], [$r3['http'], $r3['payload']['success']]);
+        verdadero(stripos($r3['payload']['error'], 'consulta pendiente') !== false, $r3['payload']['error']);
+        iguales($cotAntes, (int)$mysqli->query("SELECT COUNT(*) n FROM cotizaciones WHERE paciente_id = $pacienteId")->fetch_assoc()['n'], 'el conflicto no crea cotización');
+        iguales($antes, $conteo(), 'el conflicto no crea consulta');
+
+        // Fuera de la disponibilidad del médico.
+        $r4 = SeguimientoClinico::generarConsulta($mysqli, $actor, $datos(['hora' => '15:00', 'client_request_id' => 'seg-fuera-0001']), '127.0.0.1');
+        iguales(409, $r4['http']);
+        verdadero(stripos($r4['payload']['error'], 'disponibilidad') !== false, $r4['payload']['error']);
+
+        // Sin cobro: cotización EXONERADA de 0 con motivo; ni cobro ni honorario.
+        $r5 = SeguimientoClinico::generarConsulta($mysqli, $actor, $datos(['hora' => '08:20', 'modo' => 'sin_cobro', 'motivo' => 'Control posquirúrgico sin costo', 'client_request_id' => 'seg-sin-cobro-1']), '127.0.0.1');
+        iguales(201, $r5['http'], json_encode($r5['payload']));
+        iguales(['sin_cobro', 'exonerada', 'pendiente'], [$r5['payload']['modo'], $r5['payload']['estado_cotizacion'], $r5['payload']['estado_consulta']]);
+        $ct5 = $mysqli->query("SELECT total, saldo_pendiente, estado, observaciones FROM cotizaciones WHERE id = {$r5['payload']['cotizacion_id']}")->fetch_assoc();
+        iguales([0.0, 0.0, 'pagado'], [(float)$ct5['total'], (float)$ct5['saldo_pendiente'], $ct5['estado']], 'se guarda como pagado de 0; "exonerada" se deriva al leer');
+        verdadero(strpos($ct5['observaciones'], 'Control posquirúrgico sin costo') !== false, 'el motivo queda en la cotización');
+        $aud = $mysqli->query("SELECT modo, motivo, medico_id, creado_por_nombre FROM seguimiento_clinico_consultas WHERE consulta_id = {$r5['payload']['consulta_id']}")->fetch_assoc();
+        iguales(['sin_cobro', 'Control posquirúrgico sin costo', $medicoId, 'Seguimiento Phptest'], [$aud['modo'], $aud['motivo'], (int)$aud['medico_id'], $aud['creado_por_nombre']], 'auditoría con motivo y responsable');
+        iguales(true, SeguimientoClinico::cotizacionEsExonerada($mysqli, $r5['payload']['cotizacion_id']), 'se reconoce como exonerada');
+        $filas = [['cotizacion_id' => $r5['payload']['cotizacion_id'], 'cotizacion_estado' => 'pagado'], ['cotizacion_id' => $p['cotizacion_id'], 'cotizacion_estado' => 'pendiente'], ['cotizacion_id' => null, 'cotizacion_estado' => null]];
+        SeguimientoClinico::marcarFilasExoneradas($mysqli, $filas);
+        iguales(['exonerada', 'pendiente', null], array_column($filas, 'cotizacion_estado'), 'las listas muestran exonerada solo donde corresponde');
+        iguales(0, (int)$mysqli->query("SELECT COUNT(*) n FROM cobros WHERE paciente_id = $pacienteId")->fetch_assoc()['n'], 'no hay cobro');
+        iguales(0, $honorarios(), 'sin cobro no genera honorarios');
+
+        // Solo un médico puede generar.
+        $admin = ['rol' => 'administrador', 'admin' => true, 'medico_id' => 0, 'usuario_id' => 1, 'nombre' => 'Admin'];
+        iguales(403, SeguimientoClinico::generarConsulta($mysqli, $admin, $datos(['client_request_id' => 'seg-admin-0001']), '127.0.0.1')['http']);
+        iguales(404, SeguimientoClinico::generarConsulta($mysqli, $actor, $datos(['paciente_id' => 999999999, 'client_request_id' => 'seg-nopac-0001']), '127.0.0.1')['http']);
+    } finally {
+        $cotIds = [];
+        $rs = $mysqli->query("SELECT id FROM cotizaciones WHERE paciente_id = $pacienteId");
+        while ($row = $rs->fetch_assoc()) $cotIds[] = (int)$row['id'];
+        if ($cotIds) {
+            $in = implode(',', $cotIds);
+            $mysqli->query("DELETE FROM cotizaciones_detalle WHERE cotizacion_id IN ($in)");
+            $mysqli->query("DELETE FROM cotizaciones WHERE id IN ($in)");
+        }
+        $mysqli->query("DELETE FROM seguimiento_clinico_consultas WHERE medico_id = $medicoId");
+        $mysqli->query("DELETE FROM seguimiento_clinico_accesos WHERE paciente_id = $pacienteId");
+        $mysqli->query("DELETE FROM consultas WHERE paciente_id = $pacienteId");
+        $mysqli->query("DELETE FROM disponibilidad_medicos WHERE medico_id = $medicoId");
+        if ($tarifaId > 0) $mysqli->query("DELETE FROM tarifas WHERE id = $tarifaId");
+        $mysqli->query("DELETE FROM pacientes WHERE id = $pacienteId");
+        $mysqli->query("DELETE FROM medicos WHERE id = $medicoId");
+    }
+}, true);
+
 prueba('portal del paciente: solo se entregan PDF dentro de uploads/informes_imagenologia', function () {
     global $root;
     iguales(null, PortalPaciente::rutaPdfImagenologia('../config.php'), 'no sale de la carpeta');

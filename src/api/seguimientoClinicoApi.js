@@ -1,4 +1,5 @@
 import { authFetch } from "../utils/apiClient";
+import { normalizarAgendaDia } from "../utils/agendaMedicoDia";
 
 // Seguimiento clínico. __skipAuthEvent: un 403 (módulo apagado) se muestra como mensaje y no debe interpretarse como cierre de sesión.
 const OPCIONES = { __skipAuthEvent: true, cache: "no-store" };
@@ -34,6 +35,28 @@ export const historialPaciente = (pacienteId, pagina = 1, porPagina = 10) =>
   llamar(API, { accion: "historial", paciente_id: pacienteId, pagina, por_pagina: porPagina });
 export const detalleConsultaSeguimiento = (consultaId) => llamar(API, { accion: "detalle", consulta_id: consultaId });
 
-// Agenda del médico (endpoint existente de horarios): horas libres y ocupadas de una fecha.
+// Única escritura del módulo: genera la consulta (con o sin cobro) en una sola operación del servidor.
+export async function generarConsultaSeguimiento(cuerpo) {
+  const res = await authFetch(`${API}?accion=generar_consulta`, {
+    ...OPCIONES,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cuerpo),
+  });
+  let payload = null;
+  try {
+    payload = await res.json();
+  } catch {
+    payload = null;
+  }
+  if (!res.ok || payload?.success === false) {
+    const err = new Error(payload?.error || `Error HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return payload || {};
+}
+
+// Agenda del médico (endpoint existente de horarios): horas libres y ocupadas de una fecha, ya normalizadas a "HH:MM".
 export const agendaMedicoDia = (medicoId, fecha) =>
-  llamar("api_horarios_disponibles.php", { medico_id: medicoId, fecha });
+  llamar("api_horarios_disponibles.php", { medico_id: medicoId, fecha }).then(normalizarAgendaDia);

@@ -1,6 +1,6 @@
 {
     "formato": 1,
-    "generado_en": "2026-11-27 03:33",
+    "generado_en": "2026-11-27 04:02",
     "origen_motor": "8.4.3",
     "tablas": {
         "agenda_contrato": {
@@ -30178,6 +30178,226 @@
                     "columnas": [
                         {
                             "c": "id",
+                            "sub": null
+                        }
+                    ]
+                }
+            },
+            "fks": []
+        },
+        "seguimiento_clinico_consultas": {
+            "engine": "InnoDB",
+            "collation": "utf8mb4_0900_ai_ci",
+            "columnas": {
+                "id": {
+                    "orden": 1,
+                    "tipo": "bigint unsigned",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "auto_increment",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "consulta_id": {
+                    "orden": 2,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "cotizacion_id": {
+                    "orden": 3,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "paciente_id": {
+                    "orden": 4,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "medico_id": {
+                    "orden": 5,
+                    "tipo": "int",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                },
+                "modo": {
+                    "orden": 6,
+                    "tipo": "varchar(12)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_0900_ai_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "motivo": {
+                    "orden": 7,
+                    "tipo": "varchar(255)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_0900_ai_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "client_request_id": {
+                    "orden": 8,
+                    "tipo": "varchar(64)",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "ninguno"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_0900_ai_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "creado_por_nombre": {
+                    "orden": 9,
+                    "tipo": "varchar(150)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_0900_ai_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "ip": {
+                    "orden": 10,
+                    "tipo": "varchar(45)",
+                    "nulo": true,
+                    "defecto": {
+                        "t": "nulo"
+                    },
+                    "extra": "",
+                    "collation": "utf8mb4_0900_ai_ci",
+                    "comentario": "",
+                    "generada": false
+                },
+                "fecha_hora": {
+                    "orden": 11,
+                    "tipo": "datetime",
+                    "nulo": false,
+                    "defecto": {
+                        "t": "expr",
+                        "v": "CURRENT_TIMESTAMP"
+                    },
+                    "extra": "DEFAULT_GENERATED",
+                    "collation": null,
+                    "comentario": "",
+                    "generada": false
+                }
+            },
+            "indices": {
+                "idx_scc_cotizacion": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "cotizacion_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_scc_modo": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "modo",
+                            "sub": null
+                        },
+                        {
+                            "c": "fecha_hora",
+                            "sub": null
+                        }
+                    ]
+                },
+                "idx_scc_paciente": {
+                    "unico": false,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "paciente_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "fecha_hora",
+                            "sub": null
+                        }
+                    ]
+                },
+                "PRIMARY": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_scc_consulta": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "consulta_id",
+                            "sub": null
+                        }
+                    ]
+                },
+                "uq_scc_solicitud": {
+                    "unico": true,
+                    "tipo": "BTREE",
+                    "expresion": false,
+                    "columnas": [
+                        {
+                            "c": "medico_id",
+                            "sub": null
+                        },
+                        {
+                            "c": "client_request_id",
                             "sub": null
                         }
                     ]

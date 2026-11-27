@@ -11,13 +11,7 @@ export default function MiAgenda({ medicoId }) {
     let cancelado = false;
     setEstado((e) => ({ ...e, cargando: true, error: "" }));
     agendaMedicoDia(medicoId, fecha)
-      .then((r) => !cancelado && setEstado({
-        cargando: false,
-        error: "",
-        libres: Array.isArray(r.horarios_disponibles) ? r.horarios_disponibles : [],
-        ocupados: Array.isArray(r.horarios_ocupados) ? r.horarios_ocupados : [],
-        slot: Number(r.duracion_slot_min || 0),
-      }))
+      .then((r) => !cancelado && setEstado({ cargando: false, error: "", libres: r.libres, ocupados: r.ocupados, slot: r.slot }))
       .catch((e) => !cancelado && setEstado({ cargando: false, error: e.message || "No se pudo cargar la agenda", libres: [], ocupados: [], slot: 0 }));
     return () => {
       cancelado = true;

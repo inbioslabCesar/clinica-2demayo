@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { estadoSeguimiento } from "../api/seguimientoClinicoApi";
 import BuscadorPacientes from "../components/seguimiento/BuscadorPacientes";
+import GenerarConsulta from "../components/seguimiento/GenerarConsulta";
 import LineaTiempo from "../components/seguimiento/LineaTiempo";
 import MiAgenda from "../components/seguimiento/MiAgenda";
 
-// Seguimiento clínico (módulo opcional). Fase 2, solo lectura: búsqueda en toda la clínica, historial cronológico, detalle completo bajo
-// demanda (cada apertura queda registrada) y agenda del médico. La generación de consultas llega en la fase siguiente.
+// Seguimiento clínico (módulo opcional): búsqueda en toda la clínica, historial cronológico, detalle completo bajo demanda (cada apertura
+// queda registrada), agenda del médico y generación de consultas de seguimiento (con cobro o sin cobro/exonerada).
 export default function SeguimientoClinicoPage() {
   const [modulo, setModulo] = useState({ cargando: true, activo: false, error: "", medicoId: 0 });
   const [paciente, setPaciente] = useState(null);
+  const [version, setVersion] = useState(0);
 
   useEffect(() => {
     let cancelado = false;
@@ -41,7 +43,7 @@ export default function SeguimientoClinicoPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-3">
             <BuscadorPacientes onSeleccionar={setPaciente} seleccionadoId={paciente?.id} />
           </div>
-          {modulo.medicoId > 0 && <MiAgenda medicoId={modulo.medicoId} />}
+          {modulo.medicoId > 0 && <MiAgenda key={`agenda-${version}`} medicoId={modulo.medicoId} />}
         </aside>
 
         <section className="min-w-0">
@@ -58,7 +60,10 @@ export default function SeguimientoClinicoPage() {
                   DNI {paciente.dni || "—"} · HC {paciente.historia_clinica || "—"}{paciente.sexo ? ` · ${paciente.sexo === "F" ? "Femenino" : "Masculino"}` : ""}{paciente.edad ? ` · ${paciente.edad}` : ""}
                 </p>
               </div>
-              <LineaTiempo paciente={paciente} />
+              {modulo.medicoId > 0 && (
+                <GenerarConsulta key={`generar-${paciente.id}`} paciente={paciente} medicoId={modulo.medicoId} onGenerada={() => setVersion((v) => v + 1)} />
+              )}
+              <LineaTiempo key={`${paciente.id}-${version}`} paciente={paciente} />
             </div>
           )}
         </section>

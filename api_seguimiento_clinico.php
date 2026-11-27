@@ -1,6 +1,7 @@
 <?php
-// Seguimiento clínico (módulo opcional 'seguimiento_clinico'): estado, búsqueda de pacientes, historial paginado y detalle de consulta.
-// Solo lectura. Toda acción exige módulo habilitado + médico o administrador; abrir un historial o un detalle queda registrado
+// Seguimiento clínico (módulo opcional 'seguimiento_clinico'): estado, búsqueda de pacientes, historial paginado, detalle de consulta
+// y generación de consultas de seguimiento. Lectura salvo generar_consulta (POST). Toda acción exige módulo habilitado + médico o
+// administrador (generar solo médico); abrir un historial o un detalle queda registrado
 // (si no se puede registrar, no se entrega). Ver modules/SeguimientoClinico.php.
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
@@ -27,17 +28,32 @@ if ($actor === null) {
 // Guardia real del módulo: sin licencia activa responde 403 aunque se llame al endpoint directamente.
 ModulosInstalacion::exigir($mysqli ?? ($pdo ?? null), 'seguimiento_clinico');
 
-if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
-    sc_responder(405, ['success' => false, 'error' => 'Metodo no permitido']);
-}
+$accion = (string)($_GET['accion'] ?? 'estado');
+$ip = (string)($_SERVER['REMOTE_ADDR'] ?? '');
+$metodo = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 $conn = $mysqli ?? null;
 if (!$conn instanceof mysqli) {
     sc_responder(500, ['success' => false, 'error' => 'Sin conexion a la base de datos']);
 }
 
-$accion = (string)($_GET['accion'] ?? 'estado');
-$ip = (string)($_SERVER['REMOTE_ADDR'] ?? '');
+// Única acción de escritura: genera la consulta (con o sin cobro) en una sola transacción. Ver SeguimientoClinico::generarConsulta().
+if ($metodo === 'POST' && $accion === 'generar_consulta') {
+    $entrada = json_decode((string)file_get_contents('php://input'), true);
+    if (!is_array($entrada)) {
+        sc_responder(400, ['success' => false, 'error' => 'Solicitud inválida']);
+    }
+    $validacion = SeguimientoClinico::validarSolicitud($entrada);
+    if (!$validacion['ok']) {
+        sc_responder(422, ['success' => false, 'error' => $validacion['error']]);
+    }
+    $resultado = SeguimientoClinico::generarConsulta($conn, $actor, $validacion['datos'], $ip);
+    sc_responder($resultado['http'], $resultado['payload']);
+}
+
+if ($metodo !== 'GET') {
+    sc_responder(405, ['success' => false, 'error' => 'Metodo no permitido']);
+}
 
 if ($accion === 'estado') {
     sc_responder(200, ['success' => true, 'modulo' => 'seguimiento_clinico', 'activo' => true, 'rol' => $actor['rol'], 'medico_id' => $actor['medico_id']]);
