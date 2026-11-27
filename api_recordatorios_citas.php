@@ -8,6 +8,7 @@ require_once __DIR__ . '/modules/AgendaMedicoRegla.php';
 require_once __DIR__ . '/modules/EpisodioAtencionModule.php';
 require_once __DIR__ . '/modules/ReevaluacionModule.php';
 require_once __DIR__ . '/modules/SeguimientoClinico.php';
+api_liberar_sesion_lectura();
 
 function rc_require_session_roles(array $rolesPermitidos) {
     if (!isset($_SESSION['usuario']) || !is_array($_SESSION['usuario'])) {

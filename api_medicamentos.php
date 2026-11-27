@@ -4,6 +4,7 @@ require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/auth_check.php';
 // --- Lógica principal ---
 require_once "config.php";
+api_liberar_sesion_lectura();
 
 error_reporting(E_ALL);
 

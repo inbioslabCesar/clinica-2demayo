@@ -6,6 +6,7 @@ require_once __DIR__ . '/auth_check.php';
 
 // --- Lógica principal ---
 require_once "config.php";
+api_liberar_sesion_lectura();
 
 function decode_valores_referenciales_any($raw) {
     if ($raw === null || $raw === '') return [];

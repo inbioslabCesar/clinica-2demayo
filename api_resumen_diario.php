@@ -5,6 +5,7 @@ if (!defined('SKIP_MYSQLI_INIT')) {
 }
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/caja_autocierre.php';
+api_liberar_sesion_lectura();
 
 if (!isset($_SESSION['usuario'])) {
     error_log('No autenticado: sesión no iniciada');

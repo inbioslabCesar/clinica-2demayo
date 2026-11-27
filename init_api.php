@@ -187,6 +187,22 @@ session_set_cookie_params([
 ]);
 session_start();
 
+if (!function_exists('api_liberar_sesion_lectura')) {
+    /**
+     * Libera el bloqueo del archivo de sesión en peticiones de solo lectura (GET/HEAD).
+     * Sin esto, todas las llamadas simultáneas del mismo usuario se atienden una tras otra y un
+     * endpoint lento congela a los demás. $_SESSION sigue siendo legible; no se debe escribir después.
+     * Llamar tras los require_once y solo en endpoints que no modifican la sesión.
+     */
+    function api_liberar_sesion_lectura(): void
+    {
+        $metodo = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+        if (($metodo === 'GET' || $metodo === 'HEAD') && session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+    }
+}
+
 // CORS adaptable
 $allowedOrigins = [
     'http://localhost:5173',

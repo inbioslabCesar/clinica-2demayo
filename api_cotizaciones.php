@@ -16,6 +16,7 @@ require_once __DIR__ . '/modules/HonorarioRecuperoModule.php';
 require_once __DIR__ . '/modules/AtencionModule.php';
 require_once __DIR__ . '/modules/PermisoAnulacion.php';
 require_once __DIR__ . '/modules/SeguimientoClinico.php';
+api_liberar_sesion_lectura();
 
 $method = $_SERVER['REQUEST_METHOD'];
 

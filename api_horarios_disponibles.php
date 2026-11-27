@@ -7,6 +7,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/AgendaMedicoRegla.php';
 require_once __DIR__ . '/modules/EpisodioAtencionModule.php';
 require_once __DIR__ . '/modules/ReevaluacionModule.php';
+api_liberar_sesion_lectura();
 
 if (!function_exists('hdisp_table_exists')) {
     function hdisp_table_exists(mysqli $conn, string $table): bool {

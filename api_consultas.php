@@ -9,6 +9,7 @@ require_once __DIR__ . '/modules/CorrelativoOperativoModule.php';
 require_once __DIR__ . '/modules/ReevaluacionModule.php';
 require_once __DIR__ . '/modules/ConsultasAgendaCore.php';
 require_once __DIR__ . '/modules/SeguimientoClinico.php';
+api_liberar_sesion_lectura();
 
 function consultas_require_schema($conn) {
     $required = [

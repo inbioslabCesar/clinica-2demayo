@@ -7,6 +7,7 @@ require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/ModulosInstalacion.php';
 require_once __DIR__ . '/modules/SeguimientoClinico.php';
+api_liberar_sesion_lectura();
 
 header('Content-Type: application/json; charset=utf-8');
 
