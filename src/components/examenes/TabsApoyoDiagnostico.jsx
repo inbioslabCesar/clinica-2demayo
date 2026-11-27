@@ -6,6 +6,8 @@ import VisorInformeImagenologiaHC from "../imagenologia/VisorInformeImagenologia
 import CardInformeImagenologia from "../imagenologia/CardInformeImagenologia";
 import { authFetch, resolveAppUrl } from "../../utils/apiClient";
 import { formatearTamano, optimizarEnSecuencia } from "../../utils/optimizarImagen";
+import { eliminarArchivoOrdenImagen, textosConfirmarEliminacion } from "../../utils/archivosImagen";
+import { resolveOrdenImagenArchivoUrl } from "../../utils/ordenesImagenUrl";
 import Swal from "sweetalert2";
 
 // ── Consulta compartida de órdenes de imagen ──────────────────────────────────
@@ -205,6 +207,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
   const [ordenes, setOrdenes]             = useState([]);
   const [loadingOrdenes, setLoadingOrdenes] = useState(false);
   const [ordenSubir, setOrdenSubir] = useState(null);
+  const [eliminandoId, setEliminandoId] = useState(0);
 
   const cargarOrdenes = useCallback((force = false) => {
     if (!consultaId) return;
@@ -261,6 +264,25 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
     const data = await res.json().catch(() => ({}));
     if (!data?.success) {
       alert(data?.error || "No se pudo cancelar la solicitud");
+      return;
+    }
+    cargarOrdenes(true);
+  };
+
+  const handleEliminarArchivo = async (archivo) => {
+    if (eliminandoId) return;
+    const { isConfirmed } = await Swal.fire({
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#dc2626",
+      ...textosConfirmarEliminacion(archivo?.nombre_original),
+    });
+    if (!isConfirmed) return;
+    setEliminandoId(Number(archivo?.id || 0));
+    const resultado = await eliminarArchivoOrdenImagen(authFetch, archivo?.id);
+    setEliminandoId(0);
+    if (!resultado.success) {
+      Swal.fire({ icon: "error", title: "No se pudo eliminar", text: resultado.error });
       return;
     }
     cargarOrdenes(true);
@@ -380,6 +402,38 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
             Solicitado: {new Date(ord.fecha).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" })}
             {ord.archivos?.length > 0 && ` · ${ord.archivos.length} archivo(s) adjunto(s)`}
           </p>
+
+          {puedeVer(ord) && Array.isArray(ord.archivos) && ord.archivos.length > 0 && (
+            <ul className="mt-2 pl-7 space-y-1" aria-label="Archivos subidos">
+              {ord.archivos.map((a) => (
+                <li key={a.id} className="flex items-center gap-2 text-xs text-gray-700">
+                  <span aria-hidden="true">{a.es_dicom ? "🩻" : a.es_imagen ? "🖼️" : "📄"}</span>
+                  <a
+                    href={resolveOrdenImagenArchivoUrl(a.url)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-w-0 truncate text-blue-700 hover:underline"
+                    title={a.nombre_original}
+                  >
+                    {a.nombre_original}
+                  </a>
+                  <span className="shrink-0 text-gray-400">{formatearTamano(a.tamano)}</span>
+                  {!readOnly && Boolean(ord?.can_upload_archivos) && (
+                    <button
+                      type="button"
+                      onClick={() => handleEliminarArchivo(a)}
+                      disabled={eliminandoId === Number(a.id)}
+                      aria-label={`Eliminar ${a.nombre_original}`}
+                      title="Eliminar este archivo"
+                      className="ml-auto shrink-0 rounded border border-red-200 px-2 py-0.5 text-[11px] font-semibold text-red-500 transition hover:border-red-400 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+                    >
+                      {eliminandoId === Number(a.id) ? "Eliminando..." : "🗑 Eliminar"}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
 
           <div className="mt-2">
             <CardInformeImagenologia
