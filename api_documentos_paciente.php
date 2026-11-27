@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/modules/LaboratorioExamenes.php';
 
 $usuario   = $_SESSION['usuario'] ?? null;
 $rol       = strtolower(trim((string)($usuario['rol'] ?? '')));
@@ -354,11 +355,9 @@ if ($method === 'GET') {
         }
 
         $tieneResultado = !empty($row['resultado_id']);
-        $titulo = !empty($row['tipo_examen'])
+        $titulo = !LaboratorioExamenes::esTituloGenerico($row['tipo_examen'] ?? '')
             ? $row['tipo_examen']
-            : (count($examenes) > 0
-                ? implode(', ', array_slice($examenes, 0, 3)) . (count($examenes) > 3 ? '...' : '')
-                : 'Orden de laboratorio #' . $row['orden_id']);
+            : LaboratorioExamenes::tituloDesdeNombres($examenes, 'Orden de laboratorio #' . $row['orden_id']);
 
         $documentos[] = [
             'id'          => 'lab_ord_' . $row['orden_id'],

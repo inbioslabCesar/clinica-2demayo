@@ -17,6 +17,8 @@
 // Solo llegan al paciente si el personal los publicó (publicar_paciente = 1); los DICOM nunca. Cada documento trae su
 // categoría ('laboratorio' | 'imagenologia') y su atención (raíz de la cotización): el Engineer puede apagar una categoría
 // completa (config 'publicar_laboratorio' / 'publicar_imagenologia') y el portal agrupa los resultados por atención.
+require_once __DIR__ . '/LaboratorioExamenes.php';
+
 final class PortalPaciente {
     public const MODO_AUTOMATICO = 'automatico';
     public const MODO_MANUAL = 'manual';
@@ -276,6 +278,7 @@ final class PortalPaciente {
                     'categoria' => $categoria,
                     'titulo' => (string)$d['titulo'],
                     'subtitulo' => (string)($d['subtitulo'] ?? ''),
+                    'examenes' => array_values($d['examenes'] ?? []),
                     'fecha' => $d['fecha'],
                     'atencion_id' => $at['id'],
                     'atencion_fecha' => $at['fecha'],
@@ -491,21 +494,43 @@ final class PortalPaciente {
             ORDER BY rl.fecha DESC, rl.id DESC", 'iii', [$pacienteId, $pacienteId, $pacienteId]);
 
         $porOrden = [];
+        $catalogo = self::catalogoExamenes($conn, array_merge(...array_map(
+            static fn($f) => LaboratorioExamenes::idsSinNombre($f['examenes'] ?? null),
+            $filas ?: [[]]
+        )));
         foreach ($filas as $f) {
             $oid = (int)$f['orden_id'];
             if (isset($porOrden[$oid])) {
                 continue;
             }
+            $nombres = LaboratorioExamenes::nombres($f['examenes'] ?? null, $catalogo);
             $titulo = trim((string)($f['tipo_examen'] ?? ''));
             $porOrden[$oid] = [
                 'ref_id' => (int)$f['resultado_id'],
-                'titulo' => $titulo !== '' ? $titulo : self::tituloDesdeExamenes($f['examenes'] ?? null, 'Resultados de laboratorio'),
+                'titulo' => LaboratorioExamenes::esTituloGenerico($titulo)
+                    ? LaboratorioExamenes::tituloDesdeNombres($nombres)
+                    : $titulo,
                 'subtitulo' => 'Laboratorio',
+                'examenes' => $nombres,
                 'fecha' => $f['resultado_fecha'] ?: $f['orden_fecha'],
                 'cotizacion_id' => (int)($f['cotizacion_id'] ?? 0),
             ];
         }
         return array_values($porOrden);
+    }
+
+    /** @param int[] $ids @return array<int,string> id => nombre del catálogo */
+    private static function catalogoExamenes(\mysqli $conn, array $ids): array {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn($i) => $i > 0)));
+        if (!$ids) {
+            return [];
+        }
+        $out = [];
+        $marcas = implode(',', array_fill(0, count($ids), '?'));
+        foreach (self::consultar($conn, "SELECT id, nombre FROM examenes_laboratorio WHERE id IN ($marcas)", str_repeat('i', count($ids)), $ids) as $e) {
+            $out[(int)$e['id']] = (string)$e['nombre'];
+        }
+        return $out;
     }
 
     /**
@@ -566,24 +591,6 @@ final class PortalPaciente {
     private static function etiquetaImagen(string $tipo): string {
         $mapa = ['ecografia' => 'Ecografía', 'rx' => 'Rayos X', 'tomografia' => 'Tomografía'];
         return $mapa[strtolower($tipo)] ?? 'Imagenología';
-    }
-
-    /** Nombres de los primeros exámenes de la orden (acepta lista de objetos con 'nombre' o de textos). */
-    private static function tituloDesdeExamenes($json, string $porDefecto): string {
-        $lista = is_string($json) ? json_decode($json, true) : null;
-        $nombres = [];
-        if (is_array($lista)) {
-            foreach ($lista as $e) {
-                $n = is_array($e) ? trim((string)($e['nombre'] ?? '')) : '';
-                if ($n !== '') {
-                    $nombres[] = $n;
-                }
-            }
-        }
-        if (!$nombres) {
-            return $porDefecto;
-        }
-        return implode(', ', array_slice($nombres, 0, 3)) . (count($nombres) > 3 ? '...' : '');
     }
 
     // ---------------- Auditoría ----------------

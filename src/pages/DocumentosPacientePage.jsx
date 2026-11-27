@@ -161,28 +161,15 @@ const DocumentoCard = React.memo(function DocumentoCard({ doc, onEliminar, puede
           )}
         </div>
 
-        {/* Etiquetas de exámenes (hasta 3) */}
-        {doc.examenes?.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-1">
-            {doc.examenes.slice(0, 4).map((ex, i) => (
-              <span
-                key={i}
-                className={`text-[10px] bg-yellow-50 text-yellow-700 border border-yellow-200 px-1.5 py-0.5 rounded-md font-medium ${
-                  i < 2 ? "" : i === 2 ? "hidden sm:inline-flex" : "hidden lg:inline-flex"
-                }`}
-              >
-                {ex}
-              </span>
-            ))}
-            {doc.examenes.length > 2 && (
-              <span className="text-[10px] text-gray-400 sm:hidden">+{doc.examenes.length - 2} más</span>
-            )}
-            {doc.examenes.length > 3 && (
-              <span className="hidden text-[10px] text-gray-400 sm:inline-flex lg:hidden">+{doc.examenes.length - 3} más</span>
-            )}
-            {doc.examenes.length > 4 && (
-              <span className="hidden text-[10px] text-gray-400 lg:inline-flex">+{doc.examenes.length - 4} más</span>
-            )}
+        {/* Desglose completo de los exámenes incluidos */}
+        {doc.examenes?.length > 1 && (
+          <div className="mt-1">
+            <p className="text-[11px] font-semibold text-gray-500">Exámenes incluidos ({doc.examenes.length})</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-gray-700">
+              {doc.examenes.map((ex, i) => (
+                <li key={`${ex}-${i}`} className="break-words">{ex}</li>
+              ))}
+            </ul>
           </div>
         )}
       </div>
