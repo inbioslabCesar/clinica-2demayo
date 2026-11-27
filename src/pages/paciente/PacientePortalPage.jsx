@@ -290,6 +290,16 @@ function ListaResultados({ paciente, onSalir, onSesionExpirada }) {
                               <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">{doc.subtitulo}</p>
                               <p className="font-semibold text-gray-900 break-words">{doc.titulo}</p>
                               <p className="text-sm text-gray-500">{formatearFecha(doc.fecha)}</p>
+                              {Array.isArray(doc.examenes) && doc.examenes.length > 1 ? (
+                                <div className="mt-2">
+                                  <p className="text-xs font-semibold text-gray-600">Exámenes incluidos ({doc.examenes.length})</p>
+                                  <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-gray-700">
+                                    {doc.examenes.map((nombre) => (
+                                      <li key={nombre} className="break-words">{nombre}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null}
                             </div>
                             <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${estado.clase}`}>{estado.texto}</span>
                           </div>

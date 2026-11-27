@@ -197,6 +197,7 @@ function pp_despachar(mysqli $conn): int
             // Nombre de descarga: el título que ve el paciente, limpio, con la extensión real del archivo.
             $ext = strtolower(pathinfo($archivo['nombre'], PATHINFO_EXTENSION));
             $base = trim(preg_replace('/[^A-Za-z0-9._ -]+/', '_', (string)iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', (string)$doc['titulo'])), ' _.');
+            $base = rtrim(substr($base, 0, 100), ' _.');
             $nombreDescarga = ($base !== '' ? $base : 'resultado_' . $refId);
             if ($ext !== '' && !preg_match('/\.' . preg_quote($ext, '/') . '$/i', $nombreDescarga)) {
                 $nombreDescarga .= '.' . $ext;

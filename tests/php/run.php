@@ -33,6 +33,7 @@ require_once $root . '/modules/PortalPaciente.php';
 require_once $root . '/modules/RecetaProtocolos.php';
 require_once $root . '/modules/SeguimientoClinico.php';
 require_once $root . '/modules/RankingExamenesLab.php';
+require_once $root . '/modules/LaboratorioExamenes.php';
 require_once $root . '/modules/LicenciaSistema.php';
 
 function licFila(array $extra = []): array {
@@ -1438,6 +1439,59 @@ prueba('adenda: el mismo client_request_id devuelve la misma adenda, también co
         iguales(4, $ok, 'ninguno recibe error');
     } finally {
         $mysqli->query("DELETE FROM bloques_atencion WHERE paciente_id = $paciente");
+    }
+}, true);
+
+prueba('exámenes de laboratorio: título automático para "varios", nombres desde objetos o ids y sin repetidos', function () {
+    verdadero(LaboratorioExamenes::esTituloGenerico('varios') && LaboratorioExamenes::esTituloGenerico(' VARIOS ') && LaboratorioExamenes::esTituloGenerico(null));
+    verdadero(!LaboratorioExamenes::esTituloGenerico('Hemograma'), 'un título real se respeta');
+
+    $json = '[{"id":4,"nombre":"BIOPSIA DE CERVIX"},{"id":3},5,{"id":3,"nombre":"HEMOGRAMA COMPLETO"},0,"x"]';
+    iguales([3, 5], LaboratorioExamenes::idsSinNombre($json), 'solo los que no traen nombre');
+    iguales(['BIOPSIA DE CERVIX', 'Hemograma completo', 'Orina'], LaboratorioExamenes::nombres($json, [3 => 'Hemograma completo', 5 => 'Orina']), 'orden de la orden, catálogo para los ids; "hemograma" duplicado no se repite');
+    iguales(['BIOPSIA DE CERVIX', 'HEMOGRAMA COMPLETO'], LaboratorioExamenes::nombres($json), 'sin catálogo los ids no inventan nombres');
+    iguales([], LaboratorioExamenes::nombres('no es json'));
+
+    iguales('Resultados de laboratorio', LaboratorioExamenes::tituloDesdeNombres([]));
+    iguales('A', LaboratorioExamenes::tituloDesdeNombres(['A']));
+    iguales('A, B, C', LaboratorioExamenes::tituloDesdeNombres(['A', 'B', 'C']));
+    iguales('A, B, C y 2 más', LaboratorioExamenes::tituloDesdeNombres(['A', 'B', 'C', 'D', 'E']));
+});
+
+prueba('portal del paciente: un resultado "varios" muestra el título y el desglose de sus exámenes', function () {
+    global $mysqli;
+    $pac = 987660;
+    $ex = $mysqli->query("SELECT id, nombre FROM examenes_laboratorio WHERE activo = 1 ORDER BY id LIMIT 2")->fetch_all(MYSQLI_ASSOC);
+    if (count($ex) < 2) { return; }
+    $conNombre = json_encode([['id' => (int)$ex[0]['id'], 'nombre' => 'EXAMEN PROPIO UNO'], ['id' => (int)$ex[1]['id'], 'nombre' => 'EXAMEN PROPIO DOS']]);
+    $soloIds = json_encode([(int)$ex[0]['id'], (int)$ex[1]['id']]);
+    $creados = [];
+    try {
+        foreach ([['varios', $conNombre], ['varios', $soloIds], ['Resultado a medida', $conNombre]] as [$tipo, $examenes]) {
+            $e = $mysqli->real_escape_string($examenes);
+            $mysqli->query("INSERT INTO ordenes_laboratorio (paciente_id, examenes, estado) VALUES ($pac, '$e', 'completado')");
+            $o = (int)$mysqli->insert_id;
+            $mysqli->query("INSERT INTO resultados_laboratorio (orden_id, tipo_examen, resultados) VALUES ($o, '$tipo', '{}')");
+            $creados[] = [$o, (int)$mysqli->insert_id];
+        }
+        $porRef = [];
+        foreach (PortalPaciente::documentos($mysqli, $pac) as $d) {
+            if ($d['tipo'] === 'laboratorio') { $porRef[$d['ref_id']] = $d; }
+        }
+        $a = $porRef[$creados[0][1]];
+        iguales('EXAMEN PROPIO UNO, EXAMEN PROPIO DOS', $a['titulo'], '"varios" se reemplaza por los exámenes');
+        iguales(['EXAMEN PROPIO UNO', 'EXAMEN PROPIO DOS'], $a['examenes']);
+        $b = $porRef[$creados[1][1]];
+        iguales([$ex[0]['nombre'], $ex[1]['nombre']], $b['examenes'], 'órdenes antiguas con solo ids: nombres del catálogo');
+        iguales($ex[0]['nombre'] . ', ' . $ex[1]['nombre'], $b['titulo']);
+        $c = $porRef[$creados[2][1]];
+        iguales('Resultado a medida', $c['titulo'], 'un título real se respeta');
+        iguales(2, count($c['examenes']), 'el desglose se entrega igual');
+    } finally {
+        foreach ($creados as [$o, $r]) {
+            $mysqli->query("DELETE FROM resultados_laboratorio WHERE id = $r");
+            $mysqli->query("DELETE FROM ordenes_laboratorio WHERE id = $o");
+        }
     }
 }, true);
 
