@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { FaPlus, FaTimes } from "react-icons/fa";
 import PacienteListSearch from "../components/paciente-list/PacienteListSearch.jsx";
@@ -405,7 +405,10 @@ export default function FarmaciaCotizadorPage({ usuario }) {
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
   const [medicamentosVisibles, setMedicamentosVisibles] = useState([]);
 
+  const medicamentosReqSeq = useRef(0);
+
   const recargarMedicamentos = async (busquedaParam = "") => {
+    const seq = ++medicamentosReqSeq.current;
     const q = String(busquedaParam || "").trim();
     const params = new URLSearchParams();
     if (q.length >= 2) {
@@ -416,6 +419,8 @@ export default function FarmaciaCotizadorPage({ usuario }) {
       params.set("pagina", "1");
     }
     const data = await fetchJsonWithTimeout(`api_medicamentos.php?${params.toString()}`, { credentials: "include" });
+    // Una respuesta más antigua no debe pisar a la de una búsqueda posterior.
+    if (seq !== medicamentosReqSeq.current) return;
     const meds = data.medicamentos || data || [];
     setMedicamentos((prev) => {
       const map = new Map((prev || []).map((m) => [String(m.id), m]));
@@ -434,18 +439,14 @@ export default function FarmaciaCotizadorPage({ usuario }) {
     });
   };
 
+  // Carga inmediata al entrar; las búsquedas posteriores esperan 250 ms a que termine de teclear.
   useEffect(() => {
-    recargarMedicamentos("").catch(() => {
-      // Si falla la recarga inicial, mantener el estado actual.
-    });
-  }, []);
-
-  useEffect(() => {
+    const retardo = medicamentosReqSeq.current === 0 ? 0 : 250;
     const handle = window.setTimeout(() => {
       recargarMedicamentos(busqueda).catch(() => {
-        // Si falla la búsqueda, mantener listado visible actual.
+        // Si falla la carga o la búsqueda, mantener listado visible actual.
       });
-    }, 250);
+    }, retardo);
     return () => window.clearTimeout(handle);
   }, [busqueda]);
 
