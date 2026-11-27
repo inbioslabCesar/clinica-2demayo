@@ -1,6 +1,8 @@
 import React, { memo } from "react";
 import { evaluarRegistroPaciente, textoMotivosRegistroIncompleto } from "../../utils/pacienteRegistroEstado";
 
+const CLASE_ACCION_SECUNDARIA = "rounded-md border bg-white px-2 py-1 text-xs font-medium transition-colors";
+
 const PacienteListTable = memo(function PacienteListTable({ pacientes, onEditar, onEliminar, onDescargarCaratula, onNavigate, onCotizarPaciente, cotizarLabel = "Cotizar", sortBy, sortDir, handleSort, page, setPage, totalPages }) {
   return (
     <div className="hidden lg:block overflow-x-auto w-full">
@@ -39,28 +41,33 @@ const PacienteListTable = memo(function PacienteListTable({ pacientes, onEditar,
                   </span>
                 ) : (tipoSeguroNormalizado || '-')}
               </td>
-              <td className="border py-1">
-                <div className="flex gap-1">
-                  <button onClick={() => onEditar(p)} className="bg-yellow-400 text-white px-1 py-1 rounded text-xs hover:bg-yellow-500">Editar</button>
-                  <button onClick={() => onEliminar(p)} className="bg-red-500 text-white px-1 py-1 rounded text-xs hover:bg-red-600">Eliminar</button>
+              <td className="border px-2 py-2">
+                <div className="flex items-center justify-end gap-3">
+                  <div className="flex flex-wrap items-center justify-end gap-1.5">
+                    <button onClick={() => onEditar(p)} className={`${CLASE_ACCION_SECUNDARIA} border-slate-300 text-slate-700 hover:bg-slate-100`}>Editar</button>
+                    <button onClick={() => onNavigate(`/consumo-paciente/${p.id}`)} className={`${CLASE_ACCION_SECUNDARIA} border-slate-300 text-slate-700 hover:bg-slate-100`} title="Ver consumo total">Consumo</button>
+                    <button onClick={() => onDescargarCaratula(p)} className={`${CLASE_ACCION_SECUNDARIA} border-slate-300 text-slate-700 hover:bg-slate-100`} title="Descargar carátula">Carátula</button>
+                    {tieneContrato && (
+                      <button
+                        onClick={() => onNavigate(`/estado-cuenta/${p.id}`)}
+                        className={`${CLASE_ACCION_SECUNDARIA} ${contratoEstado === 2 ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100" : "border-slate-300 text-slate-600 hover:bg-slate-100"}`}
+                        title={contratoEstado === 2 ? "Estado de cuenta (contrato vigente)" : "Estado de cuenta (contrato histórico)"}
+                      >
+                        Estado cuenta
+                      </button>
+                    )}
+                    <button onClick={() => onEliminar(p)} className={`${CLASE_ACCION_SECUNDARIA} border-red-200 text-red-600 hover:bg-red-50`}>Eliminar</button>
+                  </div>
                   <button
                     onClick={() => (onCotizarPaciente ? onCotizarPaciente(p) : onNavigate(`/seleccionar-servicio?paciente_id=${p.id}`))}
-                    className="bg-indigo-600 text-white px-1 py-1 rounded text-xs hover:bg-indigo-700"
+                    className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm ring-1 ring-indigo-700/20 transition hover:bg-indigo-700 hover:shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-1"
                     title={cotizarLabel === "Agendar" ? "Seleccionar y agendar consulta" : "Cotizar / seleccionar servicio"}
                   >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m-6 4h6m-6 4h3M6 3h12a1 1 0 011 1v16l-3-2-3 2-3-2-3 2V4a1 1 0 011-1z" />
+                    </svg>
                     {cotizarLabel}
                   </button>
-                  {tieneContrato && (
-                    <button
-                      onClick={() => onNavigate(`/estado-cuenta/${p.id}`)}
-                      className={contratoEstado === 2 ? "bg-emerald-600 text-white px-1 py-1 rounded text-xs hover:bg-emerald-700" : "bg-slate-500 text-white px-1 py-1 rounded text-xs hover:bg-slate-600"}
-                      title={contratoEstado === 2 ? "Estado de cuenta (contrato vigente)" : "Estado de cuenta (contrato histórico)"}
-                    >
-                      Estado cuenta
-                    </button>
-                  )}
-                  <button onClick={() => onNavigate(`/consumo-paciente/${p.id}`)} className="bg-blue-600 text-white px-1 py-1 rounded text-xs hover:bg-blue-700" title="Ver consumo total">Consumo</button>
-                  <button onClick={() => onDescargarCaratula(p)} className="bg-purple-600 text-white px-1 py-1 rounded text-xs hover:bg-purple-700" title="Descargar carátula">Carátula</button>
                 </div>
               </td>
             </tr>
