@@ -32,6 +32,7 @@ require_once $root . '/modules/PermisoAnulacion.php';
 require_once $root . '/modules/PortalPaciente.php';
 require_once $root . '/modules/RecetaProtocolos.php';
 require_once $root . '/modules/SeguimientoClinico.php';
+require_once $root . '/modules/RankingExamenesLab.php';
 require_once $root . '/modules/LicenciaSistema.php';
 
 function licFila(array $extra = []): array {
@@ -242,6 +243,28 @@ prueba('seguimiento clínico: actor, búsqueda y paginación se interpretan con 
     iguales([1, 10, 0], array_values(SeguimientoClinico::paginar(0, 0)), 'por defecto');
     iguales([3, 20, 40], array_values(SeguimientoClinico::paginar(3, 500)), 'tope de 20 por página');
     iguales(10, SeguimientoClinico::paginar(1, -5)['por_pagina']);
+});
+
+prueba('ranking de exámenes: cuenta JSON y CSV legado, una vez por orden, y ordena por uso y nombre', function () {
+    $conteo = RankingExamenesLab::contarSolicitudes([
+        '[{"id":10,"nombre":"GLUCOSA"},{"id":16,"nombre":"CREATININA"},{"id":10,"nombre":"GLUCOSA"}]',
+        '[{"id":10},{"id":45}]',
+        '16, 45,x,0',
+        '',
+        null,
+        'basura{',
+    ]);
+    iguales([10 => 2, 16 => 2, 45 => 2], $conteo, 'JSON + CSV, sin duplicar dentro de una orden');
+
+    $ranking = RankingExamenesLab::armar([
+        ['id' => 1, 'nombre' => 'ZETA', 'categoria' => 'A'],
+        ['id' => 10, 'nombre' => 'GLUCOSA', 'categoria' => 'B'],
+        ['id' => 16, 'nombre' => 'CREATININA', 'categoria' => 'B'],
+        ['id' => 2, 'nombre' => 'ALFA', 'categoria' => null],
+    ], [10 => 5, 16 => 5]);
+    iguales([16, 10, 2, 1], array_column($ranking, 'id'), 'más usados primero; empate y sin uso por nombre');
+    iguales(5, $ranking[0]['veces_solicitado']);
+    iguales(2, count(RankingExamenesLab::armar([['id' => 1, 'nombre' => 'A'], ['id' => 2, 'nombre' => 'B'], ['id' => 3, 'nombre' => 'C']], [], 2)), 'respeta el límite');
 });
 
 prueba('seguimiento clínico: resumen de diagnóstico, receta y resultados de laboratorio', function () {

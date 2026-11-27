@@ -223,7 +223,7 @@ export default function CotizarLaboratorioPage() {
     let cancelled = false;
 
     Promise.all([
-      authFetch(`${BASE_URL}api_examenes_laboratorio.php`, { credentials: "include", cache: "no-store" }).then((res) => res.json()),
+      authFetch(`${BASE_URL}api_examenes_laboratorio.php?modo=cotizador`, { credentials: "include", cache: "no-store" }).then((res) => res.json()),
       pacienteIdNum > 0
         ? authFetch(`${BASE_URL}api_pacientes.php?id=${pacienteIdNum}`, { credentials: "include", cache: "no-store" }).then((res) => res.json())
         : Promise.resolve({ success: false }),
