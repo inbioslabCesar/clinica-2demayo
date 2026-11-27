@@ -41,6 +41,23 @@ export function formatearFechaCorta(valor) {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : "";
 }
 
+/** Números de página a mostrar (con null donde hay un salto): 1 … 4 5 [6] 7 8 … 20. */
+export function paginasVisibles(actual, totalPaginas, ventana = 1) {
+  const total = Math.max(1, Number(totalPaginas) || 1);
+  const pag = Math.min(Math.max(1, Number(actual) || 1), total);
+  const mostrar = new Set([1, total]);
+  for (let i = pag - ventana; i <= pag + ventana; i += 1) {
+    if (i >= 1 && i <= total) mostrar.add(i);
+  }
+  const orden = [...mostrar].sort((a, b) => a - b);
+  const salida = [];
+  orden.forEach((n, i) => {
+    if (i > 0 && n - orden[i - 1] > 1) salida.push(null);
+    salida.push(n);
+  });
+  return salida;
+}
+
 export function formatearHora(valor) {
   const m = String(valor || "").match(/^(\d{2}):(\d{2})/);
   return m ? `${m[1]}:${m[2]}` : "";

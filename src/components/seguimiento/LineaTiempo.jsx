@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { historialPaciente } from "../../api/seguimientoClinicoApi";
-import { formatearFechaCorta, formatearHora, insigniaEstado, textoDiagnostico } from "../../utils/seguimientoClinico";
+import { formatearFechaCorta, formatearHora, insigniaEstado, paginasVisibles, textoDiagnostico } from "../../utils/seguimientoClinico";
 import DetalleConsulta from "./DetalleConsulta";
 
 const POR_PAGINA = 10;
@@ -22,9 +22,10 @@ export default function LineaTiempo({ paciente }) {
     setEstado({ cargando: true, error: "" });
     try {
       const r = await historialPaciente(paciente.id, pag, POR_PAGINA);
-      setItems((prev) => (pag === 1 ? r.items : [...prev, ...r.items]));
+      setItems(r.items);
       setTotal(r.total);
       setPagina(pag);
+      setAbierta(null);
       setEstado({ cargando: false, error: "" });
     } catch (e) {
       setEstado({ cargando: false, error: e.message || "No se pudo cargar el historial" });
@@ -38,9 +39,23 @@ export default function LineaTiempo({ paciente }) {
     cargar(1);
   }, [cargar]);
 
+  const cabecera = useRef(null);
+  const irAPagina = (n) => {
+    cabecera.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    cargar(n);
+  };
+
+  const totalPaginas = Math.max(1, Math.ceil(total / POR_PAGINA));
+  const desde = total === 0 ? 0 : (pagina - 1) * POR_PAGINA + 1;
+  const hasta = Math.min(total, pagina * POR_PAGINA);
+  const claseBoton = (activo) =>
+    `min-w-[2rem] rounded-lg border px-2.5 py-1 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
+      activo ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+    }`;
+
   return (
-    <div>
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+    <div ref={cabecera} className="scroll-mt-4">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between       gap-2">
         <h3 className="text-sm font-bold text-slate-800">Historial cronológico</h3>
         <span className="text-xs text-slate-500">{total} atención(es) registradas</span>
       </div>
@@ -91,10 +106,37 @@ export default function LineaTiempo({ paciente }) {
       </ol>
 
       {estado.cargando && <p className="mt-3 text-xs text-slate-500">Cargando...</p>}
-      {!estado.cargando && items.length < total && (
-        <button type="button" className="mt-3 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50" onClick={() => cargar(pagina + 1)}>
-          Cargar más ({total - items.length} restantes)
-        </button>
+      {totalPaginas > 1 && (
+        <nav className="mt-4 flex flex-wrap items-center justify-between gap-2" aria-label="Paginación del historial">
+          <span className="text-xs text-slate-500">
+            Mostrando {desde}–{hasta} de {total}
+          </span>
+          <div className="flex flex-wrap items-center gap-1">
+            <button type="button" className={claseBoton(false)} disabled={estado.cargando || pagina <= 1} onClick={() => irAPagina(pagina - 1)}>
+              Anterior
+            </button>
+            {paginasVisibles(pagina, totalPaginas).map((n, i) =>
+              n === null ? (
+                <span key={`salto-${i}`} className="px-1 text-xs text-slate-400" aria-hidden="true">…</span>
+              ) : (
+                <button
+                  key={n}
+                  type="button"
+                  className={claseBoton(n === pagina)}
+                  disabled={estado.cargando}
+                  aria-current={n === pagina ? "page" : undefined}
+                  aria-label={`Página ${n}`}
+                  onClick={() => n !== pagina && irAPagina(n)}
+                >
+                  {n}
+                </button>
+              )
+            )}
+            <button type="button" className={claseBoton(false)} disabled={estado.cargando || pagina >= totalPaginas} onClick={() => irAPagina(pagina + 1)}>
+              Siguiente
+            </button>
+          </div>
+        </nav>
       )}
     </div>
   );

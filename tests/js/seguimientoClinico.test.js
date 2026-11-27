@@ -7,6 +7,7 @@ import {
   formatearFechaCorta,
   formatearHora,
   insigniaEstado,
+  paginasVisibles,
   tipoCampoHc,
   textoDiagnostico,
 } from "../../src/utils/seguimientoClinico.js";
@@ -64,4 +65,13 @@ test("insigniaEstado y textoDiagnostico", () => {
   assert.equal(textoDiagnostico({ tiene_hc: true, diagnostico_principal: { codigo: "N95.2", nombre: "Vaginitis" }, total_diagnosticos: 3 }), "N95.2 · Vaginitis (+2)");
   assert.equal(textoDiagnostico({ tiene_hc: true, diagnostico_principal: null }), "Sin diagnóstico registrado");
   assert.equal(textoDiagnostico({ tiene_hc: false, diagnostico_principal: null }), "Sin historia clínica");
+});
+
+test("paginasVisibles: pocas páginas, saltos con null y límites", () => {
+  assert.deepEqual(paginasVisibles(1, 1), [1]);
+  assert.deepEqual(paginasVisibles(2, 3), [1, 2, 3]);
+  assert.deepEqual(paginasVisibles(1, 10), [1, 2, null, 10]);
+  assert.deepEqual(paginasVisibles(6, 20), [1, null, 5, 6, 7, null, 20]);
+  assert.deepEqual(paginasVisibles(20, 20), [1, null, 19, 20]);
+  assert.deepEqual(paginasVisibles(99, 0), [1]);
 });
