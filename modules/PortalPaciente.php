@@ -534,8 +534,9 @@ final class PortalPaciente {
     }
 
     /**
-     * Informes de imagenología en borrador o completados. Los que aún no tienen PDF en disco se listan con
-     * 'pendiente_motivo' ('borrador' | 'sin_pdf'): el paciente los ve "en revisión" y no se pueden descargar.
+     * Informes de imagenología en borrador o completados. Un borrador se lista con 'pendiente_motivo' = 'borrador'
+     * (el paciente lo ve "en revisión"). Un informe completado sin PDF en disco se lista como cualquier otro: su PDF
+     * se genera al primer pedido de descarga (ver generarPdfImagenologia).
      */
     private static function documentosImagenologia(\mysqli $conn, int $pacienteId): array {
         $filas = self::consultar($conn, "
@@ -549,13 +550,7 @@ final class PortalPaciente {
 
         $docs = [];
         foreach ($filas as $f) {
-            $tienePdf = self::rutaPdfImagenologia((string)($f['pdf_path'] ?? '')) !== null;
-            $motivo = null;
-            if ($f['estado'] === 'borrador') {
-                $motivo = 'borrador';
-            } elseif (!$tienePdf) {
-                $motivo = 'sin_pdf';
-            }
+            $motivo = $f['estado'] === 'borrador' ? 'borrador' : null;
             $tipo = trim((string)($f['tipo'] ?? ''));
             $titulo = trim((string)($f['titulo'] ?? ''));
             $docs[] = [
@@ -584,8 +579,36 @@ final class PortalPaciente {
     }
 
     public static function rutaPdfInforme(\mysqli $conn, int $informeId): ?string {
-        $fila = self::consultar($conn, 'SELECT pdf_path FROM imagenologia_informes WHERE id = ? LIMIT 1', 'i', [$informeId])[0] ?? null;
-        return $fila ? self::rutaPdfImagenologia((string)$fila['pdf_path']) : null;
+        $fila = self::consultar($conn, 'SELECT pdf_path, estado FROM imagenologia_informes WHERE id = ? LIMIT 1', 'i', [$informeId])[0] ?? null;
+        if (!$fila) {
+            return null;
+        }
+        $ruta = self::rutaPdfImagenologia((string)$fila['pdf_path']);
+        if ($ruta !== null || $fila['estado'] !== 'completado') {
+            return $ruta;
+        }
+        // Informe completado sin PDF (el médico no pulsó "Generar PDF"): se genera ahora con el mismo generador.
+        $generado = self::generarPdfImagenologia($conn, $informeId);
+        return $generado === null ? null : self::rutaPdfImagenologia($generado);
+    }
+
+    /** Ejecuta api_imagenologia_generar_pdf.php en modo interno y devuelve la ruta relativa del PDF creado (o null). */
+    private static function generarPdfImagenologia(\mysqli $conn, int $informeId): ?string {
+        if (!defined('IMAGENOLOGIA_PDF_INTERNO')) {
+            define('IMAGENOLOGIA_PDF_INTERNO', true);
+        }
+        $mysqli = $conn;
+        $informeIdInterno = $informeId;
+        ob_start();
+        try {
+            $resultado = include dirname(__DIR__) . '/api_imagenologia_generar_pdf.php';
+        } catch (\Throwable $e) {
+            error_log('Portal: error generando PDF de imagenología ' . $informeId . ': ' . $e->getMessage());
+            $resultado = null;
+        } finally {
+            ob_end_clean();
+        }
+        return is_array($resultado) && !empty($resultado['pdf_path']) ? (string)$resultado['pdf_path'] : null;
     }
 
     private static function etiquetaImagen(string $tipo): string {

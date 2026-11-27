@@ -21,7 +21,6 @@ const ESTADOS = {
 const TIPOS = { laboratorio: "Laboratorio", imagenologia: "Imagenología", archivo_externo: "Archivo subido", archivo_imagen: "Archivo de imagen" };
 const MOTIVOS_PENDIENTE = {
   borrador: "El informe sigue en borrador: complételo en Imagenología.",
-  sin_pdf: "Informe completado, pero falta generar el PDF en Imagenología.",
   categoria_desactivada: "Esta categoría está desactivada para el portal de esta clínica.",
 };
 

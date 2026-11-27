@@ -1530,7 +1530,7 @@ prueba('portal del paciente: la deuda suma la cadena de cotizaciones y un result
     }
 }, true);
 
-prueba('portal del paciente: informe de imagen en borrador o sin PDF se lista "en revisión" y no se descarga', function () {
+prueba('portal del paciente: un borrador de imagen se lista "en revisión"; el completado sin PDF se ofrece (el PDF se genera al descargar)', function () {
     global $mysqli;
     $pac = 987654;
     $mysqli->query("INSERT INTO ordenes_imagen (paciente_id, tipo, indicaciones, estado) VALUES ($pac, 'rx', 'PHPTEST', 'completado')");
@@ -1548,11 +1548,11 @@ prueba('portal del paciente: informe de imagen en borrador o sin PDF se lista "e
         }
         iguales('en_revision', $docs[$inf1]['estado']);
         iguales('borrador', $docs[$inf1]['pendiente_motivo']);
-        iguales('en_revision', $docs[$inf2]['estado']);
-        iguales('sin_pdf', $docs[$inf2]['pendiente_motivo']);
-        $mysqli->query("INSERT INTO paciente_portal_liberaciones (paciente_id, tipo, ref_id, estado) VALUES ($pac, 'imagenologia', $inf2, 'liberado')");
-        $d2 = PortalPaciente::buscarDocumento($mysqli, $pac, 'imagenologia', $inf2);
-        iguales('en_revision', $d2['estado'], 'liberar a mano no publica un informe sin PDF');
+        iguales('disponible', $docs[$inf2]['estado'], 'completado sin PDF: se ofrece y el PDF se genera al descargar');
+        iguales(null, $docs[$inf2]['pendiente_motivo']);
+        $mysqli->query("INSERT INTO paciente_portal_liberaciones (paciente_id, tipo, ref_id, estado) VALUES ($pac, 'imagenologia', $inf1, 'liberado')");
+        $d1 = PortalPaciente::buscarDocumento($mysqli, $pac, 'imagenologia', $inf1);
+        iguales('en_revision', $d1['estado'], 'liberar a mano no publica un borrador');
         foreach (PortalPaciente::documentos($mysqli, $pac) as $d) {
             verdadero(!array_key_exists('pendiente_motivo', $d), 'el paciente no recibe el motivo interno');
         }
