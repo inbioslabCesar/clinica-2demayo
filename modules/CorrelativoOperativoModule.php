@@ -121,7 +121,7 @@ if (!function_exists('correlativo_operativo_rank_maps')) {
                 . '     LOWER(TRIM(COALESCE(a.estado_evento, ""))) IN ("confirmado", "atendido", "espontaneo", "completado", "pagado")'
                 . '     OR ('
                 . '         LOWER(TRIM(COALESCE(a.estado_evento, ""))) = "pendiente"'
-                . '         AND LOWER(TRIM(COALESCE(ct.estado, ""))) IN ("parcial", "pagado", "pagada", "completado", "completada", "control", "contrato")'
+                . '         AND LOWER(TRIM(COALESCE(ct.estado, ""))) IN ("parcial", "pagado", "pagada", "completado", "completada", "control", "exonerada", "contrato")'
                 . '     )'
                 . ' )';
         }

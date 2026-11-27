@@ -4,6 +4,7 @@ require_once __DIR__ . '/init_api.php';
 require_once 'db.php';
 require_once __DIR__ . '/caja_autocierre.php';
 require_once __DIR__ . '/caja_estado_helper.php';
+api_liberar_sesion_lectura();
 
 try {
     // Verificar si el usuario está autenticado

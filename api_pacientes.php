@@ -4,6 +4,7 @@ if (!defined('SKIP_PDO_INIT')) {
     define('SKIP_PDO_INIT', true);
 }
 require_once __DIR__ . '/config.php';
+api_liberar_sesion_lectura();
 
 function construir_filtro_busqueda_pacientes(string $busqueda): array {
     $busqueda = trim($busqueda);

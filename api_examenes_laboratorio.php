@@ -6,6 +6,7 @@ require_once __DIR__ . '/auth_check.php';
 
 // --- Lógica principal ---
 require_once "config.php";
+api_liberar_sesion_lectura();
 
 function decode_valores_referenciales_any($raw) {
     if ($raw === null || $raw === '') return [];
@@ -390,7 +391,7 @@ switch ($method) {
     case 'GET':
         $modo = strtolower(trim((string)($_GET['modo'] ?? '')));
         if ($modo === 'cotizador' || $modo === 'ligero') {
-            $sqlLite = "SELECT id, nombre, precio_publico FROM examenes_laboratorio WHERE activo = 1 ORDER BY nombre";
+            $sqlLite = "SELECT id, nombre, categoria, precio_publico, tiempo_resultado, condicion_paciente FROM examenes_laboratorio WHERE activo = 1 ORDER BY nombre";
             $resLite = $conn->query($sqlLite);
             $examenesLite = [];
             if ($resLite) {
@@ -398,7 +399,10 @@ switch ($method) {
                     $examenesLite[] = [
                         'id' => (int)($row['id'] ?? 0),
                         'nombre' => (string)($row['nombre'] ?? ''),
+                        'categoria' => $row['categoria'] ?? null,
                         'precio_publico' => (float)($row['precio_publico'] ?? 0),
+                        'tiempo_resultado' => $row['tiempo_resultado'] ?? null,
+                        'condicion_paciente' => $row['condicion_paciente'] ?? null,
                     ];
                 }
             }

@@ -14,6 +14,8 @@ if (!defined('SKIP_MYSQLI_INIT')) {
 }
 require_once __DIR__ . '/config.php';
 
+api_liberar_sesion_lectura();
+
 header('Content-Type: application/json; charset=utf-8');
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';

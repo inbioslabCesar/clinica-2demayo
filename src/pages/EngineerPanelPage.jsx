@@ -17,6 +17,7 @@ const NOMBRES = {
   ocupacional: "Salud ocupacional",
   portal_empresas: "Portal de empresas",
   portal_pacientes: "Portal del paciente",
+  seguimiento_clinico: "Seguimiento clínico",
 };
 
 const ESTADO_EFECTIVO = {

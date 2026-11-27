@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
+api_liberar_sesion_lectura();
 
 function cfg_normalize_paciente_sexo_default($value): string {
     $token = strtoupper(trim((string)$value));

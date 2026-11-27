@@ -1,10 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { FaPlus, FaTimes } from "react-icons/fa";
 import PacienteListSearch from "../components/paciente-list/PacienteListSearch.jsx";
 import { useQuoteCart } from "../context/QuoteCartContext";
 import Swal from "sweetalert2";
 import { authFetch } from "../utils/apiClient";
+import BotonVolver from "../components/comunes/BotonVolver";
+import BotonVolverServicio from "../components/comunes/BotonVolverServicio";
 // import withReactContent from "sweetalert2-react-content";
 
 export default function FarmaciaCotizadorPage({ usuario }) {
@@ -405,7 +407,10 @@ export default function FarmaciaCotizadorPage({ usuario }) {
   const { cart, addItems, clearCart, count: cartCount } = useQuoteCart();
   const [medicamentosVisibles, setMedicamentosVisibles] = useState([]);
 
+  const medicamentosReqSeq = useRef(0);
+
   const recargarMedicamentos = async (busquedaParam = "") => {
+    const seq = ++medicamentosReqSeq.current;
     const q = String(busquedaParam || "").trim();
     const params = new URLSearchParams();
     if (q.length >= 2) {
@@ -416,6 +421,8 @@ export default function FarmaciaCotizadorPage({ usuario }) {
       params.set("pagina", "1");
     }
     const data = await fetchJsonWithTimeout(`api_medicamentos.php?${params.toString()}`, { credentials: "include" });
+    // Una respuesta más antigua no debe pisar a la de una búsqueda posterior.
+    if (seq !== medicamentosReqSeq.current) return;
     const meds = data.medicamentos || data || [];
     setMedicamentos((prev) => {
       const map = new Map((prev || []).map((m) => [String(m.id), m]));
@@ -434,18 +441,14 @@ export default function FarmaciaCotizadorPage({ usuario }) {
     });
   };
 
+  // Carga inmediata al entrar; las búsquedas posteriores esperan 250 ms a que termine de teclear.
   useEffect(() => {
-    recargarMedicamentos("").catch(() => {
-      // Si falla la recarga inicial, mantener el estado actual.
-    });
-  }, []);
-
-  useEffect(() => {
+    const retardo = medicamentosReqSeq.current === 0 ? 0 : 250;
     const handle = window.setTimeout(() => {
       recargarMedicamentos(busqueda).catch(() => {
-        // Si falla la búsqueda, mantener listado visible actual.
+        // Si falla la carga o la búsqueda, mantener listado visible actual.
       });
-    }, 250);
+    }, retardo);
     return () => window.clearTimeout(handle);
   }, [busqueda]);
 
@@ -1200,46 +1203,26 @@ export default function FarmaciaCotizadorPage({ usuario }) {
           )}
         </h2>
         {/* Mostrar el botón solo si hay pacienteId en la URL, si no, mostrar botón para ir al panel principal del químico */}
-        {pacienteId && !(new URLSearchParams(location.search).get('cobro_id') || new URLSearchParams(location.search).get('cotizacion_id')) ? (
-          <button
-            className="bg-blue-100 text-blue-800 px-4 py-2 rounded font-semibold border border-blue-300 hover:bg-blue-200 transition"
-            onClick={() => navigate("/seleccionar-servicio", {
-              state: Number(pacienteId || 0) <= 0
-                ? {
-                    pacienteId: 0,
-                    pacienteTemporal: { nombre: 'Particular', apellido: '', dni: '' },
-                  }
-                : { pacienteId },
-            })}
-          >
-            ← Volver a Servicios
-          </button>
-        ) : (
-          <button
-            className="bg-purple-100 text-purple-800 px-4 py-2 rounded font-semibold border border-purple-300 hover:bg-purple-200 transition"
-            onClick={() => {
-              const sp = new URLSearchParams(location.search);
-              const isEditing = Boolean(sp.get('cobro_id') || sp.get('cotizacion_id'));
-              const cotizacionId = sp.get('cotizacion_id');
-              const pid = pacienteId || pacienteDatos?.id;
-              if (cotizacionId && !sp.get('cobro_id')) {
-                navigate(`/seleccionar-servicio?paciente_id=${Number(pid)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
-                  state: { pacienteId: Number(pid), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
-                });
-              } else if (isEditing) {
-                navigate(pid ? `/consumo-paciente/${pid}` : '/pacientes');
-              } else {
-                navigate('/medicamentos');
-              }
-            }}
-          >
-            {(() => {
-              const sp = new URLSearchParams(location.search);
-              const isEditing = Boolean(sp.get('cobro_id') || sp.get('cotizacion_id'));
-              return isEditing ? '← Volver a Servicios' : '← Ir a Lista de Medicamentos';
-            })()}
-          </button>
-        )}
+        {(() => {
+          const sp = new URLSearchParams(location.search);
+          const cobroId = sp.get('cobro_id');
+          const cotizacionId = sp.get('cotizacion_id');
+          // Sin paciente en la URL (flujo del químico) se vuelve a la lista de medicamentos.
+          if (!pacienteId && !cobroId && !cotizacionId) {
+            return (
+              <BotonVolver ariaLabel="Ir a la lista de medicamentos" onClick={() => navigate('/medicamentos')}>
+                Ir a Lista de Medicamentos
+              </BotonVolver>
+            );
+          }
+          return (
+            <BotonVolverServicio
+              pacienteId={pacienteId || pacienteDatos?.id}
+              cotizacionId={cotizacionId}
+              cobroId={cobroId}
+            />
+          );
+        })()}
       </div>
       {/* Buscador de paciente */}
   <div className="mb-4">

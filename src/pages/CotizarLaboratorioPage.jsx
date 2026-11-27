@@ -7,6 +7,7 @@ import Swal from "sweetalert2";
 import { useParams } from "react-router-dom";
 import { BASE_URL } from "../config/config";
 import { useQuoteCart } from "../context/QuoteCartContext";
+import BotonVolverServicio from "../components/comunes/BotonVolverServicio";
 import useSubmitGuard from "../hooks/useSubmitGuard";
 import { confirmarLimpiezaCarrito } from "../utils/cotizacionSubmit";
 import { getLimaDate, getLimaTime as getDefaultTime, normalizeHourHm } from "../utils/dateTime";
@@ -223,7 +224,7 @@ export default function CotizarLaboratorioPage() {
     let cancelled = false;
 
     Promise.all([
-      authFetch(`${BASE_URL}api_examenes_laboratorio.php`, { credentials: "include", cache: "no-store" }).then((res) => res.json()),
+      authFetch(`${BASE_URL}api_examenes_laboratorio.php?modo=cotizador`, { credentials: "include", cache: "no-store" }).then((res) => res.json()),
       pacienteIdNum > 0
         ? authFetch(`${BASE_URL}api_pacientes.php?id=${pacienteIdNum}`, { credentials: "include", cache: "no-store" }).then((res) => res.json())
         : Promise.resolve({ success: false }),
@@ -1354,37 +1355,13 @@ export default function CotizarLaboratorioPage() {
           )}
         </div>
         <div className="flex w-full md:w-auto justify-end items-end xl:pr-24">
-          {(() => {
-            const isEditing = Boolean(cobroId || cotizacionId);
-            if (!isEditing) {
-              return (
-                  <button
-                    onClick={() => navigate('/seleccionar-servicio', {
-                      state: Number(pacienteId || 0) <= 0
-                        ? {
-                            pacienteId: 0,
-                            pacienteTemporal: pacienteTemporal || { nombre: 'Particular', apellido: '', dni: '' },
-                          }
-                        : {
-                            pacienteId: Number(pacienteId || 0),
-                            ...(pacienteTemporal ? { pacienteTemporal } : {}),
-                          },
-                    })}
-                    className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
-                  >Volver</button>
-              );
-            }
-            if (cotizacionId && !cobroId) {
-              return (
-                <button onClick={() => navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionId)}&modo=${modoCotizacion}&back_to=/cotizaciones`, {
-                  state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: modoCotizacion },
-                })} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">← Volver a Servicios</button>
-              );
-            }
-            return (
-              <button onClick={() => navigate(pacienteId ? `/consumo-paciente/${pacienteId}${cobroId ? `?cobro_id=${cobroId}` : ''}` : '/pacientes')} className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">← Volver a Consumo del Paciente</button>
-            );
-          })()}
+          <BotonVolverServicio
+            pacienteId={pacienteId}
+            pacienteTemporal={pacienteTemporal}
+            cotizacionId={cotizacionId}
+            cobroId={cobroId}
+            modo={modoCotizacion}
+          />
         </div>
       </div>
       <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">

@@ -84,6 +84,7 @@ function disponibilidadPagoLabel(cita) {
   const estado = String(cita?.cotizacion_estado || "").toLowerCase();
 
   if (cita?.origen === "reevaluacion") return "Sin costo (control)";
+  if (estado === "exonerada") return "Sin cobro (exonerada)";
   if (cotId <= 0) return "Sin orden";
   if (saldo > 0) return estado === "parcial" ? "Parcial" : "Falta cancelar";
   if (["pagado", "pagada", "control"].includes(estado)) return "Pagado";
@@ -97,6 +98,7 @@ function disponibilidadPagoBadge(cita) {
   const saldoRepetido = Boolean(cita?._saldo_repetido_cotizacion);
 
   if (cita?.origen === "reevaluacion") return "border-emerald-300 bg-emerald-50 text-emerald-700";
+  if (estado === "exonerada") return "border-fuchsia-300 bg-fuchsia-100 text-fuchsia-800";
   if (cotId <= 0) return "border-slate-300 bg-slate-100 text-slate-700";
   if (saldo > 0 && saldoRepetido) return "border-amber-300 bg-amber-50 text-amber-800";
   if (saldo > 0) return "border-rose-300 bg-rose-100 text-rose-700";
@@ -589,6 +591,7 @@ function origenFinancieroLabel(item) {
     if (esCobroAnulado(item)) return "Consulta anulada / devuelta";
     if (saldo > 0) return estado === "parcial" ? "Consulta parcial" : "Falta cancelar consulta";
     if (estado === "pagado" || estado === "pagada" || estado === "control") return "Consulta pagada";
+    if (estado === "exonerada") return "Consulta exonerada (sin cobro)";
     if (cotId > 0) return "Consulta sin deuda";
     return "Consulta sin cobro";
   }
@@ -614,6 +617,7 @@ function origenFinancieroBadge(item) {
   if (esCobroAnulado(item)) return "bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200";
   if (saldo > 0) return "bg-rose-100 text-rose-700 border-rose-200";
   if (estado === "pagado" || estado === "pagada" || estado === "control") return "bg-emerald-100 text-emerald-700 border-emerald-200";
+  if (estado === "exonerada") return "bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200";
   if (cotId > 0) return "bg-slate-100 text-slate-700 border-slate-200";
 
   return "bg-slate-50 text-slate-500 border-slate-200";
@@ -3384,7 +3388,7 @@ export default function RecordatoriosCitasPage() {
                   const mostrarBadgeTipo = !(esHcProxima && esTipoProgramada);
                   const estadoCotizacion = String(item?.cotizacion_estado || "").toLowerCase();
                   const cotizacionPagada =
-                    estadoCotizacion === "pagado" || estadoCotizacion === "pagada" || estadoCotizacion === "control";
+                    estadoCotizacion === "pagado" || estadoCotizacion === "pagada" || estadoCotizacion === "control" || estadoCotizacion === "exonerada";
                   const puedeRegistrarCobro = !item.cotizacion_id
                     && !esControl
                     && (item.estado_consulta === "falta_cancelar" || Number(item.hc_origen_id || 0) > 0);

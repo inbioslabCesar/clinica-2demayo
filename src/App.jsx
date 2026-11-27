@@ -1,6 +1,7 @@
 import React, { useState, useEffect, lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import ErrorBoundary from "./components/comunes/ErrorBoundary.jsx";
+import RutaModulo from "./components/comunes/RutaModulo.jsx";
 import { QuoteCartProvider } from "./context/QuoteCartContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { hasPermiso, normalizePermisos } from "./config/recepcionPermisos";
@@ -57,6 +58,7 @@ const MisInformesImagenologiaPage = lazy(() =>
 const MisProcedimientosPage = lazy(() =>
   import("./pages/MisProcedimientosPage.jsx")
 );
+const SeguimientoClinicoPage = lazy(() => import("./pages/SeguimientoClinicoPage.jsx"));
 const MedicosPage = lazy(() => import("./pages/MedicosPage.jsx"));
 const PanelMedicoPage = lazy(() => import("./pages/PanelMedicoPage.jsx"));
 const HistoriaClinicaPage = lazy(() =>
@@ -850,7 +852,7 @@ function App() {
     };
   }, []);
 
-  const { tiene: tieneModulo, cargando: cargandoModulos } = useModulos(Boolean(usuario) && usuario.rol !== "empresa");
+  const { modulos, tiene: tieneModulo, cargando: cargandoModulos } = useModulos(Boolean(usuario) && usuario.rol !== "empresa");
   const ocupacionalActivo = tieneModulo("ocupacional");
   const portalPacientesActivo = tieneModulo("portal_pacientes");
 
@@ -1033,6 +1035,19 @@ function App() {
                         rolesPermitidos={["medico"]}
                       >
                         <MisProcedimientosPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/seguimiento-clinico"
+                    element={
+                      <ProtectedRoute
+                        usuario={usuario}
+                        rolesPermitidos={["medico"]}
+                      >
+                        <RutaModulo modulo="seguimiento_clinico" modulos={modulos} cargando={cargandoModulos} redirigirA="/mis-consultas">
+                          <SeguimientoClinicoPage />
+                        </RutaModulo>
                       </ProtectedRoute>
                     }
                   />

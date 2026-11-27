@@ -10,6 +10,7 @@ import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../util
 import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
 import useSubmitGuard from "../hooks/useSubmitGuard";
 import { confirmarLimpiezaCarrito, finalizarRegistroCotizacion, registrarConFallbackAdenda } from "../utils/cotizacionSubmit";
+import BotonVolverServicio from "../components/comunes/BotonVolverServicio";
 import { getLimaDate, normalizeAgendaProgramacionModo, normalizeHourHm } from "../utils/dateTime";
 
 function updateConsultaDescriptionSchedule(description, fechaProgramada, horaProgramada) {
@@ -1117,48 +1118,13 @@ export default function CotizarEcografiaPage() {
   const mostrarPanelDerecho = seleccionados.length > 0;
   const volverButton = (() => {
     const sp = new URLSearchParams(location.search);
-    const cobroId = sp.get('cobro_id');
-    const cotizacionId = sp.get('cotizacion_id');
-    const isEditing = Boolean(cobroId || cotizacionId);
-    if (!isEditing) {
-      return (
-        <button
-          onClick={() => navigate('/seleccionar-servicio', {
-            state: Number(pacienteId || 0) <= 0
-              ? {
-                  pacienteId: 0,
-                  pacienteTemporal: pacienteTemporal || { nombre: 'Particular', apellido: '', dni: '' },
-                }
-              : {
-                  pacienteId: Number(pacienteId || 0),
-                  ...(pacienteTemporal ? { pacienteTemporal } : {}),
-                },
-          })}
-          className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
-        >
-          ← Volver
-        </button>
-      );
-    }
-    if (cotizacionId && !cobroId) {
-      return (
-        <button
-          onClick={() => navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${Number(cotizacionId)}&modo=editar&back_to=/cotizaciones`, {
-            state: { pacienteId: Number(pacienteId), cotizacionId: Number(cotizacionId), backTo: '/cotizaciones', modo: 'editar' },
-          })}
-          className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
-        >
-          ← Volver a Servicios
-        </button>
-      );
-    }
     return (
-      <button
-        onClick={() => navigate(pacienteId ? `/consumo-paciente/${pacienteId}${cobroId ? `?cobro_id=${cobroId}` : ''}` : '/pacientes')}
-        className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
-      >
-        ← Volver a Consumo del Paciente
-      </button>
+      <BotonVolverServicio
+        pacienteId={pacienteId}
+        pacienteTemporal={pacienteTemporal}
+        cotizacionId={sp.get('cotizacion_id')}
+        cobroId={sp.get('cobro_id')}
+      />
     );
   })();
 

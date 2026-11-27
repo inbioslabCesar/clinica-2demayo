@@ -822,7 +822,7 @@ function MedicoConsultas({ medicoId, onIniciarConsulta, onVerDetalle, mode = "li
     const tieneCotizacion = cotizacionId > 0;
     const esHcProxima = Number(consulta?.hc_origen_id || 0) > 0
       || String(consulta?.origen_creacion || '').toLowerCase().trim() === 'hc_proxima';
-    const cotizacionPagada = estadoCotizacion === 'pagado' || estadoCotizacion === 'pagada' || estadoCotizacion === 'control';
+    const cotizacionPagada = estadoCotizacion === 'pagado' || estadoCotizacion === 'pagada' || estadoCotizacion === 'control' || estadoCotizacion === 'exonerada';
     const habilitacionAnticipadaActiva = Number(consulta?.habilitacion_anticipada_activa || 0) === 1;
     const habilitacionMotivo = String(consulta?.habilitacion_anticipada_motivo || '').trim();
 

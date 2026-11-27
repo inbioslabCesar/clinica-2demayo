@@ -4,6 +4,7 @@ if (!defined('SKIP_MYSQLI_INIT')) {
     define('SKIP_MYSQLI_INIT', true);
 }
 require_once __DIR__ . '/config.php';
+api_liberar_sesion_lectura();
 
 // Verificar que el usuario esté autenticado
 if (!isset($_SESSION['usuario']) && !isset($_SESSION['medico_id'])) {

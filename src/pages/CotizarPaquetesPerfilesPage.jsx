@@ -8,6 +8,7 @@ import { aplicarExclusionConsultaDelCarrito as aplicarExclusionConsultaDelCarrit
 import { getReferenceHorarioFromCart, suggestNextHorarioFromCart } from "../utils/cartScheduling";
 import useAgendaAvailabilityByTargets from "../hooks/useAgendaAvailabilityByTargets";
 import useSubmitGuard from "../hooks/useSubmitGuard";
+import BotonVolverServicio from "../components/comunes/BotonVolverServicio";
 import { getLimaDate, getLimaTime as getDefaultTime, normalizeAgendaProgramacionModo, normalizeDateYmd, normalizeHourHm } from "../utils/dateTime";
 
 const SERVICE_TYPE_LABELS = {
@@ -1134,27 +1135,11 @@ export default function CotizarPaquetesPerfilesPage() {
             </span>
           )}
         </div>
-        <button
-          onClick={() => {
-            if (isEditingCotizacion) {
-              navigate(`/seleccionar-servicio?paciente_id=${Number(pacienteId)}&cotizacion_id=${cotizacionId}&modo=${modoCotizacion}&back_to=/cotizaciones`, {
-                state: { pacienteId: Number(pacienteId), cotizacionId, backTo: "/cotizaciones", modo: modoCotizacion },
-              });
-            } else {
-              navigate("/seleccionar-servicio", {
-                state: Number(pacienteId || 0) <= 0
-                  ? {
-                      pacienteId: 0,
-                      pacienteTemporal: { nombre: 'Particular', apellido: '', dni: '' },
-                    }
-                  : { pacienteId: Number(pacienteId) },
-              });
-            }
-          }}
-          className="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300"
-        >
-          Volver
-        </button>
+        <BotonVolverServicio
+          pacienteId={pacienteId}
+          cotizacionId={isEditingCotizacion ? cotizacionId : undefined}
+          modo={modoCotizacion}
+        />
       </div>
 
       <div className="mb-4 text-gray-700">

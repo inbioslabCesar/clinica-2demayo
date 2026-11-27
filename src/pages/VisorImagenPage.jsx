@@ -2,12 +2,14 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { authFetch, resolveAppUrl } from "../utils/apiClient";
 import { normalizeOrdenArchivos } from "../utils/ordenesImagenUrl";
+import { eliminarArchivoOrdenImagen, textosConfirmarEliminacion } from "../utils/archivosImagen";
+import Swal from "sweetalert2";
 import Spinner from "../components/comunes/Spinner";
 import DicomViewer from "../components/visor/DicomViewer";
 import {
   FaSearchPlus, FaSearchMinus, FaExpand, FaCompress,
   FaUndo, FaRedo, FaDownload, FaTimes, FaChevronLeft,
-  FaChevronRight, FaFilePdf, FaFileMedical,
+  FaChevronRight, FaFilePdf, FaFileMedical, FaTrashAlt,
 } from "react-icons/fa";
 
 // ── Tipos ──────────────────────────────────────────────────────────────────────
@@ -165,6 +167,7 @@ export default function VisorImagenPage() {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [fullscreen, setFullscreen]   = useState(false);
   const [informe, setInforme] = useState(null);
+  const [eliminando, setEliminando] = useState(false);
 
   // Computed before hooks — safe when orden is null
   // DICOM y imágenes normales son ambas "visualizables" en el área principal
@@ -243,6 +246,28 @@ export default function VisorImagenPage() {
   const tipo       = TIPO_INFO[orden.tipo] || { label: orden.tipo, emoji: "🩻" };
   const noImagenes = (orden.archivos || []).filter((a) => !a.es_imagen && !a.es_dicom);
   const selected   = todasLasImagenes[selectedIdx];
+  const puedeEliminar = Boolean(orden.can_upload_archivos) && orden.estado !== "cancelado";
+
+  const eliminarSeleccionada = async () => {
+    if (!selected || eliminando) return;
+    const { isConfirmed } = await Swal.fire({
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#dc2626",
+      ...textosConfirmarEliminacion(selected.nombre_original),
+    });
+    if (!isConfirmed) return;
+    setEliminando(true);
+    const resultado = await eliminarArchivoOrdenImagen(authFetch, selected.id);
+    setEliminando(false);
+    if (!resultado.success) {
+      Swal.fire({ icon: "error", title: "No se pudo eliminar", text: resultado.error });
+      return;
+    }
+    const restantes = todasLasImagenes.length - 1;
+    setOrden((prev) => ({ ...prev, archivos: (prev?.archivos || []).filter((a) => a.id !== selected.id) }));
+    setSelectedIdx((i) => Math.max(0, Math.min(i, restantes - 1)));
+  };
 
   const pac    = orden.paciente;
   const con    = orden.consulta;
@@ -367,22 +392,35 @@ export default function VisorImagenPage() {
                 <ImageViewer key={selected.url} src={selected.url} nombre={selected.nombre_original} />
               )}
               {/* Navegación inferior */}
-              {todasLasImagenes.length > 1 && (
-                <div className="bg-gray-900 border-t border-gray-800 px-4 py-2 flex items-center justify-between">
+              {(todasLasImagenes.length > 1 || puedeEliminar) && (
+                <div className="bg-gray-900 border-t border-gray-800 px-4 py-2 flex items-center justify-between gap-2">
                   <button
                     onClick={irAnterior}
                     disabled={selectedIdx === 0}
-                    className="flex items-center gap-1 text-gray-300 hover:text-white disabled:opacity-30 text-sm transition"
+                    className={`flex items-center gap-1 text-gray-300 hover:text-white disabled:opacity-30 text-sm transition ${todasLasImagenes.length > 1 ? "" : "invisible"}`}
                   >
                     <FaChevronLeft /> Anterior
                   </button>
-                  <span className="text-gray-400 text-xs">
-                    {selectedIdx + 1} / {todasLasImagenes.length} · {selected.nombre_original}
-                  </span>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="truncate text-gray-400 text-xs">
+                      {selectedIdx + 1} / {todasLasImagenes.length} · {selected.nombre_original}
+                    </span>
+                    {puedeEliminar && (
+                      <button
+                        type="button"
+                        onClick={eliminarSeleccionada}
+                        disabled={eliminando}
+                        title="Eliminar esta imagen"
+                        className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-500/40 px-3 py-1 text-xs font-semibold text-red-400 transition hover:border-red-400 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50"
+                      >
+                        <FaTrashAlt aria-hidden="true" /> {eliminando ? "Eliminando..." : "Eliminar"}
+                      </button>
+                    )}
+                  </div>
                   <button
                     onClick={irSiguiente}
                     disabled={selectedIdx === todasLasImagenes.length - 1}
-                    className="flex items-center gap-1 text-gray-300 hover:text-white disabled:opacity-30 text-sm transition"
+                    className={`flex items-center gap-1 text-gray-300 hover:text-white disabled:opacity-30 text-sm transition ${todasLasImagenes.length > 1 ? "" : "invisible"}`}
                   >
                     Siguiente <FaChevronRight />
                   </button>

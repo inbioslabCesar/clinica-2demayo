@@ -5,6 +5,9 @@ import SolicitudProcedimientos from "./SolicitudProcedimientos";
 import VisorInformeImagenologiaHC from "../imagenologia/VisorInformeImagenologiaHC";
 import CardInformeImagenologia from "../imagenologia/CardInformeImagenologia";
 import { authFetch, resolveAppUrl } from "../../utils/apiClient";
+import { formatearTamano, optimizarEnSecuencia } from "../../utils/optimizarImagen";
+import { eliminarArchivoOrdenImagen, textosConfirmarEliminacion } from "../../utils/archivosImagen";
+import { resolveOrdenImagenArchivoUrl } from "../../utils/ordenesImagenUrl";
 import Swal from "sweetalert2";
 
 // ── Consulta compartida de órdenes de imagen ──────────────────────────────────
@@ -34,38 +37,6 @@ function fetchOrdenesImagenConsulta(consultaId, { force = false } = {}) {
     });
   ordenesImagenInflight.set(key, { promise, ts: Date.now() });
   return promise;
-}
-
-// ── Compresión previa de imágenes pesadas (reduce tiempo de subida en producción) ─
-const COMPRIMIR_DESDE_BYTES = 1.5 * 1024 * 1024;
-const MAX_LADO_PX = 3000;
-const CALIDAD_JPEG = 0.9;
-const MIMES_COMPRIMIBLES = ["image/png", "image/jpeg", "image/bmp", "image/webp"];
-
-async function optimizarImagenParaSubida(file) {
-  try {
-    if (!MIMES_COMPRIMIBLES.includes(file.type) || file.size < COMPRIMIR_DESDE_BYTES) return file;
-    if (typeof createImageBitmap !== "function") return file;
-
-    const bitmap = await createImageBitmap(file);
-    const escala = Math.min(1, MAX_LADO_PX / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * escala));
-    canvas.height = Math.max(1, Math.round(bitmap.height * escala));
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close?.();
-
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", CALIDAD_JPEG));
-    if (!blob || blob.size >= file.size * 0.9) return file;
-
-    const base = file.name.replace(/\.[^.]+$/, "") || "imagen";
-    return new File([blob], `${base}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
-  } catch {
-    return file;
-  }
 }
 
 // XHR para poder mostrar progreso real de subida.
@@ -108,7 +79,10 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
   const [archivos, setArchivos] = useState([]);
   const [subiendo, setSubiendo] = useState(false);
   const [progreso, setProgreso] = useState(0);
+  // "" | "optimizando" | "subiendo" | "guardando": cada etapa tiene su propio mensaje y barra.
   const [fase, setFase] = useState("");
+  const [avance, setAvance] = useState({ hecho: 0, total: 0 });
+  const [pesoSubida, setPesoSubida] = useState(0);
 
   const agregarArchivos = (fileList) => {
     const lista = Array.from(fileList || []);
@@ -121,17 +95,24 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
     if (!orden?.id || archivos.length === 0 || subiendo) return;
     setSubiendo(true);
     setProgreso(0);
+    setAvance({ hecho: 0, total: archivos.length });
     subidasImagenActivas += 1;
     try {
-      setFase("Optimizando imágenes...");
-      const optimizados = await Promise.all(archivos.map(optimizarImagenParaSubida));
+      setFase("optimizando");
+      const optimizados = await optimizarEnSecuencia(archivos, (hecho, total) => setAvance({ hecho, total }));
 
       const fd = new FormData();
       fd.append("orden_id", String(orden.id));
       optimizados.forEach((f) => fd.append("archivos[]", f, f.name));
 
-      setFase("Subiendo...");
-      const data = await subirConProgreso("api_ordenes_imagen.php", fd, setProgreso);
+      setPesoSubida(optimizados.reduce((acc, f) => acc + Number(f.size || 0), 0));
+      setProgreso(0);
+      setFase("subiendo");
+      const data = await subirConProgreso("api_ordenes_imagen.php", fd, (p) => {
+        setProgreso(p);
+        // Con el 100 % enviado el servidor aún valida y guarda: se avisa para que no parezca congelado.
+        if (p >= 100) setFase("guardando");
+      });
       if (data.success && Number(data.subidos || 0) > 0) {
         onUploaded?.();
         onClose?.();
@@ -148,6 +129,21 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
       setFase("");
     }
   };
+
+  const textoFase = fase === "optimizando"
+    ? `Optimizando imágenes (${avance.hecho} de ${avance.total})...`
+    : fase === "subiendo"
+      ? `Subiendo ${archivos.length} archivo(s) · ${formatearTamano(pesoSubida)} · ${progreso}%`
+      : fase === "guardando"
+        ? "Guardando en el servidor..."
+        : "";
+  const porcentajeBarra = fase === "optimizando"
+    ? (avance.total > 0 ? Math.round((avance.hecho / avance.total) * 100) : 0)
+    : fase === "subiendo"
+      ? progreso
+      : fase === "guardando"
+        ? 100
+        : 0;
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -171,7 +167,8 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
               {archivos.map((f, idx) => (
                 <div key={`${f.name}-${idx}`} className="flex items-center justify-between gap-2 text-xs">
                   <span className="truncate">{f.name}</span>
-                  <button type="button" onClick={() => quitar(idx)} className="text-red-500 hover:text-red-700">Quitar</button>
+                  <span className="shrink-0 text-gray-500">{formatearTamano(f.size)}</span>
+                  <button type="button" onClick={() => quitar(idx)} className="text-red-500 hover:text-red-700 disabled:opacity-40" disabled={subiendo}>Quitar</button>
                 </div>
               ))}
             </div>
@@ -179,10 +176,13 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
 
           <div className="flex items-center justify-end gap-2 pt-2">
             {subiendo && (
-              <div className="flex-1 mr-2">
-                <div className="text-[11px] text-gray-600 mb-1">{fase}{fase === "Subiendo..." ? ` ${progreso}%` : ""}</div>
+              <div className="flex-1 mr-2" role="status" aria-live="polite">
+                <div className="text-[11px] text-gray-600 mb-1">{textoFase}</div>
                 <div className="h-1.5 w-full rounded bg-gray-200 overflow-hidden">
-                  <div className="h-full bg-blue-600 transition-all" style={{ width: `${fase === "Subiendo..." ? progreso : 5}%` }} />
+                  <div
+                    className={`h-full bg-blue-600 transition-all ${fase === "guardando" ? "animate-pulse" : ""}`}
+                    style={{ width: `${porcentajeBarra}%` }}
+                  />
                 </div>
               </div>
             )}
@@ -193,7 +193,7 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
               disabled={subiendo || archivos.length === 0}
               className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
             >
-              {subiendo ? "Subiendo..." : "Subir"}
+              {subiendo ? "Procesando..." : "Subir"}
             </button>
           </div>
         </div>
@@ -207,6 +207,7 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
   const [ordenes, setOrdenes]             = useState([]);
   const [loadingOrdenes, setLoadingOrdenes] = useState(false);
   const [ordenSubir, setOrdenSubir] = useState(null);
+  const [eliminandoId, setEliminandoId] = useState(0);
 
   const cargarOrdenes = useCallback((force = false) => {
     if (!consultaId) return;
@@ -263,6 +264,25 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
     const data = await res.json().catch(() => ({}));
     if (!data?.success) {
       alert(data?.error || "No se pudo cancelar la solicitud");
+      return;
+    }
+    cargarOrdenes(true);
+  };
+
+  const handleEliminarArchivo = async (archivo) => {
+    if (eliminandoId) return;
+    const { isConfirmed } = await Swal.fire({
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonColor: "#dc2626",
+      ...textosConfirmarEliminacion(archivo?.nombre_original),
+    });
+    if (!isConfirmed) return;
+    setEliminandoId(Number(archivo?.id || 0));
+    const resultado = await eliminarArchivoOrdenImagen(authFetch, archivo?.id);
+    setEliminandoId(0);
+    if (!resultado.success) {
+      Swal.fire({ icon: "error", title: "No se pudo eliminar", text: resultado.error });
       return;
     }
     cargarOrdenes(true);
@@ -382,6 +402,38 @@ function PanelImagen({ tipo, label, emoji, color, consultaId, navigateWithDraft,
             Solicitado: {new Date(ord.fecha).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" })}
             {ord.archivos?.length > 0 && ` · ${ord.archivos.length} archivo(s) adjunto(s)`}
           </p>
+
+          {puedeVer(ord) && Array.isArray(ord.archivos) && ord.archivos.length > 0 && (
+            <ul className="mt-2 pl-7 space-y-1" aria-label="Archivos subidos">
+              {ord.archivos.map((a) => (
+                <li key={a.id} className="flex items-center gap-2 text-xs text-gray-700">
+                  <span aria-hidden="true">{a.es_dicom ? "🩻" : a.es_imagen ? "🖼️" : "📄"}</span>
+                  <a
+                    href={resolveOrdenImagenArchivoUrl(a.url)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-w-0 truncate text-blue-700 hover:underline"
+                    title={a.nombre_original}
+                  >
+                    {a.nombre_original}
+                  </a>
+                  <span className="shrink-0 text-gray-400">{formatearTamano(a.tamano)}</span>
+                  {!readOnly && Boolean(ord?.can_upload_archivos) && (
+                    <button
+                      type="button"
+                      onClick={() => handleEliminarArchivo(a)}
+                      disabled={eliminandoId === Number(a.id)}
+                      aria-label={`Eliminar ${a.nombre_original}`}
+                      title="Eliminar este archivo"
+                      className="ml-auto shrink-0 rounded border border-red-200 px-2 py-0.5 text-[11px] font-semibold text-red-500 transition hover:border-red-400 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+                    >
+                      {eliminandoId === Number(a.id) ? "Eliminando..." : "🗑 Eliminar"}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
 
           <div className="mt-2">
             <CardInformeImagenologia

@@ -15,6 +15,8 @@ require_once __DIR__ . '/modules/PaqueteComercialModule.php';
 require_once __DIR__ . '/modules/HonorarioRecuperoModule.php';
 require_once __DIR__ . '/modules/AtencionModule.php';
 require_once __DIR__ . '/modules/PermisoAnulacion.php';
+require_once __DIR__ . '/modules/SeguimientoClinico.php';
+api_liberar_sesion_lectura();
 
 $method = $_SERVER['REQUEST_METHOD'];
 
@@ -2986,6 +2988,14 @@ function resolver_estado_financiero_cotizacion($conn, $cotizacionId, $total, $pa
     if (cotizacion_es_control_hc_proxima_pura($conn, (int)$cotizacionId) && $saldo <= 0.00001) {
         return [
             'estado' => 'control',
+            'saldo' => 0.0,
+        ];
+    }
+
+    // Consulta exonerada desde Seguimiento clínico: conserva su estado en cualquier recálculo (no se confunde con 'pagado').
+    if ($total <= 0.00001 && SeguimientoClinico::cotizacionEsExonerada($conn, (int)$cotizacionId)) {
+        return [
+            'estado' => 'exonerada',
             'saldo' => 0.0,
         ];
     }
@@ -8338,6 +8348,7 @@ switch ($method) {
                 $cotizacion['bloque_eventos_items'] = (int)($metaConflicto['bloque_eventos_items'] ?? 0);
             }
             unset($cotizacion);
+            SeguimientoClinico::marcarFilasExoneradas($conn, $cotizaciones, 'id', 'estado');
 
             respond(['success' => true, 'cotizaciones' => $cotizaciones]);
         }
@@ -8422,6 +8433,9 @@ switch ($method) {
                     $cotizacion['total_cadena'] = (float)$totalCadena;
                 }
             }
+            $filaExonerada = [$cotizacion];
+            SeguimientoClinico::marcarFilasExoneradas($conn, $filaExonerada, 'id', 'estado');
+            $cotizacion = $filaExonerada[0];
             respond(['success' => true, 'cotizacion' => $cotizacion]);
         }
 
@@ -9356,6 +9370,7 @@ switch ($method) {
         }
 
         // Aplicar campos derivados aunque una parte opcional del enriquecimiento falle.
+        SeguimientoClinico::marcarFilasExoneradas($conn, $cotizaciones, 'id', 'estado');
         foreach ($cotizaciones as &$cotRow) {
             $cid = (int)($cotRow['id'] ?? 0);
             $cotRow['servicios_tipos'] = $serviciosPorCotizacion[$cid] ?? '';
