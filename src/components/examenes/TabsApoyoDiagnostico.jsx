@@ -5,6 +5,7 @@ import SolicitudProcedimientos from "./SolicitudProcedimientos";
 import VisorInformeImagenologiaHC from "../imagenologia/VisorInformeImagenologiaHC";
 import CardInformeImagenologia from "../imagenologia/CardInformeImagenologia";
 import { authFetch, resolveAppUrl } from "../../utils/apiClient";
+import { formatearTamano, optimizarEnSecuencia } from "../../utils/optimizarImagen";
 import Swal from "sweetalert2";
 
 // ── Consulta compartida de órdenes de imagen ──────────────────────────────────
@@ -34,38 +35,6 @@ function fetchOrdenesImagenConsulta(consultaId, { force = false } = {}) {
     });
   ordenesImagenInflight.set(key, { promise, ts: Date.now() });
   return promise;
-}
-
-// ── Compresión previa de imágenes pesadas (reduce tiempo de subida en producción) ─
-const COMPRIMIR_DESDE_BYTES = 1.5 * 1024 * 1024;
-const MAX_LADO_PX = 3000;
-const CALIDAD_JPEG = 0.9;
-const MIMES_COMPRIMIBLES = ["image/png", "image/jpeg", "image/bmp", "image/webp"];
-
-async function optimizarImagenParaSubida(file) {
-  try {
-    if (!MIMES_COMPRIMIBLES.includes(file.type) || file.size < COMPRIMIR_DESDE_BYTES) return file;
-    if (typeof createImageBitmap !== "function") return file;
-
-    const bitmap = await createImageBitmap(file);
-    const escala = Math.min(1, MAX_LADO_PX / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(bitmap.width * escala));
-    canvas.height = Math.max(1, Math.round(bitmap.height * escala));
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close?.();
-
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", CALIDAD_JPEG));
-    if (!blob || blob.size >= file.size * 0.9) return file;
-
-    const base = file.name.replace(/\.[^.]+$/, "") || "imagen";
-    return new File([blob], `${base}.jpg`, { type: "image/jpeg", lastModified: Date.now() });
-  } catch {
-    return file;
-  }
 }
 
 // XHR para poder mostrar progreso real de subida.
@@ -108,7 +77,10 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
   const [archivos, setArchivos] = useState([]);
   const [subiendo, setSubiendo] = useState(false);
   const [progreso, setProgreso] = useState(0);
+  // "" | "optimizando" | "subiendo" | "guardando": cada etapa tiene su propio mensaje y barra.
   const [fase, setFase] = useState("");
+  const [avance, setAvance] = useState({ hecho: 0, total: 0 });
+  const [pesoSubida, setPesoSubida] = useState(0);
 
   const agregarArchivos = (fileList) => {
     const lista = Array.from(fileList || []);
@@ -121,17 +93,24 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
     if (!orden?.id || archivos.length === 0 || subiendo) return;
     setSubiendo(true);
     setProgreso(0);
+    setAvance({ hecho: 0, total: archivos.length });
     subidasImagenActivas += 1;
     try {
-      setFase("Optimizando imágenes...");
-      const optimizados = await Promise.all(archivos.map(optimizarImagenParaSubida));
+      setFase("optimizando");
+      const optimizados = await optimizarEnSecuencia(archivos, (hecho, total) => setAvance({ hecho, total }));
 
       const fd = new FormData();
       fd.append("orden_id", String(orden.id));
       optimizados.forEach((f) => fd.append("archivos[]", f, f.name));
 
-      setFase("Subiendo...");
-      const data = await subirConProgreso("api_ordenes_imagen.php", fd, setProgreso);
+      setPesoSubida(optimizados.reduce((acc, f) => acc + Number(f.size || 0), 0));
+      setProgreso(0);
+      setFase("subiendo");
+      const data = await subirConProgreso("api_ordenes_imagen.php", fd, (p) => {
+        setProgreso(p);
+        // Con el 100 % enviado el servidor aún valida y guarda: se avisa para que no parezca congelado.
+        if (p >= 100) setFase("guardando");
+      });
       if (data.success && Number(data.subidos || 0) > 0) {
         onUploaded?.();
         onClose?.();
@@ -148,6 +127,21 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
       setFase("");
     }
   };
+
+  const textoFase = fase === "optimizando"
+    ? `Optimizando imágenes (${avance.hecho} de ${avance.total})...`
+    : fase === "subiendo"
+      ? `Subiendo ${archivos.length} archivo(s) · ${formatearTamano(pesoSubida)} · ${progreso}%`
+      : fase === "guardando"
+        ? "Guardando en el servidor..."
+        : "";
+  const porcentajeBarra = fase === "optimizando"
+    ? (avance.total > 0 ? Math.round((avance.hecho / avance.total) * 100) : 0)
+    : fase === "subiendo"
+      ? progreso
+      : fase === "guardando"
+        ? 100
+        : 0;
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -171,7 +165,8 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
               {archivos.map((f, idx) => (
                 <div key={`${f.name}-${idx}`} className="flex items-center justify-between gap-2 text-xs">
                   <span className="truncate">{f.name}</span>
-                  <button type="button" onClick={() => quitar(idx)} className="text-red-500 hover:text-red-700">Quitar</button>
+                  <span className="shrink-0 text-gray-500">{formatearTamano(f.size)}</span>
+                  <button type="button" onClick={() => quitar(idx)} className="text-red-500 hover:text-red-700 disabled:opacity-40" disabled={subiendo}>Quitar</button>
                 </div>
               ))}
             </div>
@@ -179,10 +174,13 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
 
           <div className="flex items-center justify-end gap-2 pt-2">
             {subiendo && (
-              <div className="flex-1 mr-2">
-                <div className="text-[11px] text-gray-600 mb-1">{fase}{fase === "Subiendo..." ? ` ${progreso}%` : ""}</div>
+              <div className="flex-1 mr-2" role="status" aria-live="polite">
+                <div className="text-[11px] text-gray-600 mb-1">{textoFase}</div>
                 <div className="h-1.5 w-full rounded bg-gray-200 overflow-hidden">
-                  <div className="h-full bg-blue-600 transition-all" style={{ width: `${fase === "Subiendo..." ? progreso : 5}%` }} />
+                  <div
+                    className={`h-full bg-blue-600 transition-all ${fase === "guardando" ? "animate-pulse" : ""}`}
+                    style={{ width: `${porcentajeBarra}%` }}
+                  />
                 </div>
               </div>
             )}
@@ -193,7 +191,7 @@ function ModalSubidaRapidaImagenHC({ orden, onClose, onUploaded }) {
               disabled={subiendo || archivos.length === 0}
               className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
             >
-              {subiendo ? "Subiendo..." : "Subir"}
+              {subiendo ? "Procesando..." : "Subir"}
             </button>
           </div>
         </div>
