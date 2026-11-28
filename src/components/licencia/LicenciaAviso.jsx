@@ -224,16 +224,22 @@ export default function LicenciaAviso({ usuario, onLogout }) {
           className={`sticky top-0 z-[45] flex items-center gap-2 px-3 py-1.5 text-xs text-white shadow sm:py-2 sm:text-sm ${esAviso ? "bg-amber-600" : "bg-red-600"}`}
           role="status"
         >
-          <button
-            type="button"
-            onClick={() => setModal(true)}
-            className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left sm:flex-row sm:items-center sm:gap-3"
-          >
-            <span className="font-medium leading-snug">{banner.texto}</span>
-            <span className="shrink-0 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold underline-offset-2 hover:bg-white/30">
-              Ver cómo pagar
-            </span>
-          </button>
+          {info.detalle_pago ? (
+            <button
+              type="button"
+              onClick={() => setModal(true)}
+              className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left sm:flex-row sm:items-center sm:gap-3"
+            >
+              <span className="font-medium leading-snug">{banner.texto}</span>
+              <span className="shrink-0 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold underline-offset-2 hover:bg-white/30">
+                Ver cómo pagar
+              </span>
+            </button>
+          ) : (
+            <div className="min-w-0 flex-1 font-medium leading-snug">
+              {banner.texto} Avise al administrador de la clínica para regularizar el pago.
+            </div>
+          )}
           {esAviso && (
             <button type="button" onClick={ocultar} aria-label="Ocultar aviso por hoy" className="shrink-0 rounded-full px-2.5 py-1 text-lg leading-none hover:bg-white/20">
               ×

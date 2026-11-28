@@ -313,8 +313,9 @@ final class LicenciaSistema {
     }
 
     /**
-     * Lo que puede ver cada rol. Administrador: aviso, vencida y bloqueada con datos de pago. Recepción: vencida y
-     * bloqueada con datos de pago. Resto (médicos, enfermería, empresas…): solo el mensaje de bloqueo, sin datos de pago.
+     * Lo que puede ver cada rol. Todo el personal de la clínica (administrador, recepción, médicos, enfermería…) ve
+     * el aviso previo, el de vencida y el bloqueo. Datos de pago: administrador siempre; recepción solo vencida/bloqueada;
+     * el resto no (solo se les pide avisar al administrador). Las empresas externas solo ven el bloqueo, sin detalles.
      * @return array<string,mixed>
      */
     public static function vistaPara(?array $fila, string $rol, ?string $hoy = null): array {
@@ -324,7 +325,7 @@ final class LicenciaSistema {
             return $oculto;
         }
         $conDetalle = $rol === 'administrador' || ($rol === 'recepcionista' && in_array($e['estado'], ['vencida', 'bloqueada'], true));
-        $visible = $conDetalle || ($e['estado'] === 'bloqueada');
+        $visible = $rol !== 'empresa' || $e['estado'] === 'bloqueada';
         if (!$visible) {
             return $oculto;
         }
