@@ -1,7 +1,7 @@
 <?php
 // Estado de la suscripción del sistema para la sesión actual (banner, modal de pago y pantalla de bloqueo).
-// Solo lectura. El administrador ve aviso, vencida y bloqueada con datos de pago; recepción, vencida y bloqueada;
-// el resto de roles solo el mensaje de bloqueo (sin montos ni cuentas). Sin sesión: 401.
+// Solo lectura. Todo el personal ve el aviso, vencida y bloqueada; los datos de pago, el administrador (siempre) y
+// recepción (vencida y bloqueada). Las empresas externas solo ven el bloqueo, sin montos ni cuentas. Sin sesión: 401.
 require_once __DIR__ . '/init_api.php';
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/modules/LicenciaSistema.php';
@@ -23,5 +23,5 @@ if (!is_array($usuario) && !isset($_SESSION['medico_id']) && !isset($_SESSION['e
     exit;
 }
 
-$rol = is_array($usuario) ? strtolower(trim((string)($usuario['rol'] ?? ''))) : 'otro';
+$rol = is_array($usuario) ? strtolower(trim((string)($usuario['rol'] ?? ''))) : (isset($_SESSION['empresa_portal']) ? 'empresa' : 'otro');
 echo json_encode(LicenciaSistema::vistaPara(LicenciaSistema::leerFila($pdo ?? $mysqli ?? null), $rol), JSON_UNESCAPED_UNICODE);

@@ -104,8 +104,15 @@ prueba('suscripción: cada rol ve solo lo que le corresponde y nunca datos de pa
     iguales(true, LicenciaSistema::vistaPara($fila, 'administrador', $aviso)['mostrar']);
     iguales(false, LicenciaSistema::vistaPara($fila, 'administrador', '2026-11-01')['mostrar'], 'al día: nadie ve nada');
     iguales(false, LicenciaSistema::vistaPara(null, 'administrador', $aviso)['mostrar'], 'sin configurar: nadie ve nada');
-    iguales(false, LicenciaSistema::vistaPara($fila, 'recepcionista', $aviso)['mostrar'], 'recepción no ve el aviso previo');
-    iguales(false, LicenciaSistema::vistaPara($fila, 'medico', $aviso)['mostrar']);
+    iguales(true, LicenciaSistema::vistaPara($fila, 'recepcionista', $aviso)['mostrar'], 'recepción ve el aviso previo');
+    iguales(false, LicenciaSistema::vistaPara($fila, 'recepcionista', $aviso)['detalle_pago'], 'pero sin datos de pago hasta que venza');
+    $medAviso = LicenciaSistema::vistaPara($fila, 'medico', $aviso);
+    iguales(true, $medAviso['mostrar'], 'el médico también ve el aviso');
+    iguales(false, $medAviso['detalle_pago']);
+    verdadero(!isset($medAviso['metodos_pago']) && !isset($medAviso['monto']), 'sin cuentas ni monto en el aviso del médico');
+    iguales(false, LicenciaSistema::vistaPara($fila, 'empresa', $aviso)['mostrar'], 'una empresa externa no ve el aviso');
+    iguales(false, LicenciaSistema::vistaPara($fila, 'empresa', '2027-01-02')['mostrar'], 'ni el vencido');
+    iguales(true, LicenciaSistema::vistaPara($fila, 'empresa', '2027-02-01')['bloqueado'], 'pero sí el bloqueo');
     iguales(true, LicenciaSistema::vistaPara($fila, 'recepcionista', '2027-01-02')['detalle_pago']);
     $med = LicenciaSistema::vistaPara($fila, 'medico', '2027-02-01');
     iguales(true, $med['bloqueado']);
